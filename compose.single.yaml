@@ -1,0 +1,39 @@
+# Pixel and all agents in one container (PIXEL_RUNTIME=single). Works on any Docker host,
+# including Coolify (use this file as the Docker Compose build pack's compose file).
+# Read "Single-container mode" in README.md first, and only deploy on a server whose owner agreed to it:
+# the agents run untrusted code (target builds, PoCs, fuzzers) on that machine.
+services:
+  pixel:
+    build:
+      context: .
+      dockerfile: Dockerfile.single
+      args:
+        INSTALL_GHIDRA: ${INSTALL_GHIDRA:-0}
+        INSTALL_CODEQL: ${INSTALL_CODEQL:-0}
+    restart: unless-stopped
+    environment:
+      PIXEL_PASSWORD: ${PIXEL_PASSWORD:?set PIXEL_PASSWORD}
+      PIXEL_PUBLIC_URL: ${PIXEL_PUBLIC_URL:-}
+      # Stop runs when the data disk has less than this many GiB free.
+      PIXEL_MIN_FREE_GIB: ${PIXEL_MIN_FREE_GIB:-20}
+      PIXEL_AGENT_MAX_PROCS: ${PIXEL_AGENT_MAX_PROCS:-4096}
+    ports:
+      - "7700"
+    volumes:
+      - pixel-data:/srv/pixel
+    # Lets Pixel firewall agents off private networks (other containers, the host, cloud metadata).
+    # Without it Pixel still runs, but the System page warns that agents can reach those networks.
+    cap_add:
+      - NET_ADMIN
+    # Hard ceiling for Pixel plus every agent together, so nothing else on the host is starved.
+    # Size it to what the host's owner allows. 8 GB / 4 CPUs fits about 3 code-review agents at 3 GB each.
+    cpus: ${PIXEL_CPUS:-4}
+    mem_limit: ${PIXEL_MEMORY:-8g}
+    pids_limit: 16384
+    # World-writable temp dirs in RAM (and capped), not in the host's Docker storage.
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+      - /var/tmp:size=512m,mode=1777
+
+volumes:
+  pixel-data:

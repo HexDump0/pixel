@@ -23,6 +23,19 @@ Last updated 2026-10-11 (after the first build session). The plan of record is [
 - Host networking, to reach VMs on `incusbr0` directly.
 - Mounts the Incus unix socket (root-equivalent on the pixel host; fine, Pixel is trusted) and `/srv/pixel`.
 
+## Single runtime (one container)
+
+`PIXEL_RUNTIME=single`, built from `Dockerfile.single` / `compose.single.yaml`. `runtime/process.ts` holds what it shares with `local` (opencode as a child process, launch info, restart).
+
+- **Users**: each run gets uid 20000+ from a counter in `machines/.launch/next-uid`; uids are never reused because workbases keep their owner. `/etc/passwd` lives in the image, so `ensureUser` recreates the user (same uid) before every opencode start. On delete, the workbase is chowned to root (still readable, frozen) and the user removed.
+- **Command wrapper**: `choom -n 500` (killed before Pixel under memory pressure) → `nice 10` → `ionice -c2 -n7` → `prlimit --nproc --core=0` → `setpriv --reuid/--regid --clear-groups --no-new-privs`. The agent environment is built from scratch, so Pixel's env (`PIXEL_PASSWORD`) never leaks.
+- **Permissions**: data dir 0711, `machines/` 0711, `workbases/` 0755, history/transcripts/`.launch` 0700, `pixel.db*` 0600, each run dir 0700 (agent), each workbase 0755 (agent). The backup copy of the database is created 0600 before `VACUUM INTO`.
+- **Limits without cgroups** (an ordinary container can't create them): memory is checked every 5 s by summing RSS over the uid's processes; over the run's size the largest process gets SIGKILL and the timeline gets a `limit` entry. Disk is `du -sxb` of the run dir (cached 5 min) against the run's disk size, reusing the watchdog's disk-full rule. CPU is only priority; the container's `cpus` is the real cap.
+- **Firewall**: iptables `OUTPUT -m owner --uid-owner 20000-59999 -j PIXEL_AGENTS`, which rejects 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10 (and fc00::/7, fe80::/10) and the dashboard port on loopback, but allows the resolv.conf nameservers on port 53. Needs NET_ADMIN; failure is reported in `info()` on the System page, not fatal.
+- **Stopping** kills every process of the uid (fuzzers, servers), not just opencode. tini is PID 1 so orphans get reaped.
+- **Free-disk guard** (all runtimes): the watchdog stops runs when the data disk has less than `PIXEL_MIN_FREE_GIB` free. Tests set it to 0.
+- Verified 2026-10-11 in a slim test container (fake opencode): users and permissions as above, agent→dashboard blocked, private-range rules in place, internet allowed, memory kill + OOM recovery, container restart → reattach and continue. Not verified: the full image build, real opencode as an agent user, gdb/ptrace under Docker's default seccomp, Coolify honouring `cap_add`/`cpus`/`mem_limit`/`tmpfs`.
+
 ## Known gotchas
 
 - **Nested virtualization**: the pixel host VM on Proxmox needs CPU type `host` and nesting enabled on the node (`kvm_intel nested=1` / `kvm_amd nested=1`).
@@ -49,7 +62,7 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - `onIdle` and `recover` run serialised per run, so an idle event and a watchdog check can't both act.
 - Missed events (stream drop, Pixel restart) are caught by the watchdog: busy per our DB but absent from `/session/status` for 60 s → treated as idle; pending permissions are polled and approved.
 - opencode unit uses `OOMPolicy=continue` so a fuzzer hitting the OOM killer doesn't stop opencode. When opencode itself is OOM-killed the unit sees SIGKILL (`ExecMainStatus=9`); Pixel confirms with the kernel log (`Killed process … (opencode)`).
-- Local runtime: SIGKILL of the opencode process counts as OOM (that's how the tests simulate it). Local opencode dies with Pixel; on restart Pixel restarts it and sends a continue that doesn't count toward the limit. On Incus, opencode keeps running in the VM across Pixel restarts.
+- Process runtimes (local, single): SIGKILL of the opencode process counts as OOM (that's how the tests simulate it, and what the kernel or the single runtime's memory limit does). opencode dies with Pixel (`agentsDieWithPixel`); on restart Pixel restarts it and sends a continue that doesn't count toward the limit. On Incus, opencode keeps running in the VM across Pixel restarts.
 - Until a run starts, `runs.prompt` holds an optional per-run edited template body; afterwards the rendered prompt that was sent.
 
 ## Testing

@@ -70,7 +70,7 @@ describe("run lifecycle", () => {
     const run = createRun({ repo, templateId: "audit", name: "oom", promptOverride: "HANG" });
     await until("running", () => getRun(run.id)!.status === "running" && !!getRun(run.id)!.session_id);
     const session = getRun(run.id)!.session_id;
-    const pid = Number(readFileSync(join(config.localDir, run.id, "pid"), "utf8"));
+    const pid = Number(readFileSync(join(config.machinesDir, ".launch", `${run.id}.pid`), "utf8"));
     process.kill(pid, "SIGKILL");
     await until("oom restart", () => getRun(run.id)!.oom_restarts === 1);
     await until("running again", () => getRun(run.id)!.status === "running");

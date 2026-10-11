@@ -303,6 +303,10 @@ export class IncusRuntime implements Runtime {
     await call("DELETE", `/1.0/instances/${name}`);
   }
 
+  describeMachine() {
+    return "You are root on a disposable VM with full internet access. Docker, compilers with sanitizers, AFL++/libFuzzer, gdb/rr, semgrep/CodeQL and Ghidra (headless) are installed; install anything else you need.";
+  }
+
   shellCommand(run: RunRow) {
     return `incus exec ${this.name(run)} -- bash -l`;
   }

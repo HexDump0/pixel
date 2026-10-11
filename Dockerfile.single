@@ -1,0 +1,65 @@
+# Pixel and all agents in one container (PIXEL_RUNTIME=single), for hosts where Pixel can only
+# deploy a plain container, such as Coolify. Each agent runs as its own unprivileged user.
+# The Incus setup (Dockerfile + compose.yaml) gives far stronger isolation; prefer it when you can.
+FROM oven/bun:1.4-debian
+
+ARG OPENCODE_VERSION=1.19.0
+# Off by default: agents here mostly review code and test on native builds. Set to 1 for the rare
+# reverse-engineering run (Ghidra ~1 GB with Java, CodeQL ~1 GB, and a much longer build).
+ARG INSTALL_GHIDRA=0
+ARG INSTALL_CODEQL=0
+ARG GHIDRA_URL=https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+ARG CODEQL_VERSION=v2.27.2
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Pixel's own needs, then the agents' toolbox (the VM image's list minus Docker, rr, radare2 and sudo).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git restic ca-certificates openssh-client tini iptables procps \
+      curl wget gnupg git-lfs jq unzip zip xz-utils file less vim-tiny tmux strace ltrace lsof \
+      build-essential clang lld llvm libclang-rt-dev gdb valgrind cmake ninja-build meson autoconf automake libtool pkg-config bison flex \
+      python3 python3-pip python3-venv python3-dev pipx \
+      afl++ ripgrep fd-find universal-ctags binutils patchelf \
+      golang-go rustc cargo nodejs npm \
+      iproute2 dnsutils netcat-openbsd \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" && rm -rf /root/.npm && opencode --version
+
+# Python tools installed system-wide so every agent user can run them.
+ENV PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin
+RUN pipx install semgrep && rm -rf /root/.cache
+
+RUN if [ "$INSTALL_GHIDRA" = 1 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends openjdk-21-jdk-headless && rm -rf /var/lib/apt/lists/* \
+      && curl -fsSL -o /tmp/ghidra.zip "$GHIDRA_URL" && unzip -q /tmp/ghidra.zip -d /opt && rm /tmp/ghidra.zip \
+      && mv /opt/ghidra_* /opt/ghidra && ln -s /opt/ghidra/support/analyzeHeadless /usr/local/bin/analyzeHeadless \
+      && pipx install pyghidra-mcp && rm -rf /root/.cache; \
+    fi
+
+RUN if [ "$INSTALL_CODEQL" = 1 ]; then \
+      curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz" | tar -xz -C /opt \
+      && ln -s /opt/codeql/codeql /usr/local/bin/codeql; \
+    fi
+
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml tsconfig.json ./
+RUN bun install --frozen-lockfile
+COPY server ./server
+COPY web ./web
+COPY templates ./templates
+
+ENV NODE_ENV=production \
+    PIXEL_DATA=/srv/pixel \
+    PIXEL_RUNTIME=single \
+    PIXEL_HOST=0.0.0.0 \
+    GHIDRA_INSTALL_DIR=/opt/ghidra
+
+# Workbase history snapshots run git as root over agent-owned directories.
+RUN git config --system safe.directory '*'
+
+EXPOSE 7700
+# tini reaps the orphaned processes agents leave behind (fuzzers, daemons) so they don't pile up as zombies.
+ENTRYPOINT ["tini", "--"]
+CMD ["bun", "server/src/index.ts"]

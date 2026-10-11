@@ -60,7 +60,7 @@ export const listVersions = (id: string) =>
     )
     .all(id);
 
-export const TEMPLATE_VARIABLES = ["run", "repo", "ref", "commit", "target", "workbase", "workbases", "scratch", "disk_gib", "date", "model", "previous_workbase"];
+export const TEMPLATE_VARIABLES = ["run", "repo", "ref", "commit", "target", "workbase", "workbases", "scratch", "disk_gib", "machine", "date", "model", "previous_workbase"];
 
 /** Tiny templating: {{var}} and {{#if var}}...{{/if}} (no nesting). */
 export function render(body: string, vars: Record<string, string | undefined | null>) {

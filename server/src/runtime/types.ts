@@ -41,7 +41,11 @@ export interface ExecResult {
 }
 
 export interface Runtime {
-  kind: "incus" | "local";
+  kind: "incus" | "single" | "local";
+  /** Agents are child processes of Pixel and must be started again after Pixel restarts. */
+  agentsDieWithPixel?: boolean;
+  /** Called when the runtime acts on its own against a run (e.g. kills a process over its memory limit). */
+  onLimit?: (runId: string, message: string) => void;
   paths(run: RunRow): AgentPaths;
   /** Create the machine, attach shares, inject secrets, clone the target, start opencode. */
   prepare(opts: PrepareOptions): Promise<Prepared>;
@@ -58,6 +62,8 @@ export interface Runtime {
   listSnapshots(run: RunRow): Promise<{ name: string; created: string }[]>;
   restore(run: RunRow, name: string): Promise<void>;
   destroy(run: RunRow): Promise<void>;
+  /** One line for the prompt's environment section: what the machine is and what the agent may do there. */
+  describeMachine(run: RunRow): string;
   /** Shell command the user can run to get a shell in the machine. */
   shellCommand(run: RunRow): string;
   /** All machines Pixel manages, for the system page. */

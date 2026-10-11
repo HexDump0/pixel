@@ -35,3 +35,12 @@
 - **Dashboard styling** (user): use **Tailwind** (v4, through `bun-plugin-tailwind`) rather than hand-written CSS.
 - **Code maintainability** (user): keep modules small and focused; backend split into `server/src/runs/` (lifecycle, events, watchdog, controls) and `server/src/api/` (one file per area), web split into `pages/`, `components/`, `lib/`.
 - **Agent questions** (Claude's default): if an agent uses opencode's question tool, Pixel notifies you and shows it in the dashboard; on autopilot runs an unanswered question is dismissed after `questionTimeoutMin` (30) so 9-hour runs don't block.
+
+## 2026-10-11 (Coolify)
+
+- **Hosting constraint** (user): the user may only have a Coolify dashboard, with no access to the server itself. So no Incus, no KVM and no Sysbox there. Claude's advice was to run the VM design on the user's own machine or a rented KVM box; if it has to be Coolify, everything in one container.
+- **`single` runtime added** (user: "make everything in one container, as another option"). Incus stays the plan of record; `single` is an alternative for hosts that only run plain containers. Each agent is its own Linux user; Pixel enforces memory/disk/process limits itself and firewalls agents off private networks. Details in design.md.
+- **Neighbours on a shared server** (Claude, flagged to the user): untrusted code on someone else's server needs the owner's agreement. Protections for other apps there: container CPU/memory caps, per-agent limits, free-disk guard on the data disk, private-network firewall, mandatory dashboard password.
+- **Workload for `single`** (user): mostly code review; agents test hypotheses on native builds with what's installed, no Docker. Fuzzing and Ghidra only for rare cases, so Ghidra and CodeQL are off by default in `Dockerfile.single` (build args turn them on). Sizing: about 3 GiB per agent; 8 GB / 4 CPUs for about 3 agents.
+- **Prompt's machine line is per runtime**: new template variable `{{machine}}` (`Runtime.describeMachine`) replaces the hard-coded "root on a disposable VM" line in `templates/audit.md`.
+- **Git** (user): work directly on `main`, no branches.

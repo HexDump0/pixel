@@ -9,7 +9,8 @@ export const config = {
   dataDir,
   workbasesDir: join(dataDir, "workbases"),
   historyDir: join(dataDir, "history"),
-  localDir: join(dataDir, "local"),
+  /** Per-run directories (target, scratch, home) for the process runtimes (local, single). */
+  machinesDir: join(dataDir, "machines"),
   transcriptsDir: join(dataDir, "transcripts"),
   dbPath: join(dataDir, "pixel.db"),
   templatesDir: resolve(import.meta.dir, "../../templates"),
@@ -22,7 +23,7 @@ export const config = {
   /** Base URL of the dashboard, used for links in notifications. */
   publicUrl: env("PIXEL_PUBLIC_URL"),
 
-  runtime: env("PIXEL_RUNTIME", "incus") as "incus" | "local",
+  runtime: env("PIXEL_RUNTIME", "incus") as "incus" | "single" | "local",
 
   incus: {
     socket: env("INCUS_SOCKET", "/var/lib/incus/unix.socket"),
@@ -32,11 +33,21 @@ export const config = {
     network: env("INCUS_NETWORK", "incusbr0"),
   },
 
-  local: {
-    opencodeBin: env("OPENCODE_BIN", "opencode"),
+  /** opencode binary for the process runtimes (local, single). */
+  opencodeBin: env("OPENCODE_BIN", "opencode"),
+
+  /** `single` runtime: Pixel and every agent in one container (e.g. a Coolify deployment). */
+  single: {
+    /** Max processes + threads per agent (fork-bomb guard). */
+    maxProcs: Number(env("PIXEL_AGENT_MAX_PROCS", "4096")),
+    /** Block agents from private/link-local networks with iptables (needs the NET_ADMIN capability). */
+    firewall: env("PIXEL_AGENT_FIREWALL", "on") !== "off",
   },
 
-  /** Paths as the agent sees them inside its VM. The local runtime overrides these with host paths. */
+  /** Stop runs when the data disk has less free space than this (protects whatever else lives on that disk). */
+  minFreeGiB: Number(env("PIXEL_MIN_FREE_GIB", "10")),
+
+  /** Paths as the agent sees them inside its VM. The process runtimes use real paths instead. */
   guest: {
     target: "/work/target",
     workbases: "/workbases",
@@ -49,6 +60,6 @@ export const config = {
   dev: env("NODE_ENV") !== "production",
 };
 
-for (const d of [config.dataDir, config.workbasesDir, config.historyDir, config.localDir, config.transcriptsDir]) {
+for (const d of [config.dataDir, config.workbasesDir, config.historyDir, config.machinesDir, config.transcriptsDir]) {
   mkdirSync(d, { recursive: true });
 }

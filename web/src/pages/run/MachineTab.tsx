@@ -103,7 +103,7 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
             </tbody>
           </table>
         ) : (
-          <Empty>No snapshots{r.runtime === "local" ? " (the local runtime has no snapshots)" : ""}.</Empty>
+          <Empty>No snapshots{r.runtime !== "incus" ? ` (the ${r.runtime} runtime has no snapshots)` : ""}.</Empty>
         )}
       </Card>
     </div>

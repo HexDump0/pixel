@@ -1,4 +1,5 @@
 /** Periodic checks of every active run: health, missed events, questions, resources. Plus reattach on start. */
+import { statfsSync } from "node:fs";
 import { config } from "../config.ts";
 import { ACTIVE_STATUSES, db, getRun, listRuns, type RunRow } from "../db.ts";
 import { getSettings, type Settings } from "../settings.ts";
@@ -92,6 +93,10 @@ async function resources(id: string, client: OpencodeClient, s: Settings) {
     timeline(id, "pixel", "stopped", message);
     notifyRun("stopped", r, `Run stopped: ${detail}`, message);
   };
+  const free = freeBytes();
+  if (free !== null && free < config.minFreeGiB * GiB) {
+    return stop("server disk almost full", `Only ${(free / GiB).toFixed(1)} GiB free on Pixel's data disk (minimum ${config.minFreeGiB} GiB): aborted the session and stopped the run`);
+  }
   if (m.diskUsed && m.diskTotal && (m.diskUsed / m.diskTotal) * 100 >= s.diskFullPercent) {
     return stop("machine disk full", `Machine disk at ${((m.diskUsed / m.diskTotal) * 100).toFixed(1)}%: aborted the session and stopped the run (machine kept for inspection)`);
   }
@@ -100,11 +105,22 @@ async function resources(id: string, client: OpencodeClient, s: Settings) {
   }
 }
 
+/** Free space on the data disk, which the process runtimes share with Pixel (and possibly other apps). */
+function freeBytes() {
+  try {
+    const fs = statfsSync(config.dataDir);
+    return fs.bavail * fs.bsize;
+  } catch {
+    return null;
+  }
+}
+
 let timer: Timer | null = null;
 let checking = false;
 
 export function startWatchdog() {
   if (timer) return;
+  runtime.onLimit = (id, message) => timeline(id, "pixel", "limit", message);
   timer = setInterval(async () => {
     if (checking) return;
     checking = true;
@@ -132,17 +148,17 @@ export async function reattach() {
       continue;
     }
     timeline(run.id, "pixel", "restart", "Pixel restarted; reattaching");
-    if (runtime.kind === "local" && run.endpoint) {
-      // Local opencode processes die with Pixel; bring them back without counting it as a recovery.
+    if (runtime.agentsDieWithPixel && run.endpoint) {
+      // opencode ran as Pixel's child and died with it; bring it back without counting it as a recovery.
       try {
         await runtime.restartOpencode(run);
         await clientFor(run).waitHealthy(60_000);
         if (run.status === "running" && run.agent_status !== "idle") {
-          timeline(run.id, "pixel", "continue", `Restarted local opencode; sending "${getSettings().continueMessage}" (not counted)`);
+          timeline(run.id, "pixel", "continue", `Restarted opencode; sending "${getSettings().continueMessage}" (not counted)`);
           await sendPrompt(run, getSettings().continueMessage);
         }
       } catch (e: any) {
-        timeline(run.id, "pixel", "restart", `Could not restart local opencode: ${e.message}`);
+        timeline(run.id, "pixel", "restart", `Could not restart opencode: ${e.message}`);
       }
     }
     watch(run.id);

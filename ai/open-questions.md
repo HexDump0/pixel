@@ -9,3 +9,6 @@
 - [ ] Incus runtime and `image/build.sh` are untested on a real host (no Incus on the laptop). Check on first run: nested share mount (own workbase over read-only `/workbases`), `incus publish` size, VM boot time.
 - [ ] Ghidra MCP: the image configures `pyghidra-mcp` (headless) as an opencode MCP server. Untested; the user's local setup uses a different Ghidra bridge, so confirm which one they want.
 - [ ] Dashboard exposure: agents share the host network, so `PIXEL_HOST` must be a private address (Tailscale IP). Consider a firewall rule dropping incusbr0 → host:7700 as a second layer.
+- [ ] Coolify (single runtime): does the server's owner agree to untrusted agent code running there? How much RAM/CPU/disk can Pixel have?
+- [ ] Coolify: does that install honour `cap_add: NET_ADMIN`, `cpus`, `mem_limit` and `tmpfs` from the compose file? Check the System page (`Agent firewall: on`) after the first deploy.
+- [ ] `Dockerfile.single` has not been built in full yet (only a slim test image). First build on the server may need package fixes (radare2 already dropped: not in Debian 13).

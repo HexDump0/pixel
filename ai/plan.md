@@ -19,6 +19,8 @@ The server is Proxmox with 32 GB RAM; Pixel gets 16 GB. Pixel lives in **one Pro
 - Keeping everything inside one Proxmox VM caps Pixel at its 16 GB budget and keeps it portable.
 - Alternative considered: have Pixel create Proxmox VMs directly through the Proxmox API (no nesting). Not chosen for now: Pixel would need rights on the whole Proxmox node, and Incus is simpler to drive.
 
+**Alternative host (2026-10-11):** if the only option is a Coolify dashboard (no server access, no KVM), the `single` runtime runs Pixel and all agents in one container, with per-agent Linux users instead of VMs and no Docker for agents. Weaker isolation; see README "Single-container mode" and design.md.
+
 ## 3. Architecture
 
 ```
@@ -198,6 +200,8 @@ pixel/
 | 2 dashboard v1 | Done: runs list, new run (preview, compare, follow-up), run view (overview, transcript, timeline, workbase, report + triage, terminal, machine), controls. |
 | 3 knowledge | Done: search, workbase browser + history diffs, cross-read tracking + graph, re-audit/compare, restic backups. |
 | 4 polish | Done: web terminal, VM metrics charts, template versions + diffs, notifications. |
+
+| alt: single runtime | Done (2026-10-11): one container, per-agent users, limits, firewall; `Dockerfile.single` + `compose.single.yaml`. Tested in a slim container with a fake opencode; the full image and Coolify itself are untested. |
 
 Next: build the pixel host (phase 0) and run the first real audit on Incus; fix what that shakes out.
 

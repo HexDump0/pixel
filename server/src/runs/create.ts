@@ -101,6 +101,7 @@ export function templateVars(run: Pick<RunRow, "id" | "repo" | "ref" | "commit_s
     workbases: p.workbases,
     scratch: p.scratch,
     disk_gib: String(size.diskGiB),
+    machine: runtime.describeMachine(run as RunRow),
     date: new Date(run.started_at ?? Date.now()).toISOString().slice(0, 10),
     model: run.model,
     previous_workbase: run.parent_run ? `${p.workbases}/${run.parent_run}` : null,

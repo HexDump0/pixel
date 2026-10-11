@@ -1,4 +1,5 @@
 /** Off-server backups of the data dir (workbases, SQLite, history, transcripts) with restic. */
+import { writeFileSync } from "node:fs";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { getSettings } from "./settings.ts";
@@ -40,13 +41,15 @@ export async function runBackup() {
     // Consistent copy of the database first; the WAL file alone isn't safe to copy mid-write.
     const dbCopy = `${config.dataDir}/pixel-backup.db`;
     await Bun.file(dbCopy).delete().catch(() => {});
+    // Created empty first so the copy (settings, keys) is never readable by others, e.g. agents in the single runtime.
+    writeFileSync(dbCopy, "", { mode: 0o600 });
     db.exec(`VACUUM INTO '${dbCopy.replace(/'/g, "''")}'`);
     let r = await restic(["cat", "config"]);
     if (r.code !== 0) {
       r = await restic(["init"]);
       if (r.code !== 0) throw new Error(`restic init failed: ${r.out}`);
     }
-    r = await restic(["backup", "--tag", "pixel", "--exclude", "pixel.db", "--exclude", "pixel.db-wal", "--exclude", "pixel.db-shm", "--exclude", "local", config.dataDir]);
+    r = await restic(["backup", "--tag", "pixel", "--exclude", "pixel.db", "--exclude", "pixel.db-wal", "--exclude", "pixel.db-shm", "--exclude", "machines", config.dataDir]);
     result = { ts: Date.now(), ok: r.code === 0, output: r.out };
     if (r.code === 0) await restic(["forget", "--tag", "pixel", "--keep-daily", "14", "--keep-weekly", "8", "--keep-monthly", "12", "--prune"]);
   } catch (e: any) {
