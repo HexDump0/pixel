@@ -67,3 +67,9 @@
 - **Speed test refuses tools by permission instead of switching them off** (Claude; the user confirmed opencode Go has the same "must look like opencode" request checks). opencode's gateways reject requests whose tool set differs from opencode's (403 FreeTierError), so "every permission denied, every tool off" broke free and Go models. Now: all tools in the request, `permission: "ask"`, Pixel rejects every request while the call runs, and a model that tries a tool is marked failed. Still text only in practice, with an empty work folder.
 - **Speed test UI** on the Models page: pick models (chips from Settings models, leaderboard, health and earlier successful tests, plus free entry), live per-model progress, latest batch as bars, earlier results below. One sample per model.
 
+
+## 2026-10-11 (providers in the GUI)
+
+- **Providers are added from the Models page** (user: "easier way to add providers right in the gui"). An "Add provider" dialog searches opencode's own catalogue (models.dev, 226 providers) and takes a key, or adds a **custom endpoint** with an **API type of OpenAI-compatible or Anthropic-compatible** (user: "open ai, anthropic endpoint nothing too crazy"), a base URL, an optional key and model ids (fetchable from `{baseURL}/models`).
+- **Models page reorganised** (user: "make it better"): stat row (providers, models offered, calls last hour, problems now), then tabs Providers & models / Health / Leaderboard / Speed test. Each provider expands into a model picker: tick models for the new-run form, star the default, one-click test (a one-model speed test).
+- **Settings no longer edits models/default model**; it links to the Models page and its Save leaves `models`, `defaultModel` and `providerLimits` alone. Settings env vars and auth.json still work and show up as providers ("env", "auth.json").

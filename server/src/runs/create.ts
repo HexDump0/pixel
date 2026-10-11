@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { db, getRun, type RunRow, type RunSize } from "../db.ts";
 import { getSettings } from "../settings.ts";
+import { agentCredentials } from "../providerAccounts.ts";
 import { publish } from "../bus.ts";
 import { runtime } from "../runtime/index.ts";
 import { detectLanguage, ensureWorkbase, refreshRunFiles, workbasePath } from "../knowledge.ts";
@@ -123,15 +124,15 @@ export async function prepare(id: string) {
   preparing.add(id);
   try {
     let run = getRun(id)!;
-    const s = getSettings();
+    const creds = agentCredentials();
     ensureWorkbase(id);
     timeline(id, "pixel", "prepare", "Preparing machine");
     const prepared = await runtime.prepare({
       run,
       size: JSON.parse(run.size),
       workbaseHostPath: workbasePath(id),
-      env: s.agentEnv,
-      authJson: s.agentAuthJson,
+      env: creds.env,
+      authJson: creds.authJson,
       opencodePassword: run.opencode_password!,
       log: (m) => {
         setRun(id, { status_detail: m });

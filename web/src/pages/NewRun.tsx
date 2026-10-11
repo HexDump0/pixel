@@ -185,7 +185,7 @@ export function NewRunPage() {
                       {m}
                     </label>
                   ))}
-                  <div className="mt-1 text-xs muted">Add models in Settings.</div>
+                  <div className="mt-1 text-xs muted">Add models on the Models page.</div>
                 </div>
                 <div>
                   <div className="mb-1 text-xs muted">Template versions (none = selected above)</div>

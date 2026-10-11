@@ -60,6 +60,13 @@ get("/settings", () => withDefaults(getSettings()));
 put("/settings", async ({ req }) => {
   const patch = await readJson<Record<string, unknown>>(req);
   const known = Object.keys(defaultSettings);
+  if (typeof patch.agentAuthJson === "string" && patch.agentAuthJson.trim()) {
+    let v: unknown;
+    try {
+      v = JSON.parse(patch.agentAuthJson);
+    } catch {}
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("opencode auth.json must be a JSON object");
+  }
   saveSettings(Object.fromEntries(Object.entries(patch).filter(([k]) => known.includes(k))) as Partial<Settings>);
   return withDefaults(getSettings());
 });

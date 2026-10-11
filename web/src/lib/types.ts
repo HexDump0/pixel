@@ -4,8 +4,11 @@ import type { Settings } from "../../../server/src/settings.ts";
 import type { AgentPaths } from "../../../server/src/runtime/types.ts";
 import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity } from "../../../server/src/fleet.ts";
 import type { Leaderboard, ProviderHealth } from "../../../server/src/providers.ts";
+import type { CatalogList, CatalogModel, CatalogProvider } from "../../../server/src/catalog.ts";
+import type { ConnectedProvider } from "../../../server/src/providerAccounts.ts";
 
 export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, Leaderboard, ProviderHealth };
+export type { CatalogList, CatalogModel, CatalogProvider, ConnectedProvider };
 
 export interface SpeedTestRow {
   id: number;

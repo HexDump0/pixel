@@ -6,6 +6,9 @@ import type {
   HistoryEntry,
   FleetSnapshot,
   Leaderboard,
+  CatalogList,
+  CatalogProvider,
+  ConnectedProvider,
   ProviderHealth,
   SpeedTestRow,
   Lanes,
@@ -130,6 +133,13 @@ export const api = {
   leaderboard: () => request<Leaderboard>("GET", "/providers/leaderboard"),
   speedTests: () => request<{ running: string | null; models: string[]; current: string | null; results: SpeedTestRow[] }>("GET", "/speedtests"),
   startSpeedTest: (models: string[]) => request<{ batch: string; models: string[] }>("POST", "/speedtests", { models }),
+  providers: () => request<ConnectedProvider[]>("GET", "/providers"),
+  saveProvider: (id: string, body: { name?: string; key?: string; baseURL?: string; custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number } }) =>
+    request<{ id: string }>("PUT", `/providers/${encodeURIComponent(id)}`, body),
+  removeProvider: (id: string) => request("DELETE", `/providers/${encodeURIComponent(id)}`),
+  discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
+  catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
+  catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
 };

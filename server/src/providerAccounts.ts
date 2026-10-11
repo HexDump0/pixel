@@ -1,0 +1,192 @@
+/**
+ * Model providers added from the dashboard. Keys go into every agent's opencode auth.json (keyed by
+ * provider id, which opencode reads for catalogue and custom providers alike); custom endpoints and
+ * base-URL overrides go into OPENCODE_CONFIG_CONTENT, which opencode merges over its config file, so
+ * it reaches every runtime without touching the image's opencode.json.
+ *
+ * Accounts live in the settings table under `_providers`, so keys never travel back to the browser:
+ * the API only shows a hint of each key.
+ */
+import { db } from "./db.ts";
+import { getSettings, saveSettings, type Settings } from "./settings.ts";
+import { cachedCatalog, catalogProvider } from "./catalog.ts";
+
+export interface ProviderAccount {
+  id: string;
+  name: string;
+  key: string;
+  baseURL?: string;
+  /** Not in the catalogue: an endpoint speaking the OpenAI or Anthropic API, serving these model ids. */
+  custom?: { api: CustomApi; models: string[]; context: number };
+  added: number;
+}
+
+export interface AccountInput {
+  id: string;
+  name?: string;
+  /** Omitted when editing = keep the stored key. */
+  key?: string;
+  baseURL?: string;
+  custom?: { api?: CustomApi; models: string[]; context?: number };
+}
+
+export type CustomApi = "openai" | "anthropic";
+/** AI SDK package opencode loads for each custom API type (both ship inside opencode). */
+const NPM: Record<CustomApi, string> = { openai: "@ai-sdk/openai-compatible", anthropic: "@ai-sdk/anthropic" };
+
+const ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const KEY = "_providers";
+
+function load(): Record<string, ProviderAccount> {
+  const row = db.query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?").get(KEY);
+  try {
+    return row ? JSON.parse(row.value) : {};
+  } catch {
+    return {};
+  }
+}
+
+function store(accounts: Record<string, ProviderAccount>) {
+  db.query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(KEY, JSON.stringify(accounts));
+}
+
+const hint = (key: string) => (!key ? null : key.length < 12 ? "••••" : `${key.slice(0, 3)}…${key.slice(-4)}`);
+
+function cleanUrl(u: string | undefined) {
+  const s = u?.trim().replace(/\/+$/, "");
+  if (!s) return undefined;
+  if (!/^https?:\/\/[^\s]+$/.test(s)) throw new Error("base URL must start with http:// or https://");
+  return s;
+}
+
+export async function saveAccount(input: AccountInput) {
+  const id = input.id?.trim();
+  if (!id || !ID.test(id)) throw new Error("provider id: lowercase letters, digits, '.', '_' or '-'");
+  const accounts = load();
+  const old = accounts[id];
+  const known = await catalogProvider(id);
+  const custom = input.custom ? { ...input.custom } : old?.custom;
+  if (!known && !custom) throw new Error(`${id} is not in the provider catalogue; add it as a custom endpoint`);
+  if (known && input.custom) throw new Error(`${id} is a catalogue provider; pick another id for a custom endpoint`);
+  const baseURL = cleanUrl(input.baseURL);
+  if (custom) {
+    if (!baseURL) throw new Error("a custom endpoint needs a base URL");
+    custom.models = [...new Set(custom.models.map((m) => m.trim()).filter(Boolean))];
+    if (!custom.models.length) throw new Error("list at least one model id");
+  }
+  const key = input.key === undefined ? (old?.key ?? "") : input.key.trim();
+  if (key.length > 8192) throw new Error("key is too long");
+  accounts[id] = {
+    id,
+    name: input.name?.trim() || known?.name || old?.name || id,
+    key,
+    ...(baseURL && { baseURL }),
+    ...(custom && { custom: { api: custom.api === "anthropic" ? "anthropic" : "openai", models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000) } }),
+    added: old?.added ?? Date.now(),
+  };
+  store(accounts);
+  return accounts[id];
+}
+
+/** Remove a provider and its models from the new-run list. */
+export function removeAccount(id: string) {
+  const accounts = load();
+  if (!accounts[id]) throw new Error(`no provider ${id}`);
+  delete accounts[id];
+  store(accounts);
+  const s = getSettings();
+  const models = s.models.filter((m) => !m.startsWith(`${id}/`));
+  const patch: Partial<Settings> = { models };
+  if (s.defaultModel.startsWith(`${id}/`)) patch.defaultModel = models[0] ?? "opencode/big-pickle";
+  saveSettings(patch);
+}
+
+function parseAuth(raw: string): Record<string, any> | null {
+  if (!raw.trim()) return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export type ConnectedProvider = ReturnType<typeof connectedProviders>[number];
+export type Via = "pixel" | "env" | "auth.json" | "builtin";
+
+/** Every provider an agent can use: added here, or set up by hand in Settings (env vars, auth.json). */
+export function connectedProviders(s: Settings = getSettings()) {
+  const out = new Map<string, { id: string; name: string; via: Via[]; keyHint: string | null; envVars: string[]; baseURL: string | null; custom: ProviderAccount["custom"] | null; added: number | null }>();
+  const entry = (id: string, name?: string) => {
+    let e = out.get(id);
+    if (!e) out.set(id, (e = { id, name: name ?? cachedCatalog()?.get(id)?.name ?? id, via: [], keyHint: null, envVars: [], baseURL: null, custom: null, added: null }));
+    return e;
+  };
+  for (const a of Object.values(load())) {
+    const e = entry(a.id, a.name);
+    e.via.push("pixel");
+    e.keyHint = hint(a.key);
+    e.baseURL = a.baseURL ?? null;
+    e.custom = a.custom ?? null;
+    e.added = a.added;
+  }
+  for (const id of Object.keys(parseAuth(s.agentAuthJson) ?? {})) entry(id).via.push("auth.json");
+  for (const p of cachedCatalog()?.values() ?? []) {
+    const vars = p.env.filter((v) => s.agentEnv[v]);
+    if (vars.length) {
+      const e = entry(p.id);
+      e.via.push("env");
+      e.envVars = vars;
+    }
+  }
+  // opencode's own gateway serves its free models without a key.
+  if (!out.has("opencode")) entry("opencode", "OpenCode Zen").via.push("builtin");
+  return [...out.values()].sort((a, b) => (b.added ?? 0) - (a.added ?? 0) || a.name.localeCompare(b.name));
+}
+
+/** The environment and auth.json every agent (and the speed test) gets: Settings plus the providers added here. */
+export function agentCredentials(s: Settings = getSettings()): { env: Record<string, string>; authJson: string } {
+  const accounts = Object.values(load());
+  if (!accounts.length) return { env: s.agentEnv, authJson: s.agentAuthJson };
+  const auth = parseAuth(s.agentAuthJson);
+  if (auth === null) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
+  const merged: Record<string, any> = { ...(auth ?? {}) };
+  for (const a of accounts) if (a.key) merged[a.id] = { type: "api", key: a.key };
+
+  const provider: Record<string, any> = {};
+  for (const a of accounts) {
+    if (a.custom)
+      provider[a.id] = {
+        npm: NPM[a.custom.api ?? "openai"],
+        name: a.name,
+        options: { baseURL: a.baseURL },
+        models: Object.fromEntries(a.custom.models.map((m) => [m, { name: m, tool_call: true, limit: { context: a.custom!.context, output: Math.min(32_000, Math.floor(a.custom!.context / 4)) } }])),
+      };
+    else if (a.baseURL) provider[a.id] = { options: { baseURL: a.baseURL } };
+  }
+  const env = { ...s.agentEnv };
+  if (Object.keys(provider).length) {
+    let base: Record<string, any> = {};
+    try {
+      base = env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT) : {};
+    } catch {}
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, provider: { ...(base.provider ?? {}), ...provider } });
+  }
+  return { env, authJson: Object.keys(merged).length ? JSON.stringify(merged, null, 2) : "" };
+}
+
+/** Ask an endpoint which models it serves (GET {baseURL}/models, the same path in both APIs). */
+export async function discoverModels(baseURL: string, key?: string, id?: string, api: CustomApi = "openai") {
+  const url = cleanUrl(baseURL);
+  if (!url) throw new Error("base URL needed");
+  const stored = !key && id ? load()[id]?.key : undefined;
+  const auth = key?.trim() || stored;
+  const headers: Record<string, string> = api === "anthropic" ? { "anthropic-version": "2023-06-01", ...(auth && { "x-api-key": auth }) } : auth ? { authorization: `Bearer ${auth}` } : {};
+  const res = await fetch(`${url}/models`, { headers, signal: AbortSignal.timeout(15_000) }).catch((e) => {
+    throw new Error(`cannot reach ${url}/models: ${e.message}`);
+  });
+  if (!res.ok) throw new Error(`${url}/models answered ${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`);
+  const body: any = await res.json().catch(() => null);
+  const list: any[] = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : Array.isArray(body) ? body : [];
+  return { models: [...new Set(list.map((m) => (typeof m === "string" ? m : (m?.id ?? m?.name))).filter((m): m is string => typeof m === "string"))].sort() };
+}

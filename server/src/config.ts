@@ -37,6 +37,8 @@ export const config = {
 
   /** opencode binary for the process runtimes (local, single). */
   opencodeBin: env("OPENCODE_BIN", "opencode"),
+  /** Provider and model catalogue (the one opencode itself uses); empty = only the cached copy. */
+  modelsUrl: env("PIXEL_MODELS_URL", "https://models.dev/api.json"),
 
   /** `single` runtime: Pixel and every agent in one container (e.g. a Coolify deployment). */
   single: {

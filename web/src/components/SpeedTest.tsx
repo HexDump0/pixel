@@ -231,7 +231,7 @@ export function SpeedTest() {
 
       <div className="sec" style={{ borderTop: "1px solid var(--line)" }}>
         <span className="muted" style={{ fontSize: 12 }}>
-          Asks each model for about 250 words of prose in a throwaway opencode with no files, where every tool call is refused. Uses the provider keys from Settings. One sample per model, so treat small differences as noise; Provider health above shows what agents actually get.
+          Asks each model for about 250 words of prose in a throwaway opencode with no files, where every tool call is refused. Uses the providers set up on this page. One sample per model, so treat small differences as noise; the Health tab shows what agents actually get.
         </span>
       </div>
     </section>

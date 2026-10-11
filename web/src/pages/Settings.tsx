@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import type { Settings } from "../lib/types.ts";
+import { Link } from "../lib/router.tsx";
 import { Button, Card, ErrorBox, Field, PageHeader } from "../components/ui.tsx";
 
 type Update = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
@@ -106,7 +107,8 @@ export function SettingsPage() {
   const notifyOn = (k: keyof Settings["notify"]["on"], v: boolean) => update("notify", { ...s.notify, on: { ...s.notify.on, [k]: v } });
   const save = async () => {
     try {
-      const { defaults, ...rest } = s as Settings & { defaults?: unknown };
+      // Models, the default model and provider limits are edited on the Models page; don't overwrite them with this draft.
+      const { defaults, models, defaultModel, providerLimits, ...rest } = s as Settings & { defaults?: unknown };
       setS(await api.saveSettings(rest));
       setError(null);
     } catch (e: any) {
@@ -127,14 +129,15 @@ export function SettingsPage() {
       />
       <ErrorBox error={error} />
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card title="Models">
-          <div className="flex flex-col gap-3">
-            <Field label="Default model" hint="provider/model, as opencode names it">
-              <input className="input font-mono" value={s.defaultModel} onChange={(e) => update("defaultModel", e.target.value)} />
-            </Field>
-            <Field label="Models offered in the new-run form (one per line)">
-              <textarea className="input h-28 font-mono" value={s.models.join("\n")} onChange={(e) => update("models", e.target.value.split("\n").map((x) => x.trim()).filter(Boolean))} />
-            </Field>
+        <Card title="Models and providers">
+          <div className="flex flex-col gap-2 text-sm">
+            <div>
+              Add provider keys or custom endpoints, choose the models offered in the new-run form and set the default on the{" "}
+              <Link to="/models">Models page</Link>.
+            </div>
+            <div className="muted">
+              {s.models.length} models offered · default <span className="font-mono">{s.defaultModel}</span>
+            </div>
           </div>
         </Card>
 
@@ -161,8 +164,10 @@ export function SettingsPage() {
 
         <Card title="Agent credentials">
           <div className="flex flex-col gap-3">
-            <div className="text-xs muted">Injected into every new machine. Use read-only tokens only (e.g. a fine-grained GitHub token without write scopes).</div>
-            <Field label="Environment variables (provider API keys, GITHUB_TOKEN…)">
+            <div className="text-xs muted">
+              Injected into every new machine. Use read-only tokens only (e.g. a fine-grained GitHub token without write scopes). Provider keys are easier to add on the <Link to="/models">Models page</Link>; use this for anything else.
+            </div>
+            <Field label="Environment variables (GITHUB_TOKEN, extra provider variables…)">
               <EnvEditor value={s.agentEnv} onChange={(v) => update("agentEnv", v)} />
             </Field>
             <Field label="opencode auth.json (optional)" hint="Copied to ~/.local/share/opencode/auth.json in each machine">

@@ -16,6 +16,7 @@ import { db, listRuns } from "./db.ts";
 import { publish } from "./bus.ts";
 import { getSettings } from "./settings.ts";
 import { OpencodeClient } from "./opencode.ts";
+import { agentCredentials } from "./providerAccounts.ts";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -323,15 +324,15 @@ function rejectTools(client: OpencodeClient, tries: { n: number }) {
 }
 
 async function runSpeedTest(batch: string, models: string[]) {
-  const s = getSettings();
+  const creds = agentCredentials();
   mkdirSync(join(config.dataDir, "speedtest"), { recursive: true, mode: 0o700 });
   const dir = mkdtempSync(join(config.dataDir, "speedtest", "run-"));
   const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
   mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
   writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: "ask" }));
-  if (s.agentAuthJson.trim()) {
+  if (creds.authJson.trim()) {
     mkdirSync(join(xdg.XDG_DATA_HOME, "opencode"), { recursive: true });
-    writeFileSync(join(xdg.XDG_DATA_HOME, "opencode", "auth.json"), s.agentAuthJson, { mode: 0o600 });
+    writeFileSync(join(xdg.XDG_DATA_HOME, "opencode", "auth.json"), creds.authJson, { mode: 0o600 });
   }
   const work = join(dir, "work");
   mkdirSync(work);
@@ -350,7 +351,7 @@ async function runSpeedTest(batch: string, models: string[]) {
     proc = Bun.spawn([config.opencodeBin, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: work,
       // Only what opencode needs plus the provider keys from Settings; none of Pixel's own environment.
-      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...s.agentEnv, OPENCODE_SERVER_PASSWORD: password },
+      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...creds.env, OPENCODE_SERVER_PASSWORD: password },
       stdout: "ignore",
       stderr: "ignore",
     });
@@ -375,7 +376,7 @@ async function runSpeedTest(batch: string, models: string[]) {
       const [providerID, ...rest] = model.split("/");
       const modelID = rest.join("/");
       if (!known(providerID, modelID)) {
-        record(model, { ok: false, error: catalogue!.providers.some((x) => x.id === providerID) ? `unknown model for ${providerID}` : `provider ${providerID} not configured (add its key in Settings)` });
+        record(model, { ok: false, error: catalogue!.providers.some((x) => x.id === providerID) ? `unknown model for ${providerID}` : `provider ${providerID} not configured (add it under Models → Providers)` });
         continue;
       }
       const toolTries = { n: 0 };

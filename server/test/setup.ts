@@ -11,3 +11,4 @@ process.env.PIXEL_RUNTIME = "local";
 process.env.OPENCODE_BIN = fake;
 process.env.PIXEL_WATCHDOG_MS = "300";
 process.env.PIXEL_MIN_FREE_GIB = "0";
+process.env.PIXEL_MODELS_URL = "";
