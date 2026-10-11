@@ -4,8 +4,10 @@
  * text-only speed test.
  *
  * Calls and events are captured from the run event streams in events.ts. The speed test starts a
- * throwaway `opencode serve` with every permission denied and every tool switched off for the
- * request, so the model can only answer in text.
+ * throwaway `opencode serve` in an empty folder where every permission is "ask" and Pixel rejects
+ * every request, so the model can only answer in text. The tools stay in the request: opencode's own
+ * gateways (Zen, Go) refuse requests whose tool set differs from opencode's, so denying or
+ * switching off tools breaks free and Go models.
  */
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -269,14 +271,11 @@ const SPEED_PROMPT =
   "Write about 250 words explaining how a hash table resolves collisions, comparing separate chaining and open addressing. Plain prose in two or three paragraphs, no lists, no code, no headings.";
 const SPEED_TIMEOUT_MS = 120_000;
 
-/** Every permission opencode knows, denied; the request also switches off every tool. */
-const DENY_ALL = Object.fromEntries(["edit", "bash", "webfetch", "websearch", "read", "list", "glob", "grep", "task", "todowrite", "external_directory", "doom_loop", "question", "skill", "lsp"].map((k) => [k, "deny"]));
-const KNOWN_TOOLS = ["bash", "read", "write", "edit", "multiedit", "patch", "apply_patch", "list", "glob", "grep", "task", "todowrite", "todoread", "webfetch", "websearch", "question", "skill", "lsp", "batch", "codesearch"];
 
-let speedRunning: string | null = null;
+let speedRunning: { batch: string; models: string[]; current: string | null } | null = null;
 
 export function speedTestStatus() {
-  return { running: speedRunning };
+  return { running: speedRunning?.batch ?? null, models: speedRunning?.models ?? [], current: speedRunning?.current ?? null };
 }
 
 export function speedTests(limit = 200) {
@@ -295,12 +294,32 @@ export function startSpeedTest(models: string[]) {
   const list = [...new Set(models.map((m) => m.trim()).filter((m) => m.includes("/")))].slice(0, 12);
   if (!list.length) throw new Error("pick at least one model (provider/model)");
   const batch = `st-${Date.now().toString(36)}`;
-  speedRunning = batch;
+  speedRunning = { batch, models: list, current: null };
   void runSpeedTest(batch, list).finally(() => {
     speedRunning = null;
     publish("*", "speedtest", { batch, done: true });
   });
   return { batch, models: list };
+}
+
+/** Rejects every permission request and question while a speed test call is running. */
+function rejectTools(client: OpencodeClient, tries: { n: number }) {
+  let on = true;
+  const loop = async () => {
+    while (on) {
+      for (const p of await client.pendingPermissions().catch(() => [])) {
+        tries.n++;
+        await client.replyPermission(p.id, "reject").catch(() => {});
+      }
+      for (const q of await client.pendingQuestions().catch(() => [])) {
+        tries.n++;
+        await client.rejectQuestion(q.id).catch(() => {});
+      }
+      await Bun.sleep(300);
+    }
+  };
+  void loop();
+  return { stop: () => void (on = false) };
 }
 
 async function runSpeedTest(batch: string, models: string[]) {
@@ -309,7 +328,7 @@ async function runSpeedTest(batch: string, models: string[]) {
   const dir = mkdtempSync(join(config.dataDir, "speedtest", "run-"));
   const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
   mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
-  writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: DENY_ALL }));
+  writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: "ask" }));
   if (s.agentAuthJson.trim()) {
     mkdirSync(join(xdg.XDG_DATA_HOME, "opencode"), { recursive: true });
     writeFileSync(join(xdg.XDG_DATA_HOME, "opencode", "auth.json"), s.agentAuthJson, { mode: 0o600 });
@@ -343,22 +362,39 @@ async function runSpeedTest(batch: string, models: string[]) {
   const client = new OpencodeClient(`http://127.0.0.1:${port}`, password, work);
   try {
     await client.waitHealthy(30_000);
-    const ids = await client.req<string[]>("GET", "/experimental/tool/ids").catch(() => [] as string[]);
-    const tools = Object.fromEntries([...new Set([...KNOWN_TOOLS, ...(Array.isArray(ids) ? ids : [])])].map((t) => [t, false]));
+    // An unknown model makes opencode answer with a bare 500, so check the catalogue first.
+    const catalogue = await client.req<{ providers: { id: string; models: Record<string, unknown> }[] }>("GET", "/config/providers").catch(() => null);
+    const known = (providerID: string, modelID: string) => {
+      if (!catalogue?.providers) return true;
+      const p = catalogue.providers.find((x) => x.id === providerID);
+      return !!p && modelID in (p.models ?? {});
+    };
     for (const model of models) {
+      if (speedRunning) speedRunning.current = model;
       publish("*", "speedtest", { batch, current: model });
       const [providerID, ...rest] = model.split("/");
+      const modelID = rest.join("/");
+      if (!known(providerID, modelID)) {
+        record(model, { ok: false, error: catalogue!.providers.some((x) => x.id === providerID) ? `unknown model for ${providerID}` : `provider ${providerID} not configured (add its key in Settings)` });
+        continue;
+      }
+      const toolTries = { n: 0 };
+      const guard = rejectTools(client, toolTries);
       try {
         const session = await client.createSession(`speed test ${model}`);
         const started = Date.now();
         const res = await client.req<{ info: any; parts: any[] }>(
           "POST",
           `/session/${session.id}/message`,
-          { parts: [{ type: "text", text: SPEED_PROMPT }], model: { providerID, modelID: rest.join("/") }, tools },
+          { parts: [{ type: "text", text: SPEED_PROMPT }], model: { providerID, modelID } },
           undefined,
           SPEED_TIMEOUT_MS,
         );
         const info = res?.info ?? {};
+        if (toolTries.n) {
+          record(model, { ok: false, error: "tried to use a tool instead of answering in text (rejected)" });
+          continue;
+        }
         if (info.error) {
           record(model, { ok: false, error: `${info.error.name}: ${info.error.data?.message ?? ""}`.slice(0, 300) });
           continue;
@@ -380,13 +416,19 @@ async function runSpeedTest(batch: string, models: string[]) {
         });
       } catch (e: any) {
         record(model, { ok: false, error: String(e.message ?? e).slice(0, 300) });
+      } finally {
+        guard.stop();
       }
     }
   } catch (e: any) {
     for (const m of models) record(m, { ok: false, error: `opencode did not start: ${e.message}` });
   } finally {
+    // opencode serve can ignore SIGTERM (seen with 1.18.23), so don't wait on it for long.
     proc?.kill();
-    await proc?.exited;
+    if (proc && (await Promise.race([proc.exited.then(() => true), Bun.sleep(5000).then(() => false)])) === false) {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 }

@@ -61,3 +61,9 @@
 - **Provider benchmarking** (user picked from Claude's list): (1) Models leaderboard across runs, (2) live provider health, (4) quick speed test. Deferred: (3) benchmark suites with known bugs, (5) per-finding triage.
 - **Speed test is text-only** (Claude, agreed by the user): a throwaway `opencode serve` with every permission denied and every tool switched off per request, so the model can only answer in text; no tool-call reliability check.
 - **Built so far**: capture + health + leaderboard API, Models page with health and leaderboard. The speed test API exists but has no UI; the user asked to leave it for the next session.
+
+## 2026-10-11 (speed test)
+
+- **Speed test refuses tools by permission instead of switching them off** (Claude; the user confirmed opencode Go has the same "must look like opencode" request checks). opencode's gateways reject requests whose tool set differs from opencode's (403 FreeTierError), so "every permission denied, every tool off" broke free and Go models. Now: all tools in the request, `permission: "ask"`, Pixel rejects every request while the call runs, and a model that tries a tool is marked failed. Still text only in practice, with an empty work folder.
+- **Speed test UI** on the Models page: pick models (chips from Settings models, leaderboard, health and earlier successful tests, plus free entry), live per-model progress, latest batch as bars, earlier results below. One sample per model.
+

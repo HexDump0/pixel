@@ -128,7 +128,7 @@ export const api = {
   lanes: (id: string, minutes = 20) => request<Lanes>("GET", `${r(id)}/lanes${q({ minutes })}`),
   providerHealth: (minutes = 60) => request<ProviderHealth>("GET", `/providers/health${q({ minutes })}`),
   leaderboard: () => request<Leaderboard>("GET", "/providers/leaderboard"),
-  speedTests: () => request<{ running: string | null; results: SpeedTestRow[] }>("GET", "/speedtests"),
+  speedTests: () => request<{ running: string | null; models: string[]; current: string | null; results: SpeedTestRow[] }>("GET", "/speedtests"),
   startSpeedTest: (models: string[]) => request<{ batch: string; models: string[] }>("POST", "/speedtests", { models }),
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),

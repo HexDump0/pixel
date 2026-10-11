@@ -28,6 +28,8 @@ function Spark({ values }: { values: (number | null)[] }) {
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true" style={{ display: "inline-block", verticalAlign: "middle" }}>
       <path d={d} fill="none" strokeWidth={1.3} style={{ stroke: "var(--accent)" }} />
+      {/* A bucket with no neighbours draws no line; show it as a dot. */}
+      {pts.map((p, i) => (p && !pts[i - 1] && !pts[i + 1] ? <circle key={i} cx={p[0]} cy={p[1]} r={1.6} style={{ fill: "var(--accent)" }} /> : null))}
     </svg>
   );
 }

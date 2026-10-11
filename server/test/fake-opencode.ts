@@ -5,6 +5,10 @@
  *   "REPORT <path>"  write <path> then go idle
  *   "HANG"           stay busy forever
  *   anything else    reply and go idle (no report)
+ * Synchronous `POST /session/:id/message` (the speed test) is scripted by model id instead:
+ *   fake/fast    a ~300-token text answer
+ *   fake/broken  a provider error
+ *   fake/tool    asks for a bash permission and waits until it is answered
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -16,6 +20,7 @@ const hostname = args.includes("--hostname") ? args[args.indexOf("--hostname") +
 type Msg = { info: any; parts: any[] };
 const sessions = new Map<string, { info: any; messages: Msg[]; busy: boolean }>();
 const clients = new Set<ReadableStreamDefaultController<string>>();
+const permissions = new Map<string, { id: string; sessionID: string; permission: string; reply?: string }>();
 let n = 0;
 const id = (p: string) => `${p}_${Date.now().toString(36)}${(n++).toString(36)}`;
 
@@ -37,6 +42,24 @@ function ensureSession(sid: string) {
     sessions.set(sid, { info, messages: [], busy: false });
   }
   return sessions.get(sid)!;
+}
+
+async function handleSyncPrompt(sid: string, modelID: string) {
+  const created = Date.now();
+  const info: any = { id: id("msg"), sessionID: sid, role: "assistant", time: { created }, tokens: { input: 50, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } };
+  if (modelID === "broken") return { info: { ...info, error: { name: "APIError", data: { message: "boom", statusCode: 500 } } }, parts: [] };
+  if (modelID === "tool") {
+    const perm = { id: id("per"), sessionID: sid, permission: "bash" };
+    permissions.set(perm.id, perm);
+    while (!permissions.get(perm.id)?.reply) await Bun.sleep(20);
+    return { info: { ...info, time: { created, completed: Date.now() } }, parts: [] };
+  }
+  await Bun.sleep(30);
+  const start = Date.now();
+  await Bun.sleep(300);
+  info.tokens.output = 300;
+  info.time.completed = Date.now();
+  return { info, parts: [{ id: id("prt"), sessionID: sid, messageID: info.id, type: "text", text: "Separate chaining keeps a list per bucket.", time: { start, end: info.time.completed } }] };
 }
 
 async function handlePrompt(sid: string, text: string) {
@@ -111,10 +134,20 @@ Bun.serve({
       if (sessions.get(m[1])?.busy) setStatus(m[1], false);
       return Response.json(true);
     }
-    if ((m = /^\/session\/([^/]+)\/message$/.exec(path))) return Response.json(sessions.get(m[1])?.messages ?? []);
+    if ((m = /^\/session\/([^/]+)\/message$/.exec(path))) {
+      if (req.method === "POST") return Response.json(await handleSyncPrompt(m[1], (await req.json()).model?.modelID));
+      return Response.json(sessions.get(m[1])?.messages ?? []);
+    }
+    if (path === "/config/providers") return Response.json({ providers: [{ id: "fake", models: { fast: {}, broken: {}, tool: {} } }] });
+    if (path === "/permission") return Response.json([...permissions.values()].filter((p) => !p.reply));
+    if ((m = /^\/permission\/([^/]+)\/reply$/.exec(path))) {
+      const p = permissions.get(m[1]);
+      if (p) p.reply = (await req.json()).reply;
+      return Response.json(true);
+    }
     if ((m = /^\/session\/([^/]+)\/(children|todo)$/.exec(path))) return Response.json([]);
     if ((m = /^\/session\/([^/]+)$/.exec(path))) return Response.json(sessions.get(m[1])?.info ?? {});
-    if (path === "/permission" || path === "/question") return Response.json([]);
+    if (path === "/question") return Response.json([]);
     return new Response("not found", { status: 404 });
   },
 });
