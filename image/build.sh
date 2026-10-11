@@ -21,6 +21,7 @@ incus exec "$BUILD" -- cloud-init status --wait >/dev/null 2>&1 || true
 
 incus exec "$BUILD" -- mkdir -p /root/pixel-provision
 for f in provision.sh opencode.json opencode.service; do incus file push "$f" "$BUILD/root/pixel-provision/$f"; done
+for f in ../opencode-plugins/*.ts; do incus file push "$f" "$BUILD/root/pixel-provision/$(basename "$f")"; done
 incus exec "$BUILD" -- env OPENCODE_VERSION="$OPENCODE_VERSION" ${GHIDRA_URL:+GHIDRA_URL="$GHIDRA_URL"} ${CODEQL_VERSION:+CODEQL_VERSION="$CODEQL_VERSION"} bash /root/pixel-provision/provision.sh
 
 echo "==> Publishing as $ALIAS"

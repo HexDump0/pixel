@@ -55,6 +55,9 @@ ln -sf /opt/codeql/codeql /usr/local/bin/codeql
 log "opencode config and service"
 install -d /root/.config/opencode /etc/pixel /work /scratch /workbases
 install -m 0644 /root/pixel-provision/opencode.json /root/.config/opencode/opencode.json
+# opencode plugins from the repo's opencode-plugins/ (e.g. resume interrupted subagents)
+install -d /root/.config/opencode/plugin
+install -m 0644 /root/pixel-provision/*.ts /root/.config/opencode/plugin/
 install -m 0644 /root/pixel-provision/opencode.service /etc/systemd/system/opencode.service
 touch /etc/pixel/opencode.env && chmod 0600 /etc/pixel/opencode.env
 systemctl daemon-reload

@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "types": ["bun"]
   },
-  "include": ["server/src", "web/src"]
+  "include": ["server/src", "web/src", "opencode-plugins"]
 }

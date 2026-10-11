@@ -4,7 +4,7 @@
  * Subclasses decide which user the agent runs as, its environment and its limits.
  */
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, copyFileSync } from "node:fs";
 import type { Subprocess } from "bun";
 import { config } from "../config.ts";
 import type { RunRow } from "../db.ts";
@@ -117,6 +117,9 @@ export abstract class ProcessRuntime implements Runtime {
     const env = this.xdgEnv(run);
     mkdirSync(join(env.XDG_CONFIG_HOME, "opencode"), { recursive: true });
     writeFileSync(join(env.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify(this.opencodeConfig(), null, 2));
+    const plugins = join(env.XDG_CONFIG_HOME, "opencode", "plugin");
+    mkdirSync(plugins, { recursive: true });
+    for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts"))) copyFileSync(join(config.opencodePluginsDir, f), join(plugins, f));
     if (authJson.trim()) {
       mkdirSync(join(env.XDG_DATA_HOME, "opencode"), { recursive: true });
       writeFileSync(join(env.XDG_DATA_HOME, "opencode", "auth.json"), authJson, { mode: 0o600 });

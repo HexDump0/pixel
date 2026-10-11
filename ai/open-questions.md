@@ -12,3 +12,4 @@
 - [ ] Coolify (single runtime): does the server's owner agree to untrusted agent code running there? How much RAM/CPU/disk can Pixel have?
 - [ ] Coolify: does that install honour `cap_add: NET_ADMIN`, `cpus`, `mem_limit` and `tmpfs` from the compose file? Check the System page (`Agent firewall: on`) after the first deploy.
 - [ ] `Dockerfile.single` has not been built in full yet (only a slim test image). First build on the server may need package fixes (radare2 already dropped: not in Debian 13).
+- [ ] resume-subagents plugin: confirm live (user's opencode or first Pixel run) that after a stop the agent resumes the same child sessions via task_id. Re-check the experimental hook when bumping opencode.

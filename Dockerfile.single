@@ -49,6 +49,7 @@ RUN bun install --frozen-lockfile
 COPY server ./server
 COPY web ./web
 COPY templates ./templates
+COPY opencode-plugins ./opencode-plugins
 
 ENV NODE_ENV=production \
     PIXEL_DATA=/srv/pixel \

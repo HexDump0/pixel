@@ -14,6 +14,8 @@ export const config = {
   transcriptsDir: join(dataDir, "transcripts"),
   dbPath: join(dataDir, "pixel.db"),
   templatesDir: resolve(import.meta.dir, "../../templates"),
+  /** opencode plugins every agent gets (copied into its opencode config; baked into pixel-image for Incus). */
+  opencodePluginsDir: resolve(import.meta.dir, "../../opencode-plugins"),
 
   host: env("PIXEL_HOST", "127.0.0.1"),
   port: Number(env("PIXEL_PORT", "7700")),

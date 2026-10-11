@@ -74,6 +74,10 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 - **Knowledge**: full-text search over all workbases, `INDEX.md`, and a graph of which agents read which other workbases.
 - **CLI**: `bun run cli -- run <repo> --wait`, `ls`, `show`, `log`, `msg`, `continue`, `triage`, … (`PIXEL_URL`, `PIXEL_PASSWORD`).
 
+### Interrupted subagents
+
+When a run is paused, aborted, OOM-killed or restarted while task-tool subagents are running, their sessions survive in opencode but the agent normally can't see their ids, so it starts new ones and their work is lost. Every agent gets the opencode plugin [`opencode-plugins/resume-subagents.ts`](opencode-plugins/resume-subagents.ts), which adds each interrupted subagent's `task_id` and a "resume it with task_id" hint to the history the model sees. It also works in a normal opencode: copy it to `~/.config/opencode/plugin/`.
+
 ### What Pixel does on its own
 
 | Situation | Action |
@@ -106,6 +110,7 @@ web/src/           React dashboard (Tailwind): pages/, pages/run/, components/, 
 image/             pixel-image build (provision.sh, opencode config + systemd unit)
 Dockerfile.single, compose.single.yaml   single-container mode (Coolify)
 templates/         seed prompt templates
+opencode-plugins/  opencode plugins every agent gets (resume interrupted subagents)
 server/test/       bun tests, with a fake opencode server
 ai/                design notes and decisions
 ```

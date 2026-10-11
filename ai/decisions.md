@@ -44,3 +44,7 @@
 - **Workload for `single`** (user): mostly code review; agents test hypotheses on native builds with what's installed, no Docker. Fuzzing and Ghidra only for rare cases, so Ghidra and CodeQL are off by default in `Dockerfile.single` (build args turn them on). Sizing: about 3 GiB per agent; 8 GB / 4 CPUs for about 3 agents.
 - **Prompt's machine line is per runtime**: new template variable `{{machine}}` (`Runtime.describeMachine`) replaces the hard-coded "root on a disposable VM" line in `templates/audit.md`.
 - **Git** (user): work directly on `main`, no branches.
+
+## 2026-10-11 (subagents)
+
+- **Interrupted subagents** (user): stopping an agent with parallel subagents loses their work on continue; the agent respawns them. Cause (opencode 1.18.23, read from the binary): an aborted task call becomes `error: "Tool execution aborted"` with the child id only in `state.metadata.sessionId` (+ `interrupted: true`); after a crash it stays `running` and the model sees `"[Tool execution was interrupted]"`. The child session itself is intact and the task tool can resume it via `task_id`. Fix chosen (user): an **opencode plugin**, `opencode-plugins/resume-subagents.ts`, using `experimental.chat.messages.transform` to put the task_id and a resume hint into the model's copy of the history. Installed for every runtime (copied into the agent's opencode config; baked into pixel-image). Also usable in the user's own opencode.

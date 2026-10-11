@@ -57,6 +57,12 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - PTY: `POST /pty/{id}/connect-token` returns 403 for server-side callers (tickets are for browsers). Pixel connects to `/pty/{id}/connect` directly with the basic-auth header and proxies to the dashboard.
 - `permission: "allow"` as a single value allows everything (question tool included).
 
+## Subagents
+
+- Subagents are task-tool child sessions (`parentID` = caller). Pixel records them (transcript, costs) and pulls them in `syncTranscript` via `/session/:id/children`.
+- Interrupted subagents: see decisions.md (2026-10-11, subagents). The `resume-subagents` plugin rewrites, in the history copy sent to the model only, the latest task call per child session that is aborted (`error` + `interrupted`/"abort") or left `pending`/`running` by a crash: status `error`, error text + `task_id` hint, `interrupted` dropped (with `interrupted` and a string `metadata.output`, opencode would show that output instead of the error). Background tasks are skipped. opencode calls every exported function of a plugin file as a plugin, so the file exports only the plugin.
+- Tested: `server/test/plugin.test.ts` drives the hook with opencode-shaped messages. opencode 1.18.23 starts with the plugin in its plugin dir, but a full live check (stop with running subagents → continue → same child session resumed) hasn't been done yet.
+
 ## Recovery details
 
 - `onIdle` and `recover` run serialised per run, so an idle event and a watchdog check can't both act.
