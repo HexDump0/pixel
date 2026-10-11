@@ -12,6 +12,7 @@ import { snapshotWorkbase } from "./history.ts";
 import { writeIndex } from "./knowledge.ts";
 import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
+import { startFleet, stopFleet } from "./fleet.ts";
 import dashboard from "../../web/index.html";
 
 /** Client-side routes of the dashboard SPA. */
@@ -65,6 +66,7 @@ seedTemplates();
 writeIndex();
 await reattach();
 startWatchdog();
+startFleet();
 startBackupSchedule();
 
 /** Full-text index of the workbases, for dashboard search. */
@@ -94,6 +96,7 @@ console.log(`Pixel (${runtime.kind} runtime) listening on http://${server.hostna
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     stopWatchdog();
+    stopFleet();
     server.stop();
     process.exit(0);
   });

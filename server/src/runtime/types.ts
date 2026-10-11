@@ -62,6 +62,8 @@ export interface Runtime {
   listSnapshots(run: RunRow): Promise<{ name: string; created: string }[]>;
   restore(run: RunRow, name: string): Promise<void>;
   destroy(run: RunRow): Promise<void>;
+  /** Process id of the run's opencode, where the runtime knows it (process runtimes). */
+  pid?(run: RunRow): number | null;
   /** One line for the prompt's environment section: what the machine is and what the agent may do there. */
   describeMachine(run: RunRow): string;
   /** Shell command the user can run to get a shell in the machine. */

@@ -8,6 +8,7 @@ import { defaultSettings, getSettings, saveSettings, type Settings } from "../se
 import { runtime } from "../runtime/index.ts";
 import { search } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
+import { fleetSnapshot, lanes, recentActivity } from "../fleet.ts";
 import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { get, post, put, readJson } from "./router.ts";
@@ -44,6 +45,12 @@ get("/workbases/index", () => {
   const p = join(config.workbasesDir, "INDEX.md");
   return { content: existsSync(p) ? readFileSync(p, "utf8") : "" };
 });
+
+// ---- fleet telemetry (Runs page, run panel, Activity page) ----
+
+get("/fleet", () => fleetSnapshot());
+get("/activity", ({ query }) => recentActivity(Math.min(500, Number(query.get("limit") ?? 200)), query.get("run") ?? undefined));
+get("/runs/:id/lanes", ({ params: { id }, query }) => lanes(id, Math.min(240, Number(query.get("minutes") ?? 20))) ?? { from: 0, to: 0, lanes: [] });
 
 // ---- settings ----
 

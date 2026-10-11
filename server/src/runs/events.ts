@@ -4,6 +4,7 @@ import { publish } from "../bus.ts";
 import type { OpencodeEvent } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
 import { recordCrossReads } from "../crossreads.ts";
+import { onPart } from "../fleet.ts";
 import { clientFor, notifyRun, setRun, timeline } from "./state.ts";
 import { onIdle } from "./lifecycle.ts";
 
@@ -110,6 +111,7 @@ function storeMessage(runId: string, info: any) {
 function storePart(runId: string, w: Watcher, part: any) {
   upsertPart.run(part.id, runId, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
   publish(runId, "part", part);
+  onPart(runId, part);
   if (part.type !== "tool" || w.seenCalls.has(part.id)) return;
   const input = part.state?.input;
   if (!input || !Object.keys(input).length) return;

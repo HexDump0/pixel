@@ -164,6 +164,11 @@ export abstract class ProcessRuntime implements Runtime {
     });
   }
 
+  pid(run: RunRow) {
+    const p = this.procs.get(run.id);
+    return p && !p.exit ? (p.proc.pid ?? null) : null;
+  }
+
   async opencodeState(run: RunRow): Promise<OpencodeState> {
     const p = this.procs.get(run.id);
     if (!p) return "exited";
