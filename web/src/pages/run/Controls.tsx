@@ -4,11 +4,13 @@ import { api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import type { RunDetail } from "../../lib/types.ts";
 import { Button } from "../../components/ui.tsx";
+import { ModelAndThinking } from "../../components/ModelSelect.tsx";
 
 export function Controls({ detail, onChange }: { detail: RunDetail; onChange: () => void }) {
   const r = detail.run;
   const id = r.id;
   const [text, setText] = useState("");
+  const [change, setChange] = useState<{ model: string; variant: string } | null>(null);
   const live = ["running", "recovering"].includes(r.status);
   const hasSession = !!r.session_id;
   const act = (fn: () => Promise<unknown>) => async () => {
@@ -64,14 +66,9 @@ export function Controls({ detail, onChange }: { detail: RunDetail; onChange: ()
         <Button small onClick={act(() => api.control(id, "reset-counters"))} done="Counters reset">
           Reset counters
         </Button>
-        <Button
-          small
-          onClick={act(async () => {
-            const m = prompt("New model (provider/model):", r.model);
-            if (m) await api.setModel(id, m);
-          })}
-        >
-          Change model
+        <Button small onClick={() => setChange(change ? null : { model: r.model, variant: r.variant ?? "" })}>
+          Model: <span className="font-mono">{r.model.split("/").slice(1).join("/")}</span>
+          {r.variant ? <span className="font-mono muted">· {r.variant}</span> : null}
         </Button>
         <span className="mx-1 w-px bg-zinc-200 dark:bg-zinc-800" />
         {r.status === "failed" && (
@@ -110,6 +107,29 @@ export function Controls({ detail, onChange }: { detail: RunDetail; onChange: ()
           Delete…
         </Button>
       </div>
+      {change && (
+        <div className="flex flex-col gap-2 rounded-lg p-3" style={{ border: "1px solid var(--line)" }}>
+          <span className="eyebrow">Model and thinking · applies from the next message</span>
+          <ModelAndThinking model={change.model} variant={change.variant} onModel={(model) => setChange({ ...change, model })} onVariant={(variant) => setChange({ ...change, variant })} />
+          <div className="flex gap-1.5">
+            <Button
+              small
+              variant="primary"
+              disabled={change.model === r.model && change.variant === (r.variant ?? "")}
+              onClick={act(async () => {
+                await api.setModel(id, change.model, change.variant);
+                setChange(null);
+              })}
+              done="Model updated"
+            >
+              Apply
+            </Button>
+            <button className="btn btn-sm" onClick={() => setChange(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

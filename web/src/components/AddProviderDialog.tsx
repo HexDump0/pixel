@@ -199,6 +199,7 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");
   const [key, setKey] = useState("");
   const [context, setContext] = useState(String(existing?.custom?.context ?? 128000));
+  const [reasoning, setReasoning] = useState(!!existing?.custom?.reasoning);
   const [models, setModels] = useState<string[]>(existing?.custom?.models ?? []);
   const [found, setFound] = useState<string[] | null>(null);
   const [extra, setExtra] = useState("");
@@ -223,7 +224,7 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
   };
   const save = async () => {
     try {
-      await api.saveProvider(finalId, { name, baseURL, key: existing && !key ? undefined : key, custom: { api: apiType, models, context: Number(context) } });
+      await api.saveProvider(finalId, { name, baseURL, key: existing && !key ? undefined : key, custom: { api: apiType, models, context: Number(context), reasoning } });
       onSaved(finalId, models);
     } catch (e: any) {
       setError(e.message);
@@ -286,6 +287,13 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
         <Field label="Context window (tokens)" hint="Used for every model here; opencode compacts the session before it fills up.">
           <input className="input num" type="number" min={1024} value={context} onChange={(e) => setContext(e.target.value)} />
         </Field>
+        <label className="flex items-start gap-2 text-sm sm:col-span-2">
+          <input type="checkbox" className="mt-0.5" checked={reasoning} onChange={(e) => setReasoning(e.target.checked)} />
+          <span>
+            Models can think
+            <span className="block text-xs muted">Offers thinking levels for these models ({apiType === "anthropic" ? "thinking budgets" : "reasoning effort low / medium / high"}). Leave off for models that don't reason; you can also add your own levels later.</span>
+          </span>
+        </label>
       </div>
 
       <div className="flex flex-col gap-2">

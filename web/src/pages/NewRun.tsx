@@ -3,6 +3,7 @@ import { api, type CreateRunInput } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import { navigate, useLocation } from "../lib/router.tsx";
 import { Button, Card, ErrorBox, Field, Notice, PageHeader } from "../components/ui.tsx";
+import { ModelAndThinking } from "../components/ModelSelect.tsx";
 
 /** Prefill from the URL, e.g. /new?repo=…&parent=… (used by "re-audit" on a run page). */
 function initialFromQuery(search: string) {
@@ -23,6 +24,7 @@ export function NewRunPage() {
   const [templateId, setTemplateId] = useState("");
   const [version, setVersion] = useState<number | "">("");
   const [model, setModel] = useState(init.model);
+  const [variant, setVariant] = useState("");
   const [size, setSize] = useState("");
   const [parentRun, setParentRun] = useState(init.parentRun);
   const [autopilot, setAutopilot] = useState(true);
@@ -68,6 +70,7 @@ export function NewRunPage() {
       templateId,
       templateVersion: version || undefined,
       model,
+      variant: compare ? undefined : variant || undefined,
       size,
       parentRun: parentRun || undefined,
       autopilot,
@@ -121,12 +124,11 @@ export function NewRunPage() {
 
           <Card title="Agent">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Model" hint="provider/model">
-                <input className="input font-mono" list="models" value={model} onChange={(e) => setModel(e.target.value)} />
-                <datalist id="models">
-                  {s?.models.map((m) => <option key={m} value={m} />)}
-                </datalist>
-              </Field>
+              <div className="label sm:col-span-2">
+                <span>Model and thinking</span>
+                {model ? <ModelAndThinking model={model} variant={variant} onModel={setModel} onVariant={setVariant} /> : <div className="input muted">loading…</div>}
+                {compare && <span className="text-[11px]">Compare mode runs every model below at its default thinking.</span>}
+              </div>
               <Field label="Machine size" hint={preset ? `${preset.cpu} CPU · ${preset.memoryGiB} GiB RAM · ${preset.diskGiB} GiB disk` : undefined}>
                 <select className="input" value={size} onChange={(e) => setSize(e.target.value)}>
                   {s && Object.keys(s.sizePresets).map((k) => <option key={k}>{k}</option>)}

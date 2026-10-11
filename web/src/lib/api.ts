@@ -26,6 +26,18 @@ import type {
   WorkbaseInfo,
 } from "./types.ts";
 
+export interface OfferedModel {
+  model: string;
+  provider: string;
+  providerName: string;
+  name: string;
+  context: number | null;
+  costIn: number | null;
+  costOut: number | null;
+  reasoning: boolean;
+  connected: boolean;
+}
+
 export interface GithubInfo {
   tokenHint: string | null;
   mcp: boolean;
@@ -73,6 +85,7 @@ export interface CreateRunInput {
   templateId: string;
   templateVersion?: number;
   model?: string;
+  variant?: string;
   models?: string[];
   templateVersions?: number[];
   size?: string;
@@ -110,7 +123,7 @@ export const api = {
   control: (id: string, action: string, body: unknown = {}) => request("POST", `${r(id)}/${action}`, body),
   message: (id: string, text: string) => request("POST", `${r(id)}/message`, { text }),
   resume: (id: string, message?: string) => request("POST", `${r(id)}/resume`, { message }),
-  setModel: (id: string, model: string) => request("POST", `${r(id)}/model`, { model }),
+  setModel: (id: string, model: string, variant?: string | null) => request("POST", `${r(id)}/model`, { model, variant }),
   setAutopilot: (id: string, on: boolean) => request("POST", `${r(id)}/autopilot`, { on }),
   vmAction: (id: string, action: "start" | "stop" | "snapshot" | "restore", snapshot?: string) => request("POST", `${r(id)}/vm/${action}`, { snapshot }),
   deleteVm: (id: string) => request("DELETE", `${r(id)}/vm`),
@@ -146,14 +159,16 @@ export const api = {
   speedTests: () => request<{ running: string | null; models: string[]; current: string | null; results: SpeedTestRow[] }>("GET", "/speedtests"),
   startSpeedTest: (models: string[]) => request<{ batch: string; models: string[] }>("POST", "/speedtests", { models }),
   providers: () => request<ConnectedProvider[]>("GET", "/providers"),
-  saveProvider: (id: string, body: { name?: string; key?: string; baseURL?: string; custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number } }) =>
+  saveProvider: (id: string, body: { name?: string; key?: string; baseURL?: string; custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number; reasoning?: boolean } }) =>
     request<{ id: string }>("PUT", `/providers/${encodeURIComponent(id)}`, body),
   removeProvider: (id: string) => request("DELETE", `/providers/${encodeURIComponent(id)}`),
   discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
   catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
   catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),
-  livePrompt: (body: { model: string; text: string; session?: string; turn: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
+  livePrompt: (body: { model: string; variant?: string; text: string; session?: string; turn: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
   liveAbort: (session: string) => request("POST", `/live/${encodeURIComponent(session)}/abort`),
+  models: () => request<{ defaultModel: string; models: OfferedModel[] }>("GET", "/models"),
+  modelVariants: () => request<Record<string, string[]>>("GET", "/models/variants"),
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
 };

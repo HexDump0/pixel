@@ -17,6 +17,8 @@ export interface NewRun {
   templateId: string;
   templateVersion?: number;
   model?: string;
+  /** Thinking level (opencode model variant); empty = the model's default. */
+  variant?: string;
   /** Preset name or explicit size. */
   size?: string | RunSize;
   /** Earlier run whose workbase is offered as a starting point (re-audit). */
@@ -79,9 +81,11 @@ export function createRun(o: NewRun): RunRow {
     randomSecret(),
     Date.now(),
   );
+  const variant = o.variant?.trim();
+  if (variant) db.query("UPDATE runs SET variant = ? WHERE id = ?").run(variant, id);
   ensureWorkbase(id);
   refreshRunFiles(id);
-  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}, template ${tv.template_id} v${tv.version}`);
+  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}${variant ? ` (thinking ${variant})` : ""}, template ${tv.template_id} v${tv.version}`);
   const run = getRun(id)!;
   publish("*", "run", publicRun(run));
   void prepare(id);
@@ -166,7 +170,7 @@ export async function prepare(id: string) {
     const session = await client.createSession(run.id);
     run = setStatus(id, "running", null, { session_id: session.id, prompt: text, agent_status: "busy", last_activity: Date.now() })!;
     watch(id);
-    await client.prompt(session.id, text, run.model);
+    await client.prompt(session.id, text, run.model, run.variant);
     timeline(id, "pixel", "prompt", "Sent the audit prompt", { chars: text.length });
     snapshotWorkbase(id, "start").catch(() => {});
   } catch (e: any) {

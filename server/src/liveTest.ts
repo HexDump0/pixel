@@ -133,7 +133,7 @@ export function liveStatus() {
 }
 
 /** Send one prompt; continues `session` when it's still alive, else starts a new chat. */
-export async function livePrompt(input: { model?: string; text?: string; session?: string; turn?: string }) {
+export async function livePrompt(input: { model?: string; variant?: string; text?: string; session?: string; turn?: string }) {
   const model = input.model?.trim() ?? "";
   const text = input.text?.trim() ?? "";
   if (!model.includes("/")) throw new Error("pick a model (provider/model)");
@@ -150,9 +150,19 @@ export async function livePrompt(input: { model?: string; text?: string; session
   if (prev && !prev.done) throw new Error("this chat is still answering; stop it first");
   const turn: Turn = { id: turnId, session, model, sent: Date.now(), firstToken: null, assistant: new Set(), done: false };
   turns.set(session, turn);
-  send(turn, "sent", { at: turn.sent, model });
-  await inst.client.prompt(session, text, model);
+  send(turn, "sent", { at: turn.sent, model, variant: input.variant || null });
+  await inst.client.prompt(session, text, model, input.variant || null);
   return { session, turn: turn.id };
+}
+
+/** Thinking levels (opencode variants) per provider/model, from the warm opencode. */
+export async function modelVariants(): Promise<Record<string, string[]>> {
+  touch();
+  const inst = await instance(() => {});
+  const cat = await inst.providers();
+  const out: Record<string, string[]> = {};
+  for (const p of cat?.providers ?? []) for (const [id, m] of Object.entries(p.models ?? {})) if (m.variants && Object.keys(m.variants).length) out[`${p.id}/${id}`] = Object.keys(m.variants);
+  return out;
 }
 
 export async function liveAbort(session: string) {

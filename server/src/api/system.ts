@@ -68,6 +68,7 @@ put("/settings", async ({ req }) => {
     } catch {}
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("opencode auth.json must be a JSON object");
   }
+  if (patch.thinkingLevels !== undefined) validateThinking(patch.thinkingLevels);
   saveSettings(Object.fromEntries(Object.entries(patch).filter(([k]) => known.includes(k))) as Partial<Settings>);
   return withDefaults(getSettings());
 });
@@ -77,6 +78,19 @@ post("/github/check", () => checkGithub());
 post("/settings/test-notify", async () => ({
   results: await notify("test", "Pixel test notification", "If you can read this, notifications work.", config.publicUrl || undefined),
 }));
+
+function validateThinking(v: unknown) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("thinkingLevels must be an object");
+  for (const [model, levels] of Object.entries(v)) {
+    if (!model.includes("/")) throw new Error(`thinking levels: ${model} is not provider/model`);
+    if (!levels || typeof levels !== "object" || Array.isArray(levels)) throw new Error(`thinking levels for ${model} must be an object`);
+    for (const [name, opts] of Object.entries(levels)) {
+      if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name)) throw new Error(`thinking level name "${name}": lowercase letters, digits, - or _`);
+      if (!opts || typeof opts !== "object" || Array.isArray(opts)) throw new Error(`thinking level ${name}: options must be a JSON object`);
+      if (JSON.stringify(opts).length > 2000) throw new Error(`thinking level ${name}: options too long`);
+    }
+  }
+}
 
 // ---- system ----
 

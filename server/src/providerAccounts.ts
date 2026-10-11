@@ -18,7 +18,7 @@ export interface ProviderAccount {
   key: string;
   baseURL?: string;
   /** Not in the catalogue: an endpoint speaking the OpenAI or Anthropic API, serving these model ids. */
-  custom?: { api: CustomApi; models: string[]; context: number };
+  custom?: { api: CustomApi; models: string[]; context: number; reasoning?: boolean };
   /** Send `prompt_cache_key` (the session id) so repeat requests hit the provider's cache; see opencode-plugins/prompt-cache-key.ts. */
   cacheKey?: boolean;
   added: number;
@@ -30,7 +30,7 @@ export interface AccountInput {
   /** Omitted when editing = keep the stored key. */
   key?: string;
   baseURL?: string;
-  custom?: { api?: CustomApi; models: string[]; context?: number };
+  custom?: { api?: CustomApi; models: string[]; context?: number; reasoning?: boolean };
   cacheKey?: boolean;
 }
 
@@ -39,6 +39,15 @@ export interface AccountInput {
  * (opencode sends one by itself for OpenAI, Anthropic, xAI, Mistral, DeepInfra, Cerebras and its own gateways).
  */
 const CACHE_KEY_BY_DEFAULT = new Set(["coralbricks"]);
+
+/**
+ * Thinking levels some providers accept beyond the low/medium/high opencode offers for
+ * OpenAI-compatible models. Coral Bricks: reasoning_effort none | low | high | max (medium = high);
+ * DeepSeek V4.1 Flash reasons only when asked, GLM 5.3 always does.
+ */
+const PROVIDER_LEVELS: Record<string, Record<string, Record<string, unknown>>> = {
+  coralbricks: { none: { reasoningEffort: "none" }, max: { reasoningEffort: "max" } },
+};
 
 export type CustomApi = "openai" | "anthropic";
 /** AI SDK package opencode loads for each custom API type (both ship inside opencode). */
@@ -91,7 +100,7 @@ export async function saveAccount(input: AccountInput) {
     name: input.name?.trim() || known?.name || old?.name || id,
     key,
     ...(baseURL && { baseURL }),
-    ...(custom && { custom: { api: custom.api === "anthropic" ? "anthropic" : "openai", models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000) } }),
+    ...(custom && { custom: { api: custom.api === "anthropic" ? "anthropic" : "openai", models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000), ...(custom.reasoning && { reasoning: true }) } }),
     ...((input.cacheKey ?? old?.cacheKey ?? CACHE_KEY_BY_DEFAULT.has(id)) && { cacheKey: true }),
     added: old?.added ?? Date.now(),
   };
@@ -164,7 +173,11 @@ export function agentCredentials(s: Settings = getSettings()): { env: Record<str
   const github = githubForAgents();
   // Settings env first, so the GitHub card wins over a GITHUB_TOKEN typed there by hand.
   const env = { ...s.agentEnv, ...github.env };
-  if (!accounts.length && !github.mcp) return { env, authJson: s.agentAuthJson };
+  // Provider levels first, so your own levels with the same name win.
+  const levels: [string, Record<string, Record<string, unknown>>][] = [];
+  for (const a of accounts) if (PROVIDER_LEVELS[a.id]) for (const m of s.models.filter((m) => m.startsWith(`${a.id}/`))) levels.push([m, PROVIDER_LEVELS[a.id]]);
+  levels.push(...Object.entries(s.thinkingLevels ?? {}).filter(([, v]) => Object.keys(v).length));
+  if (!accounts.length && !github.mcp && !levels.length) return { env, authJson: s.agentAuthJson };
 
   const auth = parseAuth(s.agentAuthJson);
   if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
@@ -179,9 +192,19 @@ export function agentCredentials(s: Settings = getSettings()): { env: Record<str
         npm: NPM[a.custom.api ?? "openai"],
         name: a.name,
         options,
-        models: Object.fromEntries(a.custom.models.map((m) => [m, { name: m, tool_call: true, limit: { context: a.custom!.context, output: Math.min(32_000, Math.floor(a.custom!.context / 4)) } }])),
+        models: Object.fromEntries(
+          a.custom.models.map((m) => [m, { name: m, tool_call: true, ...(a.custom!.reasoning && { reasoning: true }), limit: { context: a.custom!.context, output: Math.min(32_000, Math.floor(a.custom!.context / 4)) } }]),
+        ),
       };
     else if (Object.keys(options).length) provider[a.id] = { options };
+  }
+  // Custom thinking levels become extra variants on the model, next to opencode's own.
+  for (const [full, vs] of levels) {
+    const [pid, ...rest] = full.split("/");
+    const mid = rest.join("/");
+    const p = (provider[pid] ??= {});
+    p.models ??= {};
+    p.models[mid] = { ...(p.models[mid] ?? {}), variants: { ...(p.models[mid]?.variants ?? {}), ...vs } };
   }
   const cacheKey = accounts.filter((a) => a.cacheKey).map((a) => a.id);
   if (cacheKey.length) env.PIXEL_CACHE_KEY_PROVIDERS = cacheKey.join(",");

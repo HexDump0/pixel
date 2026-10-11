@@ -1,7 +1,9 @@
 /** /api/providers, /api/catalog and /api/speedtests: connected providers, the model catalogue, provider health, the model leaderboard, and text-only speed tests. */
 import { health, leaderboard, speedTests, speedTestStatus, startSpeedTest } from "../providers.ts";
 import { catalogProvider, catalogProviders } from "../catalog.ts";
-import { liveAbort, livePrompt, liveStatus } from "../liveTest.ts";
+import { liveAbort, livePrompt, liveStatus, modelVariants } from "../liveTest.ts";
+import { cachedCatalog } from "../catalog.ts";
+import { getSettings } from "../settings.ts";
 import { connectedProviders, discoverModels, removeAccount, saveAccount, type AccountInput } from "../providerAccounts.ts";
 import { del, get, post, put, readJson, HttpError } from "./router.ts";
 
@@ -34,6 +36,35 @@ post("/providers/discover", async ({ req }) => {
   const b = await readJson<{ baseURL?: string; key?: string; id?: string; api?: "openai" | "anthropic" }>(req);
   return discoverModels(b.baseURL ?? "", b.key, b.id, b.api === "anthropic" ? "anthropic" : "openai");
 });
+
+// ---- models offered in the new-run form, for the model pickers ----
+
+get("/models", async () => {
+  await catalogProviders();
+  const s = getSettings();
+  const names = new Map(connectedProviders(s).map((p) => [p.id, p]));
+  return {
+    defaultModel: s.defaultModel,
+    models: s.models.map((full) => {
+      const [provider, ...rest] = full.split("/");
+      const id = rest.join("/");
+      const m = cachedCatalog()?.get(provider)?.models.find((x) => x.id === id);
+      const p = names.get(provider);
+      return {
+        model: full,
+        provider,
+        providerName: p?.name ?? cachedCatalog()?.get(provider)?.name ?? provider,
+        name: m?.name ?? id,
+        context: m?.context ?? p?.custom?.context ?? null,
+        costIn: m?.costIn ?? null,
+        costOut: m?.costOut ?? null,
+        reasoning: m?.reasoning ?? !!p?.custom?.reasoning,
+        connected: !!p,
+      };
+    }),
+  };
+});
+get("/models/variants", () => modelVariants());
 
 // ---- live test ----
 

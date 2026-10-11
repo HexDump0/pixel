@@ -135,7 +135,10 @@ post("/runs/:id/stop", ({ params: { id } }) => controls.stopRun(id));
 post("/runs/:id/done", ({ params: { id } }) => controls.markDone(id));
 post("/runs/:id/retry", ({ params: { id } }) => controls.retryPrepare(id));
 post("/runs/:id/restart-opencode", ({ params: { id } }) => controls.restartOpencode(id));
-post("/runs/:id/model", async ({ req, params: { id } }) => controls.setModel(id, (await readJson(req)).model));
+post("/runs/:id/model", async ({ req, params: { id } }) => {
+  const b = await readJson<{ model?: string; variant?: string | null }>(req);
+  return controls.setModel(id, b.model, b.variant);
+});
 post("/runs/:id/autopilot", async ({ req, params: { id } }) => controls.setAutopilot(id, !!(await readJson(req)).on));
 post("/runs/:id/reset-counters", ({ params: { id } }) => controls.resetCounters(id));
 post("/runs/:id/sync", ({ params: { id } }) => syncTranscript(id));

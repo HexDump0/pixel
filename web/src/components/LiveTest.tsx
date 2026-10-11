@@ -8,6 +8,7 @@ import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { money, tokens as fmtTokens } from "../lib/format.ts";
 import { Markdown } from "./Markdown.tsx";
+import { ModelSelect, ThinkingSelect } from "./ModelSelect.tsx";
 import { toast } from "./Toast.tsx";
 
 type Status = "starting" | "waiting" | "streaming" | "done" | "error" | "stopped";
@@ -143,6 +144,7 @@ function TurnView({ t, now }: { t: Turn; now: number }) {
 
 export function LiveTest({ model: initial, models, onClose }: { model: string; models: string[]; onClose: () => void }) {
   const [model, setModel] = useState(initial);
+  const [variant, setVariant] = useState("");
   const [session, setSession] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -152,7 +154,6 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
   const lastChars = useRef<{ at: number; chars: number } | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
-  const options = useMemo(() => [...new Set([initial, ...models])].sort(), [initial, models]);
   const cur = turns[turns.length - 1];
   const busy = active(cur);
 
@@ -258,11 +259,11 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
     stick.current = true;
     setTurns((ts) => [
       ...ts,
-      { id, prompt, model, status: "waiting", queued: Date.now(), sent: null, firstMs: null, firstAt: null, doneAt: null, parts: [], out: null, cost: 0, error: null, retry: null, tools: [], rates: [] },
+      { id, prompt, model: variant ? `${model} · ${variant}` : model, status: "waiting", queued: Date.now(), sent: null, firstMs: null, firstAt: null, doneAt: null, parts: [], out: null, cost: 0, error: null, retry: null, tools: [], rates: [] },
     ]);
     setInput("");
     try {
-      const r = await api.livePrompt({ model, text: prompt, session: session ?? undefined, turn: id });
+      const r = await api.livePrompt({ model, variant: variant || undefined, text: prompt, session: session ?? undefined, turn: id });
       setSession(r.session);
     } catch (e: any) {
       patch(id, (t) => ({ ...t, status: "error", error: e.message ?? String(e), doneAt: Date.now() }));
@@ -292,13 +293,7 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
         <header>
           <div className="min-w-0 flex-1">
             <div className="eyebrow">Live test</div>
-            <select className="lt-model mono" value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
-              {options.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            <ModelSelect value={model} onChange={setModel} compact />
           </div>
           <button className="btn btn-sm" onClick={reset} disabled={!turns.length}>
             New chat
@@ -307,6 +302,11 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
             ✕
           </button>
         </header>
+
+        <div className="lt-think-row">
+          <span className="eyebrow">Thinking</span>
+          <ThinkingSelect model={model} value={variant} onChange={setVariant} />
+        </div>
 
         <div className="lt-meters">
           <Meter

@@ -157,6 +157,12 @@ CREATE TABLE IF NOT EXISTS files_index (
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, content, tokenize = 'porter unicode61');
 `);
 
+// Columns added after the first release: add them to existing databases.
+for (const [table, column, type] of [["runs", "variant", "TEXT"]] as const) {
+  const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+
 export type RunStatus =
   | "preparing"
   | "running"
@@ -185,6 +191,8 @@ export interface RunRow {
   template_version: number | null;
   prompt: string | null;
   model: string;
+  /** opencode model variant (thinking level), null = the model's default. */
+  variant: string | null;
   size: string;
   status: RunStatus;
   status_detail: string | null;

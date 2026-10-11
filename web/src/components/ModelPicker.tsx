@@ -8,6 +8,7 @@ import { useAsync } from "../lib/hooks.ts";
 import { tokens } from "../lib/format.ts";
 import type { CatalogModel, ConnectedProvider, Settings } from "../lib/types.ts";
 import { ErrorBox } from "./ui.tsx";
+import { refreshModels } from "./ModelSelect.tsx";
 import { toast } from "./Toast.tsx";
 
 const price = (n: number | null) => (n == null ? "–" : n === 0 ? "0" : n < 1 ? n.toFixed(2) : String(Math.round(n * 10) / 10));
@@ -43,6 +44,7 @@ export function ModelPicker({ provider, settings, onSettings, onTest }: { provid
   const save = async (patch: Partial<Settings>) => {
     try {
       onSettings(await api.saveSettings(patch));
+      refreshModels();
     } catch (e: any) {
       toast(e.message ?? String(e), "error");
     }

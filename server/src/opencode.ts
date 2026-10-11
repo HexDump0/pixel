@@ -66,8 +66,9 @@ export class OpencodeClient {
     return this.req<any>("GET", `/session/${id}`);
   }
 
-  prompt(sessionId: string, text: string, model?: string) {
+  prompt(sessionId: string, text: string, model?: string, variant?: string | null) {
     const body: any = { parts: [{ type: "text", text }] };
+    if (variant) body.variant = variant;
     if (model) {
       const i = model.indexOf("/");
       body.model = { providerID: model.slice(0, i), modelID: model.slice(i + 1) };

@@ -33,6 +33,8 @@ export interface Settings {
   historyIntervalMin: number;
   /** Per-minute limits per "provider/model" (tokens, requests), shown against live usage on the Models page. */
   providerLimits: Record<string, { tpm?: number; rpm?: number }>;
+  /** Custom thinking levels per "provider/model": level name → provider options (opencode model variants). */
+  thinkingLevels: Record<string, Record<string, Record<string, unknown>>>;
 }
 
 export const defaultSettings: Settings = {
@@ -62,6 +64,7 @@ export const defaultSettings: Settings = {
   backup: { repository: "", password: "", env: {}, dailyHour: -1 },
   historyIntervalMin: 5,
   providerLimits: {},
+  thinkingLevels: {},
 };
 
 export function getSettings(): Settings {

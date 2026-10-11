@@ -108,8 +108,8 @@ export function SettingsPage() {
   const notifyOn = (k: keyof Settings["notify"]["on"], v: boolean) => update("notify", { ...s.notify, on: { ...s.notify.on, [k]: v } });
   const save = async () => {
     try {
-      // Models, the default model and provider limits are edited on the Models page; don't overwrite them with this draft.
-      const { defaults, models, defaultModel, providerLimits, ...rest } = s as Settings & { defaults?: unknown };
+      // Models, the default model, provider limits and thinking levels are edited elsewhere; don't overwrite them with this draft.
+      const { defaults, models, defaultModel, providerLimits, thinkingLevels, ...rest } = s as Settings & { defaults?: unknown };
       setS(await api.saveSettings(rest));
       setError(null);
     } catch (e: any) {

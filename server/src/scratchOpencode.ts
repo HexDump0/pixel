@@ -16,6 +16,8 @@ export interface ScratchOpencode {
   creds: string;
   /** Is provider/model in this opencode's catalogue? An unknown model gets a bare 500 otherwise. */
   check(model: string): Promise<string | null>;
+  /** The providers and models this opencode can use (with each model's variants = thinking levels). */
+  providers(): Promise<Catalogue | null>;
   stop(): Promise<void>;
 }
 
@@ -29,6 +31,8 @@ function withoutMcp(env: Record<string, string>) {
     return env;
   }
 }
+
+type Catalogue = { providers: { id: string; models: Record<string, { variants?: Record<string, unknown> }> }[] };
 
 const freePort = () => {
   const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
@@ -89,9 +93,10 @@ export async function startScratchOpencode(kind: string): Promise<ScratchOpencod
     throw new Error(`opencode did not start: ${e.message}`);
   }
 
-  let catalogue: { providers: { id: string; models: Record<string, unknown> }[] } | null | undefined;
+  let catalogue: Catalogue | null | undefined;
+  const providers = async () => (catalogue ??= await client.req<Catalogue>("GET", "/config/providers").catch(() => null));
   const check = async (model: string) => {
-    catalogue ??= await client.req("GET", "/config/providers").catch(() => null);
+    await providers();
     if (!catalogue?.providers) return null;
     const [providerID, ...rest] = model.split("/");
     const p = catalogue.providers.find((x) => x.id === providerID);
@@ -99,5 +104,5 @@ export async function startScratchOpencode(kind: string): Promise<ScratchOpencod
     return rest.join("/") in (p.models ?? {}) ? null : `unknown model for ${providerID}`;
   };
 
-  return { client, creds: JSON.stringify(creds), check, stop };
+  return { client, creds: JSON.stringify(creds), check, providers, stop };
 }

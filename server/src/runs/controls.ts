@@ -94,11 +94,15 @@ export async function restartOpencode(id: string) {
   timeline(id, "pixel", "restart", "opencode is back (no message sent)");
 }
 
-export function setModel(id: string, model: string) {
-  if (!model?.includes("/")) throw new Error("model must look like provider/model");
+/** Change the model and/or thinking level; both apply from the next message. `variant` "" = the model's default. */
+export function setModel(id: string, model?: string, variant?: string | null) {
   const run = mustRun(id);
-  setRun(id, { model });
-  timeline(id, "user", "model", `Model changed from ${run.model} to ${model} (applies from the next message)`);
+  const m = model?.trim() || run.model;
+  if (!m.includes("/")) throw new Error("model must look like provider/model");
+  const v = variant === undefined ? (m === run.model ? run.variant : null) : variant?.trim() || null;
+  setRun(id, { model: m, variant: v });
+  const label = (mm: string, vv: string | null) => `${mm}${vv ? ` (thinking ${vv})` : ""}`;
+  timeline(id, "user", "model", `Model changed from ${label(run.model, run.variant)} to ${label(m, v)} (applies from the next message)`);
 }
 
 export function setAutopilot(id: string, on: boolean) {
@@ -198,6 +202,7 @@ export function rerun(id: string, opts: { asFollowUp?: boolean; model?: string; 
     templateId: run.template_id!,
     templateVersion: opts.templateVersion,
     model: opts.model || run.model,
+    variant: opts.model && opts.model !== run.model ? undefined : (run.variant ?? undefined),
     size: JSON.parse(run.size),
     parentRun: opts.asFollowUp ? run.id : undefined,
     autopilot: !!run.autopilot,

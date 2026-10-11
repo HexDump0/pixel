@@ -12,7 +12,7 @@ import { syncTranscript, transcript, unwatch } from "./events.ts";
 
 export async function sendPrompt(run: RunRow, text: string) {
   setRun(run.id, { agent_status: "busy", last_activity: Date.now() });
-  await clientFor(run).prompt(run.session_id!, text, run.model);
+  await clientFor(run).prompt(run.session_id!, text, run.model, run.variant);
 }
 
 const pendingQuestions = (runId: string) =>

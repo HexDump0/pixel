@@ -12,6 +12,7 @@ import { ProviderHealth } from "../components/ProviderHealth.tsx";
 import { ModelLeaderboard } from "../components/ModelLeaderboard.tsx";
 import { SpeedTest } from "../components/SpeedTest.tsx";
 import { LiveTest } from "../components/LiveTest.tsx";
+import { refreshModels } from "../components/ModelSelect.tsx";
 
 type Tab = "providers" | "health" | "leaderboard" | "speed";
 const TABS: Tab[] = ["providers", "health", "leaderboard", "speed"];
@@ -51,6 +52,7 @@ export function ModelsPage() {
 
   const saved = async (id: string, offer?: string[]) => {
     setDialog(null);
+    refreshModels();
     await providers.reload();
     if (offer?.length && settings) {
       const add = offer.map((m) => `${id}/${m}`).filter((m) => !settings.models.includes(m));
