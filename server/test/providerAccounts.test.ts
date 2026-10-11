@@ -14,6 +14,7 @@ beforeAll(() => {
       anthropic: { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic", models: { "claude-x": { id: "claude-x", name: "Claude X", tool_call: true, limit: { context: 200000, output: 64000 }, cost: { input: 3, output: 15 } } } },
       groq: { id: "groq", name: "Groq", env: ["GROQ_API_KEY"], models: { "llama-y": { id: "llama-y", name: "Llama Y", tool_call: false } } },
       opencode: { id: "opencode", name: "OpenCode Zen", env: ["OPENCODE_API_KEY"], models: {} },
+      coralbricks: { id: "coralbricks", name: "CoralBricks", env: ["CORAL_API_KEY"], npm: "@ai-sdk/openai-compatible", api: "https://inference.coralbricks.ai/v1", models: {} },
     }),
   );
 });
@@ -56,6 +57,14 @@ describe("provider accounts", () => {
     expect(cfg.provider.home.models.qwen.limit.context).toBe(128000);
     // No key, no auth.json entry.
     expect(JSON.parse(agentCredentials().authJson).home).toBeUndefined();
+  });
+
+  test("Coral Bricks gets a prompt cache key through the plugin", async () => {
+    await saveAccount({ id: "coralbricks", key: "cb-1" });
+    expect(agentCredentials().env.PIXEL_CACHE_KEY_PROVIDERS).toBe("coralbricks");
+    await saveAccount({ id: "coralbricks", cacheKey: false });
+    expect(agentCredentials().env.PIXEL_CACHE_KEY_PROVIDERS).toBeUndefined();
+    removeAccount("coralbricks");
   });
 
   test("rejects bad input", async () => {

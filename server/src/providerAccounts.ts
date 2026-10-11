@@ -18,6 +18,8 @@ export interface ProviderAccount {
   baseURL?: string;
   /** Not in the catalogue: an endpoint speaking the OpenAI or Anthropic API, serving these model ids. */
   custom?: { api: CustomApi; models: string[]; context: number };
+  /** Send `prompt_cache_key` (the session id) so repeat requests hit the provider's cache; see opencode-plugins/prompt-cache-key.ts. */
+  cacheKey?: boolean;
   added: number;
 }
 
@@ -28,7 +30,14 @@ export interface AccountInput {
   key?: string;
   baseURL?: string;
   custom?: { api?: CustomApi; models: string[]; context?: number };
+  cacheKey?: boolean;
 }
+
+/**
+ * OpenAI-compatible providers that cache prompts but only get a cache key from opencode when asked
+ * (opencode sends one by itself for OpenAI, Anthropic, xAI, Mistral, DeepInfra, Cerebras and its own gateways).
+ */
+const CACHE_KEY_BY_DEFAULT = new Set(["coralbricks"]);
 
 export type CustomApi = "openai" | "anthropic";
 /** AI SDK package opencode loads for each custom API type (both ship inside opencode). */
@@ -82,6 +91,7 @@ export async function saveAccount(input: AccountInput) {
     key,
     ...(baseURL && { baseURL }),
     ...(custom && { custom: { api: custom.api === "anthropic" ? "anthropic" : "openai", models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000) } }),
+    ...((input.cacheKey ?? old?.cacheKey ?? CACHE_KEY_BY_DEFAULT.has(id)) && { cacheKey: true }),
     added: old?.added ?? Date.now(),
   };
   store(accounts);
@@ -155,16 +165,19 @@ export function agentCredentials(s: Settings = getSettings()): { env: Record<str
 
   const provider: Record<string, any> = {};
   for (const a of accounts) {
+    const options = { ...(a.baseURL && { baseURL: a.baseURL }) };
     if (a.custom)
       provider[a.id] = {
         npm: NPM[a.custom.api ?? "openai"],
         name: a.name,
-        options: { baseURL: a.baseURL },
+        options,
         models: Object.fromEntries(a.custom.models.map((m) => [m, { name: m, tool_call: true, limit: { context: a.custom!.context, output: Math.min(32_000, Math.floor(a.custom!.context / 4)) } }])),
       };
-    else if (a.baseURL) provider[a.id] = { options: { baseURL: a.baseURL } };
+    else if (Object.keys(options).length) provider[a.id] = { options };
   }
   const env = { ...s.agentEnv };
+  const cacheKey = accounts.filter((a) => a.cacheKey).map((a) => a.id);
+  if (cacheKey.length) env.PIXEL_CACHE_KEY_PROVIDERS = cacheKey.join(",");
   if (Object.keys(provider).length) {
     let base: Record<string, any> = {};
     try {

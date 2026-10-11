@@ -4,7 +4,7 @@
  * caller can refuse every tool call. The tools stay in the request: opencode's own gateways (Zen,
  * Go) refuse requests whose tool set differs from opencode's.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
 import { OpencodeClient } from "./opencode.ts";
@@ -32,6 +32,10 @@ export async function startScratchOpencode(kind: string): Promise<ScratchOpencod
   const dir = mkdtempSync(join(config.dataDir, kind, "run-"));
   const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
   mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
+  // Same plugins as the agents, so tests see the requests agents send.
+  const plugins = join(xdg.XDG_CONFIG_HOME, "opencode", "plugin");
+  mkdirSync(plugins, { recursive: true });
+  for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts"))) copyFileSync(join(config.opencodePluginsDir, f), join(plugins, f));
   writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: "ask" }));
   if (creds.authJson.trim()) {
     mkdirSync(join(xdg.XDG_DATA_HOME, "opencode"), { recursive: true });
