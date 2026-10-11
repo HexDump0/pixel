@@ -16,7 +16,7 @@ import { startFleet, stopFleet } from "./fleet.ts";
 import dashboard from "../../web/index.html";
 
 /** Client-side routes of the dashboard SPA. */
-const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/login"];
+const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/login"];
 
 async function handleAuth(req: Request, url: URL): Promise<Response | null> {
   switch (url.pathname) {

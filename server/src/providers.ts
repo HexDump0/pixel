@@ -1,0 +1,395 @@
+/**
+ * Provider and model telemetry: one row per model call (time to first token, duration, tokens,
+ * cost, error), provider retries/errors/rate limits, a per-model leaderboard across runs, and a
+ * text-only speed test.
+ *
+ * Calls and events are captured from the run event streams in events.ts. The speed test starts a
+ * throwaway `opencode serve` with every permission denied and every tool switched off for the
+ * request, so the model can only answer in text.
+ */
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { config } from "./config.ts";
+import { db, listRuns } from "./db.ts";
+import { publish } from "./bus.ts";
+import { getSettings } from "./settings.ts";
+import { OpencodeClient } from "./opencode.ts";
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id          TEXT PRIMARY KEY,               -- assistant message id
+  run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  session_id  TEXT NOT NULL,
+  provider    TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  created     INTEGER NOT NULL,
+  first_token INTEGER,
+  completed   INTEGER,
+  tokens_in   INTEGER NOT NULL DEFAULT 0,
+  tokens_out  INTEGER NOT NULL DEFAULT 0,
+  tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+  tokens_cache INTEGER NOT NULL DEFAULT 0,
+  cost        REAL NOT NULL DEFAULT 0,
+  error       TEXT
+);
+CREATE INDEX IF NOT EXISTS llm_calls_model ON llm_calls(provider, model, created);
+
+CREATE TABLE IF NOT EXISTS provider_events (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts       INTEGER NOT NULL,
+  run_id   TEXT,
+  provider TEXT NOT NULL,
+  model    TEXT NOT NULL,
+  kind     TEXT NOT NULL,                     -- ratelimit | error | retry
+  message  TEXT
+);
+CREATE INDEX IF NOT EXISTS provider_events_ts ON provider_events(ts);
+
+CREATE TABLE IF NOT EXISTS speedtests (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch      TEXT NOT NULL,
+  ts         INTEGER NOT NULL,
+  provider   TEXT NOT NULL,
+  model      TEXT NOT NULL,
+  ttft_ms    INTEGER,
+  total_ms   INTEGER,
+  tokens_out INTEGER,
+  tps        REAL,
+  ok         INTEGER NOT NULL DEFAULT 0,
+  error      TEXT
+);
+`);
+
+const RATE_LIMIT = /rate.?limit|429|too many requests|quota|overloaded|capacity/i;
+
+// ---- capture (called from events.ts) ----
+
+const upsertCall = db.query(
+  `INSERT INTO llm_calls (id, run_id, session_id, provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, tokens_cache, cost, error)
+   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+   ON CONFLICT(id) DO UPDATE SET first_token = COALESCE(llm_calls.first_token, excluded.first_token), completed = excluded.completed,
+     tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out, tokens_reasoning = excluded.tokens_reasoning,
+     tokens_cache = excluded.tokens_cache, cost = excluded.cost, error = excluded.error`,
+);
+const addEvent = db.query("INSERT INTO provider_events (ts, run_id, provider, model, kind, message) VALUES (?, ?, ?, ?, ?, ?)");
+
+/** Assistant messages we have seen, so part events can mark their first token. */
+const assistant = new Map<string, { firstToken: number | null }>();
+const erroredMessages = new Set<string>();
+const lastRetry = new Map<string, number>();
+
+function event(runId: string | null, provider: string, model: string, kind: string, message: string) {
+  const ts = Date.now();
+  addEvent.run(ts, runId, provider, model, kind, message.slice(0, 500));
+  publish("*", "provider", { ts, run: runId, provider, model, kind, message });
+}
+
+export function onMessage(runId: string, info: any) {
+  if (info?.role !== "assistant" || !info.providerID || !info.modelID) return;
+  let seen = assistant.get(info.id);
+  if (!seen) assistant.set(info.id, (seen = { firstToken: null }));
+  const t = info.tokens ?? {};
+  const err = info.error && info.error.name !== "MessageAbortedError" ? `${info.error.name}: ${info.error.data?.message ?? ""}`.slice(0, 300) : null;
+  upsertCall.run(
+    info.id,
+    runId,
+    info.sessionID,
+    info.providerID,
+    info.modelID,
+    info.time?.created ?? Date.now(),
+    seen.firstToken,
+    info.time?.completed ?? null,
+    t.input ?? 0,
+    t.output ?? 0,
+    t.reasoning ?? 0,
+    (t.cache?.read ?? 0) + (t.cache?.write ?? 0),
+    info.cost ?? 0,
+    err,
+  );
+  if (info.time?.completed) assistant.delete(info.id);
+  if (err && !erroredMessages.has(info.id)) {
+    erroredMessages.add(info.id);
+    const status = info.error.data?.statusCode;
+    event(runId, info.providerID, info.modelID, status === 429 || RATE_LIMIT.test(err) ? "ratelimit" : "error", err);
+  }
+}
+
+/** First streamed text, reasoning or tool part of an assistant message = its first token. */
+export function onPartActivity(messageId: string | undefined) {
+  if (!messageId) return;
+  const seen = assistant.get(messageId);
+  if (!seen || seen.firstToken) return;
+  seen.firstToken = Date.now();
+  db.query("UPDATE llm_calls SET first_token = ? WHERE id = ? AND first_token IS NULL").run(seen.firstToken, messageId);
+}
+
+/** opencode retrying a model call (rate limits, overloads, network errors). */
+export function onRetry(runId: string, model: string, sessionId: string, status: any) {
+  const key = `${sessionId}:${status?.attempt ?? ""}`;
+  if (lastRetry.has(key)) return;
+  lastRetry.set(key, Date.now());
+  if (lastRetry.size > 500) lastRetry.delete(lastRetry.keys().next().value!);
+  const [provider, ...rest] = model.split("/");
+  const msg = String(status?.message ?? "retry");
+  event(runId, provider, rest.join("/"), RATE_LIMIT.test(msg) ? "ratelimit" : "retry", `attempt ${status?.attempt ?? "?"}: ${msg}`);
+}
+
+// ---- health: the last hour, per provider/model ----
+
+const pct = (xs: number[], p: number) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
+};
+
+interface CallRow {
+  provider: string;
+  model: string;
+  created: number;
+  first_token: number | null;
+  completed: number | null;
+  tokens_in: number;
+  tokens_out: number;
+  tokens_reasoning: number;
+  error: string | null;
+}
+
+const ttftOf = (c: CallRow) => (c.first_token && c.first_token >= c.created ? c.first_token - c.created : null);
+/** Output speed while streaming; very short answers say little about throughput, so they're skipped. */
+const tpsOf = (c: CallRow) => {
+  const out = c.tokens_out + c.tokens_reasoning;
+  if (!c.first_token || !c.completed || out < 30) return null;
+  const s = (c.completed - c.first_token) / 1000;
+  return s > 0.2 ? out / s : null;
+};
+
+export function health(minutes = 60) {
+  const now = Date.now();
+  const from = now - minutes * 60_000;
+  const BUCKETS = 12;
+  const size = (now - from) / BUCKETS;
+  const calls = db.query<CallRow, [number]>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls WHERE created >= ?").all(from);
+  const events = db.query<{ ts: number; provider: string; model: string; kind: string; message: string }, [number]>("SELECT ts, provider, model, kind, message FROM provider_events WHERE ts >= ? ORDER BY ts DESC").all(from);
+  const limits = getSettings().providerLimits;
+  const keys = new Set([...calls.map((c) => `${c.provider}/${c.model}`), ...events.map((e) => `${e.provider}/${e.model}`)]);
+  return [...keys].sort().map((key) => {
+    const cs = calls.filter((c) => `${c.provider}/${c.model}` === key);
+    const es = events.filter((e) => `${e.provider}/${e.model}` === key);
+    const buckets = Array.from({ length: BUCKETS }, (_, i) => {
+      const b = cs.filter((c) => c.created >= from + i * size && c.created < from + (i + 1) * size);
+      return {
+        calls: b.length,
+        ttft: pct(b.map(ttftOf).filter((x): x is number => x != null), 50),
+        tps: pct(b.map(tpsOf).filter((x): x is number => x != null), 50),
+        errors: b.filter((c) => c.error).length + es.filter((e) => e.ts >= from + i * size && e.ts < from + (i + 1) * size && e.kind !== "error").length,
+      };
+    });
+    const ttfts = cs.map(ttftOf).filter((x): x is number => x != null);
+    const tps = cs.map(tpsOf).filter((x): x is number => x != null);
+    // Rate over the last 5 minutes, to compare with a provider's per-minute limits.
+    const recent = cs.filter((c) => c.created >= now - 5 * 60_000);
+    const tokensPerMin = recent.reduce((a, c) => a + c.tokens_in + c.tokens_out + c.tokens_reasoning, 0) / 5;
+    const errors = cs.filter((c) => c.error).length;
+    const rateLimits = es.filter((e) => e.kind === "ratelimit").length;
+    const retries = es.filter((e) => e.kind === "retry").length;
+    const errorRate = cs.length ? errors / cs.length : 0;
+    return {
+      key,
+      calls: cs.length,
+      ttft: { p50: pct(ttfts, 50), p90: pct(ttfts, 90) },
+      tps: { p50: pct(tps, 50) },
+      errors,
+      rateLimits,
+      retries,
+      errorRate,
+      tokensPerMin,
+      requestsPerMin: recent.length / 5,
+      limit: limits[key] ?? null,
+      state: rateLimits > 0 && es.find((e) => e.kind === "ratelimit")!.ts > now - 10 * 60_000 ? "limited" : errorRate > 0.2 || retries > 3 ? "degraded" : cs.length ? "ok" : "idle",
+      lastEvent: es[0] ?? null,
+      buckets,
+    };
+  });
+}
+
+// ---- leaderboard: every run, grouped by model ----
+
+const REAL = ["real findings", "partly real"];
+
+export function leaderboard() {
+  const runs = listRuns();
+  const callStats = db
+    .query<CallRow, []>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls")
+    .all();
+  const models = [...new Set(runs.map((r) => r.model))];
+  return models
+    .map((model) => {
+      const rs = runs.filter((r) => r.model === model);
+      const finished = rs.filter((r) => ["done", "triaged"].includes(r.status) || r.report_ready);
+      const gaveUp = rs.filter((r) => ["stopped", "failed"].includes(r.status) && !r.report_ready);
+      const closed = finished.length + gaveUp.length;
+      const durations = finished.filter((r) => r.started_at && r.finished_at).map((r) => r.finished_at! - r.started_at!);
+      const verdicts: Record<string, number> = {};
+      for (const r of rs) if (r.triage_verdict) verdicts[r.triage_verdict] = (verdicts[r.triage_verdict] ?? 0) + 1;
+      const real = rs.filter((r) => r.triage_verdict && REAL.includes(r.triage_verdict)).length;
+      const triaged = rs.filter((r) => r.triage_verdict).length;
+      const cost = rs.reduce((a, r) => a + r.cost, 0);
+      const tokens = rs.reduce((a, r) => a + r.tokens_in + r.tokens_out + r.tokens_reasoning, 0);
+      const cs = callStats.filter((c) => `${c.provider}/${c.model}` === model);
+      return {
+        model,
+        runs: rs.length,
+        active: rs.filter((r) => ["preparing", "running", "recovering", "paused"].includes(r.status)).length,
+        finished: finished.length,
+        gaveUp: gaveUp.length,
+        finishRate: closed ? finished.length / closed : null,
+        medianDuration: pct(durations, 50),
+        avgTokens: rs.length ? tokens / rs.length : 0,
+        avgCost: rs.length ? cost / rs.length : 0,
+        totalCost: cost,
+        avgContinues: rs.length ? rs.reduce((a, r) => a + r.continues, 0) / rs.length : 0,
+        avgOom: rs.length ? rs.reduce((a, r) => a + r.oom_restarts, 0) / rs.length : 0,
+        triaged,
+        real,
+        realRate: triaged ? real / triaged : null,
+        costPerReal: real ? cost / real : null,
+        verdicts,
+        calls: cs.length,
+        ttftP50: pct(cs.map(ttftOf).filter((x): x is number => x != null), 50),
+        tpsP50: pct(cs.map(tpsOf).filter((x): x is number => x != null), 50),
+        callErrorRate: cs.length ? cs.filter((c) => c.error).length / cs.length : null,
+      };
+    })
+    .sort((a, b) => b.runs - a.runs);
+}
+
+// ---- speed test: a fixed text-only prompt per model ----
+
+const SPEED_PROMPT =
+  "Write about 250 words explaining how a hash table resolves collisions, comparing separate chaining and open addressing. Plain prose in two or three paragraphs, no lists, no code, no headings.";
+const SPEED_TIMEOUT_MS = 120_000;
+
+/** Every permission opencode knows, denied; the request also switches off every tool. */
+const DENY_ALL = Object.fromEntries(["edit", "bash", "webfetch", "websearch", "read", "list", "glob", "grep", "task", "todowrite", "external_directory", "doom_loop", "question", "skill", "lsp"].map((k) => [k, "deny"]));
+const KNOWN_TOOLS = ["bash", "read", "write", "edit", "multiedit", "patch", "apply_patch", "list", "glob", "grep", "task", "todowrite", "todoread", "webfetch", "websearch", "question", "skill", "lsp", "batch", "codesearch"];
+
+let speedRunning: string | null = null;
+
+export function speedTestStatus() {
+  return { running: speedRunning };
+}
+
+export function speedTests(limit = 200) {
+  return db.query("SELECT * FROM speedtests ORDER BY ts DESC LIMIT ?").all(limit);
+}
+
+const freePort = () => {
+  const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const p = s.port;
+  s.stop(true);
+  return p;
+};
+
+export function startSpeedTest(models: string[]) {
+  if (speedRunning) throw new Error("a speed test is already running");
+  const list = [...new Set(models.map((m) => m.trim()).filter((m) => m.includes("/")))].slice(0, 12);
+  if (!list.length) throw new Error("pick at least one model (provider/model)");
+  const batch = `st-${Date.now().toString(36)}`;
+  speedRunning = batch;
+  void runSpeedTest(batch, list).finally(() => {
+    speedRunning = null;
+    publish("*", "speedtest", { batch, done: true });
+  });
+  return { batch, models: list };
+}
+
+async function runSpeedTest(batch: string, models: string[]) {
+  const s = getSettings();
+  mkdirSync(join(config.dataDir, "speedtest"), { recursive: true, mode: 0o700 });
+  const dir = mkdtempSync(join(config.dataDir, "speedtest", "run-"));
+  const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
+  mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
+  writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: DENY_ALL }));
+  if (s.agentAuthJson.trim()) {
+    mkdirSync(join(xdg.XDG_DATA_HOME, "opencode"), { recursive: true });
+    writeFileSync(join(xdg.XDG_DATA_HOME, "opencode", "auth.json"), s.agentAuthJson, { mode: 0o600 });
+  }
+  const work = join(dir, "work");
+  mkdirSync(work);
+  const password = Buffer.from(crypto.getRandomValues(new Uint8Array(18))).toString("base64url");
+  const port = freePort();
+  let proc: ReturnType<typeof Bun.spawn> | null = null;
+  const record = (model: string, r: { ttft?: number | null; total?: number | null; out?: number | null; tps?: number | null; ok: boolean; error?: string | null }) => {
+    const [provider, ...rest] = model.split("/");
+    const row = { batch, ts: Date.now(), provider, model: rest.join("/"), ttft_ms: r.ttft ?? null, total_ms: r.total ?? null, tokens_out: r.out ?? null, tps: r.tps ?? null, ok: r.ok ? 1 : 0, error: r.error ?? null };
+    db.query("INSERT INTO speedtests (batch, ts, provider, model, ttft_ms, total_ms, tokens_out, tps, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      row.batch, row.ts, row.provider, row.model, row.ttft_ms, row.total_ms, row.tokens_out, row.tps, row.ok, row.error,
+    );
+    publish("*", "speedtest", { batch, result: row });
+  };
+  try {
+    proc = Bun.spawn([config.opencodeBin, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+      cwd: work,
+      // Only what opencode needs plus the provider keys from Settings; none of Pixel's own environment.
+      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...s.agentEnv, OPENCODE_SERVER_PASSWORD: password },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch (e: any) {
+    for (const m of models) record(m, { ok: false, error: `cannot start opencode (${config.opencodeBin}): ${e.message}` });
+    rmSync(dir, { recursive: true, force: true });
+    return;
+  }
+  const client = new OpencodeClient(`http://127.0.0.1:${port}`, password, work);
+  try {
+    await client.waitHealthy(30_000);
+    const ids = await client.req<string[]>("GET", "/experimental/tool/ids").catch(() => [] as string[]);
+    const tools = Object.fromEntries([...new Set([...KNOWN_TOOLS, ...(Array.isArray(ids) ? ids : [])])].map((t) => [t, false]));
+    for (const model of models) {
+      publish("*", "speedtest", { batch, current: model });
+      const [providerID, ...rest] = model.split("/");
+      try {
+        const session = await client.createSession(`speed test ${model}`);
+        const started = Date.now();
+        const res = await client.req<{ info: any; parts: any[] }>(
+          "POST",
+          `/session/${session.id}/message`,
+          { parts: [{ type: "text", text: SPEED_PROMPT }], model: { providerID, modelID: rest.join("/") }, tools },
+          undefined,
+          SPEED_TIMEOUT_MS,
+        );
+        const info = res?.info ?? {};
+        if (info.error) {
+          record(model, { ok: false, error: `${info.error.name}: ${info.error.data?.message ?? ""}`.slice(0, 300) });
+          continue;
+        }
+        const created = info.time?.created ?? started;
+        const completed = info.time?.completed ?? Date.now();
+        const starts = (res.parts ?? []).map((p: any) => p.time?.start).filter((t: any) => typeof t === "number");
+        const first = starts.length ? Math.min(...starts) : null;
+        const out = (info.tokens?.output ?? 0) + (info.tokens?.reasoning ?? 0);
+        const text = (res.parts ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("");
+        const streamS = first ? (completed - first) / 1000 : null;
+        record(model, {
+          ttft: first ? first - created : null,
+          total: completed - created,
+          out,
+          tps: streamS && streamS > 0.2 ? out / streamS : null,
+          ok: text.trim().length > 0,
+          error: text.trim() ? null : "empty answer",
+        });
+      } catch (e: any) {
+        record(model, { ok: false, error: String(e.message ?? e).slice(0, 300) });
+      }
+    }
+  } catch (e: any) {
+    for (const m of models) record(m, { ok: false, error: `opencode did not start: ${e.message}` });
+  } finally {
+    proc?.kill();
+    await proc?.exited;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+export type ProviderHealth = ReturnType<typeof health>;
+export type Leaderboard = ReturnType<typeof leaderboard>;

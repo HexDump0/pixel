@@ -17,6 +17,7 @@ const PATHS = {
   book: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5",
   logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   next: "M5 12h14M13 6l6 6-6 6",
+  gauge: "M12 14l4-4M3.3 17a9 9 0 1 1 17.4 0M12 14a1 1 0 1 0 0 .01",
 };
 
 export type IconName = keyof typeof PATHS;

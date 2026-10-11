@@ -31,6 +31,8 @@ export interface Settings {
     dailyHour: number; // -1 = off
   };
   historyIntervalMin: number;
+  /** Per-minute limits per "provider/model" (tokens, requests), shown against live usage on the Models page. */
+  providerLimits: Record<string, { tpm?: number; rpm?: number }>;
 }
 
 export const defaultSettings: Settings = {
@@ -59,6 +61,7 @@ export const defaultSettings: Settings = {
   },
   backup: { repository: "", password: "", env: {}, dailyHour: -1 },
   historyIntervalMin: 5,
+  providerLimits: {},
 };
 
 export function getSettings(): Settings {
