@@ -60,31 +60,20 @@ export function Card({ title, actions, className, children }: { title?: ReactNod
   );
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  running: "border-blue-500 text-blue-600 dark:text-blue-400",
-  busy: "border-blue-500 text-blue-600 dark:text-blue-400",
-  preparing: "border-amber-500 text-amber-600 dark:text-amber-400",
-  recovering: "border-amber-500 text-amber-600 dark:text-amber-400",
-  retry: "border-amber-500 text-amber-600 dark:text-amber-400",
-  paused: "border-zinc-400 text-amber-600 dark:text-amber-400",
-  stopped: "border-zinc-400 text-amber-700 dark:text-amber-300",
-  done: "border-emerald-500 text-emerald-600 dark:text-emerald-400",
-  idle: "border-emerald-500 text-emerald-600 dark:text-emerald-400",
-  triaged: "border-violet-500 text-violet-600 dark:text-violet-400",
-  failed: "border-red-500 text-red-600 dark:text-red-400",
-};
-
+/** Status pill; colours come from the .badge.<status> classes in index.css. */
 export function Badge({ value, className }: { value: string | null | undefined; className?: string }) {
   if (!value) return null;
-  return <span className={cx("inline-block rounded-full border px-2 text-xs whitespace-nowrap", STATUS_STYLE[value] ?? "border-zinc-300 dark:border-zinc-700", className)}>{value}</span>;
+  return <span className={cx("badge", value, className)}>{value}</span>;
 }
 
 export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
   return (
-    <div className="card p-3">
-      <div className="text-xs muted">{label}</div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
-      {hint && <div className="text-xs muted">{hint}</div>}
+    <div className="card" style={{ padding: "10px 12px" }}>
+      <div className="eyebrow">{label}</div>
+      <div className="num" style={{ fontSize: 18, fontWeight: 500, marginTop: 2 }}>
+        {value}
+      </div>
+      {hint && <div className="muted" style={{ fontSize: 11.5 }}>{hint}</div>}
     </div>
   );
 }
@@ -101,11 +90,19 @@ export function Field({ label, hint, children, className }: { label: string; hin
 
 export function ErrorBox({ error }: { error: string | null | undefined }) {
   if (!error) return null;
-  return <div className="rounded-md border border-red-400/50 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</div>;
+  return (
+    <div className="rounded-md px-3 py-2 text-sm" style={{ border: "1px solid color-mix(in srgb, var(--bad) 45%, transparent)", background: "color-mix(in srgb, var(--bad) 9%, transparent)", color: "var(--bad)" }}>
+      {error}
+    </div>
+  );
 }
 
 export function Notice({ children }: { children: ReactNode }) {
-  return <div className="rounded-md border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-sm">{children}</div>;
+  return (
+    <div className="rounded-md px-3 py-2 text-sm" style={{ border: "1px solid color-mix(in srgb, var(--warn) 45%, transparent)", background: "color-mix(in srgb, var(--warn) 9%, transparent)" }}>
+      {children}
+    </div>
+  );
 }
 
 export function Empty({ children }: { children: ReactNode }) {
@@ -114,17 +111,9 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: ReactNode }[]; value: T; onChange: (t: T) => void }) {
   return (
-    <div className="my-4 flex gap-0.5 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800">
+    <div className="tabs" role="tablist" style={{ margin: "16px 0", paddingBottom: 8, borderBottom: "1px solid var(--line)" }}>
       {tabs.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onChange(t.id)}
-          className={cx(
-            "cursor-pointer border-b-2 px-3 py-2 text-sm whitespace-nowrap",
-            t.id === value ? "border-accent text-zinc-900 dark:text-zinc-100" : "border-transparent muted hover:text-zinc-900 dark:hover:text-zinc-100",
-          )}
-        >
+        <button key={t.id} type="button" role="tab" aria-selected={t.id === value} onClick={() => onChange(t.id)} className={cx("tab", t.id === value && "on")}>
           {t.label}
         </button>
       ))}
@@ -135,7 +124,9 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
 export function CopyText({ text, className }: { text: string; className?: string }) {
   return (
     <div className={cx("flex items-start gap-2", className)}>
-      <code className="min-w-0 flex-1 rounded bg-zinc-100 px-2 py-1 font-mono text-xs break-all dark:bg-zinc-800">{text}</code>
+      <code className="min-w-0 flex-1 rounded px-2 py-1 font-mono text-xs break-all" style={{ background: "var(--hover)" }}>
+        {text}
+      </code>
       <Button small onClick={() => navigator.clipboard.writeText(text)} done="Copied">
         Copy
       </Button>
@@ -147,7 +138,9 @@ export function PageHeader({ title, subtitle, actions }: { title: ReactNode; sub
   return (
     <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold break-words">{title}</h1>
+        <h1 className="break-words" style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+          {title}
+        </h1>
         {subtitle && <div className="mt-0.5 text-sm muted">{subtitle}</div>}
       </div>
       {actions && <div className="flex flex-wrap gap-1.5">{actions}</div>}

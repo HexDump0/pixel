@@ -66,6 +66,9 @@ class Feed {
 let feed: Feed | null = null;
 const getFeed = () => (feed ??= new Feed());
 
+/** Listen to every live message outside React (shared stores). */
+export const listenLive = (l: (m: LiveMessage) => void) => getFeed().listen(l);
+
 /**
  * Call `handler` for every live message about `run` ("*" = fleet-wide).
  * The handler can change between renders without resubscribing.

@@ -63,6 +63,14 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - Interrupted subagents: see decisions.md (2026-10-11, subagents). The `resume-subagents` plugin rewrites, in the history copy sent to the model only, the latest task call per child session that is aborted (`error` + `interrupted`/"abort") or left `pending`/`running` by a crash: status `error`, error text + `task_id` hint, `interrupted` dropped (with `interrupted` and a string `metadata.output`, opencode would show that output instead of the error). Background tasks are skipped. opencode calls every exported function of a plugin file as a plugin, so the file exports only the plugin.
 - Tested: `server/test/plugin.test.ts` drives the hook with opencode-shaped messages. opencode 1.18.23 starts with the plugin in its plugin dir, but a full live check (stop with running subagents → continue → same child session resumed) hasn't been done yet.
 
+## Dashboard telemetry (fleet.ts)
+
+- `/api/fleet`: one snapshot for every non-archived run: tokens/s samples (90 × 1 s), latest tool call per session (with status, so "thinking…" shows between calls), subagents with state from their task calls, 60 × 30 s activity buckets (dominant kind; "alert" where Pixel recovered or a limit fired), CPU/mem/disk from the last metrics row, context used (latest assistant message with token counts) and the model's context limit (asked once from opencode `/config/providers`), machine name/PID/endpoint. Plus shared memory (cgroup v2 `memory.max`/`memory.current` when limited, else the machine), spend today (metrics cost per hour since local midnight, projection from the last two hours' rate) and the cross-read graph.
+- Live: `fleet.tick` (`*`, every second, tokens per run), `activity` (`*`, on each tool-call status change only), `timeline` now also goes to `*`. The web `lib/fleet.ts` store applies these and refetches every 15 s; `lib/runs.ts` is the shared runs list.
+- `/api/runs/:id/lanes?minutes=N`: per-session tool-call segments + marks (subagent done/interrupted dots, Pixel recover/limit/continue ticks on the main lane). `/api/activity?run=&limit=`: recent tool calls + timeline entries (24 h).
+- Tool kinds: shell (bash), read (read/grep/glob/list), edit (edit/write/patch/todowrite), task, web, other. Commands are shown with the run's own target/workbase/scratch paths shortened.
+- Styling: tokens in `web/src/index.css`; Tailwind's zinc scale is remapped onto the same greys so older pages match. Light by default, dark with the OS.
+
 ## Recovery details
 
 - `onIdle` and `recover` run serialised per run, so an idle event and a watchdog check can't both act.

@@ -16,8 +16,11 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
   };
   return (
     <form onSubmit={submit} className="card mx-auto mt-[18vh] flex max-w-xs flex-col gap-3">
-      <div className="text-lg font-bold">
-        pi<span className="text-accent">x</span>el
+      <div className="flex items-center gap-2 text-base font-semibold">
+        <span style={{ width: 22, height: 22, borderRadius: 6, background: "var(--fg)", display: "grid", placeItems: "center" }}>
+          <i style={{ width: 8, height: 8, background: "var(--bg)", borderRadius: 1 }} />
+        </span>
+        Pixel
       </div>
       <input className="input" type="password" autoFocus placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
       <ErrorBox error={error} />

@@ -70,6 +70,9 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 ## Using it
 
 - **New run**: repository, optional ref, template (versioned, editable per run with live preview), model, machine size. *Follow-up* offers an earlier run's workbase; *Compare* starts one run per model × template version.
+- **Runs**: a live fleet strip (tokens/s per run, memory split by run, spend today with a projection), a table with what each agent is doing right now, its subagents and a 30-minute activity barcode, and a side panel for the selected run (machine/PID/session profiler, subagent tree, per-agent swimlane timeline, workbase links, resources, live activity). <kbd>J</kbd>/<kbd>K</kbd> move, <kbd>Enter</kbd> opens, <kbd>Esc</kbd> closes.
+- **⌘K / Ctrl+K** anywhere: jump to runs and pages, pause/resume/continue/message the run you're looking at, search all workbases.
+- **Activity**: every tool call and every action Pixel took across the fleet, live and filterable. The sidebar's **mesh** shows runs, their subagents and who reads whose workbase.
 - **Run page**: live transcript (with subagent sessions), todos, questions from the agent, timeline of every automatic and manual action, workbase browser with editing and history diffs, report + triage, web terminal into the VM, CPU/RAM/disk/token charts, snapshots. Controls: message, continue, pause/resume, abort, restart opencode, change model, autopilot on/off, reset counters, stop, mark done, re-run, delete.
 - **Knowledge**: full-text search over all workbases, `INDEX.md`, and a graph of which agents read which other workbases.
 - **CLI**: `bun run cli -- run <repo> --wait`, `ls`, `show`, `log`, `msg`, `continue`, `triage`, … (`PIXEL_URL`, `PIXEL_PASSWORD`).
@@ -105,8 +108,9 @@ server/src/
   runtime/         machines: incus.ts (VMs), single.ts (one container), local.ts (development); process.ts is shared by the last two
   opencode.ts      client for `opencode serve`
   knowledge.ts     workbase files, run.json, INDEX.md, TRIAGE.md
+  fleet.ts         live telemetry for the dashboard (tokens/s, current tool, subagents, activity, lanes)
   search.ts history.ts crossreads.ts notify.ts backup.ts settings.ts db.ts
-web/src/           React dashboard (Tailwind): pages/, pages/run/, components/, lib/
+web/src/           React dashboard: pages/, pages/run/, components/ (viz.tsx charts, RunPanel, Mesh, CommandPalette), lib/ (fleet + runs stores)
 image/             pixel-image build (provision.sh, opencode config + systemd unit)
 Dockerfile.single, compose.single.yaml   single-container mode (Coolify)
 templates/         seed prompt templates

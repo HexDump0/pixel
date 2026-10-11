@@ -48,3 +48,10 @@
 ## 2026-10-11 (subagents)
 
 - **Interrupted subagents** (user): stopping an agent with parallel subagents loses their work on continue; the agent respawns them. Cause (opencode 1.18.23, read from the binary): an aborted task call becomes `error: "Tool execution aborted"` with the child id only in `state.metadata.sessionId` (+ `interrupted: true`); after a crash it stays `running` and the model sees `"[Tool execution was interrupted]"`. The child session itself is intact and the task tool can resume it via `task_id`. Fix chosen (user): an **opencode plugin**, `opencode-plugins/resume-subagents.ts`, using `experimental.chat.messages.transform` to put the task_id and a resume hint into the model's copy of the history. Installed for every runtime (copied into the agent's opencode config; baked into pixel-image). Also usable in the user's own opencode.
+
+## 2026-10-11 (dashboard redesign)
+
+- **Look** (user): rejected the first three style mockups (mission control / glass HUD / phosphor) as "AI slop"; approved a tool-like base (sidebar, dense runs table, side panel, neutral greys, Geist + Geist Mono) with a light Watch Dogs / ctOS flavour (cyan accent, monospace micro-labels, corner brackets, profiler readout, decrypt-in run name, prompt-style ⌘K).
+- **Flash goes into data, not interaction** (user): no hover glitches or scan lines. Instead: stacked tokens/s spectrum per run, memory split by run, spend line with projection, 30-minute activity barcode per run, per-agent swimlanes, context gauge, sidebar mesh of runs/subagents/workbase reads.
+- **Tokens/s** (user asked for total tokens per second): sampled every second from run token totals; shown as a 10-second average because opencode reports tokens in bursts at step end.
+- **Features this round** (user): live fleet view, ⌘K command palette, Activity feed, subagent tree. No spend cap shown (cost limits were declined earlier).

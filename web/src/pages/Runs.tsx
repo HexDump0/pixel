@@ -1,116 +1,225 @@
-import { useMemo, useState } from "react";
-import { api } from "../lib/api.ts";
-import { useAsync, useTick } from "../lib/hooks.ts";
-import { useLive } from "../lib/live.ts";
-import { Link, navigate } from "../lib/router.tsx";
-import { ago, duration, money, tokens } from "../lib/format.ts";
-import type { Run, RunStatus } from "../lib/types.ts";
-import { Badge, Empty, ErrorBox, PageHeader, Stat } from "../components/ui.tsx";
+/** Runs: live fleet strip, the runs table, and the panel for the selected run (?run=<id>). */
+import { useEffect, useMemo, useState } from "react";
+import { navigate, Link, useLocation } from "../lib/router.tsx";
+import { useTick } from "../lib/hooks.ts";
+import { duration, money } from "../lib/format.ts";
+import { rate, RATE_WINDOW, useFleet } from "../lib/fleet.ts";
+import { useRuns, ACTIVE } from "../lib/runs.ts";
+import type { FleetRun, Run, RunStatus } from "../lib/types.ts";
+import { Barcode, fmtInt, MemorySplit, MiniMeters, SpendLine, TokenSpectrum } from "../components/viz.tsx";
+import { RunPanel } from "../components/RunPanel.tsx";
+import { openPalette } from "../components/CommandPalette.tsx";
+import { Icon } from "../components/icons.tsx";
+import { ErrorBox } from "../components/ui.tsx";
 
-const FILTERS: { id: string; label: string; statuses: RunStatus[] | null }[] = [
-  { id: "all", label: "All", statuses: null },
-  { id: "active", label: "Active", statuses: ["preparing", "running", "recovering", "paused"] },
-  { id: "attention", label: "Needs you", statuses: ["stopped", "failed"] },
-  { id: "done", label: "To triage", statuses: ["done"] },
-  { id: "triaged", label: "Triaged", statuses: ["triaged"] },
+const FILTERS: { id: string; label: string; match: (r: Run) => boolean }[] = [
+  { id: "active", label: "Active", match: (r) => ACTIVE.includes(r.status) },
+  { id: "attention", label: "Needs you", match: (r) => ["stopped", "failed"].includes(r.status) || (r.questions ?? 0) > 0 },
+  { id: "triage", label: "To triage", match: (r) => r.status === "done" },
+  { id: "all", label: "All", match: () => true },
 ];
 
-const runtimeOf = (r: Run) => (r.started_at ? (r.finished_at ?? Date.now()) - r.started_at : null);
+const elapsed = (r: Run) => (r.started_at ? (r.finished_at ?? Date.now()) - r.started_at : null);
+
+function NowCell({ run, fleet }: { run: Run; fleet?: FleetRun }) {
+  const live = ["running", "recovering"].includes(run.status);
+  const calling = fleet?.now && ["running", "pending"].includes(fleet.now.status);
+  if (live && fleet?.now && calling && run.status === "running")
+    return (
+      <div className="now" title={`${fleet.now.tool} ${fleet.now.text}`}>
+        <span className="tool">{fleet.now.tool}</span>
+        <span className="txt">{fleet.now.text}</span>
+      </div>
+    );
+  const text: Partial<Record<RunStatus, string>> = {
+    done: run.report_ready ? "Report ready to triage" : "Finished",
+    triaged: run.triage_verdict ? `Triaged · ${run.triage_verdict}` : "Triaged",
+    paused: "Paused",
+  };
+  const warn = ["recovering", "stopped", "failed", "preparing"].includes(run.status);
+  return (
+    <div className={`now plain ${warn ? "warn" : ""}`}>
+      <span className="txt">{run.status_detail || text[run.status] || (run.agent_status === "idle" ? "Idle" : run.status === "running" ? "thinking…" : run.status)}</span>
+    </div>
+  );
+}
+
+function AgentBlocks({ run, fleet }: { run: Run; fleet?: FleetRun }) {
+  const subs = fleet?.agents.subs ?? [];
+  const main = ACTIVE.includes(run.status) ? (run.status === "recovering" ? "interrupted" : "running") : "done";
+  return (
+    <span className="agents" title={`Main agent + ${subs.length} subagent${subs.length === 1 ? "" : "s"}`}>
+      <i className={main} />
+      {subs.slice(-8).map((s) => (
+        <i key={s.id} className={s.status} />
+      ))}
+      <span className="num">{1 + subs.length}</span>
+    </span>
+  );
+}
 
 export function RunsPage() {
-  useTick(15_000);
-  const runs = useAsync(api.runs, []);
-  const [filter, setFilter] = useState("all");
-  const [text, setText] = useState("");
+  useTick(10_000);
+  const { runs, error } = useRuns();
+  const snap = useFleet();
+  const { search } = useLocation();
+  const selected = new URLSearchParams(search).get("run");
+  const [filter, setFilter] = useState<string | null>(null);
 
-  useLive("*", (m) => {
-    if (m.type === "run") runs.setData((xs) => (xs?.some((r) => r.id === m.data.id) ? xs.map((r) => (r.id === m.data.id ? { ...r, ...m.data } : r)) : [m.data, ...(xs ?? [])]));
-    if (m.type === "run.deleted") runs.setData((xs) => xs?.filter((r) => r.id !== m.data.id));
-    if (m.type === "connected") void runs.reload();
-  });
+  const all = runs ?? [];
+  const counts = Object.fromEntries(FILTERS.map((f) => [f.id, all.filter(f.match).length]));
+  const tab = filter ?? (counts.active ? "active" : "all");
+  const shown = useMemo(() => all.filter(FILTERS.find((f) => f.id === tab)!.match), [all, tab]);
+  const fleetById = new Map((snap?.runs ?? []).map((r) => [r.id, r]));
+  const maxActivity = Math.max(1, ...(snap?.runs ?? []).flatMap((r) => r.activity.map((b) => b.n)));
+  const selRun = all.find((r) => r.id === selected) ?? null;
+  const select = (id: string | null) => navigate(id ? `/?run=${encodeURIComponent(id)}` : "/", true);
 
-  const all = runs.data ?? [];
-  const shown = useMemo(() => {
-    const f = FILTERS.find((x) => x.id === filter)!;
-    const t = text.toLowerCase();
-    return all.filter((r) => (!f.statuses || f.statuses.includes(r.status)) && (!t || `${r.id} ${r.repo} ${r.model} ${r.language ?? ""}`.toLowerCase().includes(t)));
-  }, [all, filter, text]);
+  // j/k move through the table, Enter opens the run page, Esc closes the panel.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest("input, textarea, select, .scrim")) return;
+      const i = shown.findIndex((r) => r.id === selected);
+      if (e.key === "j" || e.key === "k") {
+        if (!shown.length) return;
+        const next = i < 0 ? 0 : (i + (e.key === "j" ? 1 : shown.length - 1)) % shown.length;
+        select(shown[next].id);
+      } else if (e.key === "Enter" && selected) navigate(`/runs/${encodeURIComponent(selected)}`);
+      else if (e.key === "Escape" && selected) select(null);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [shown, selected]);
 
-  const active = all.filter((r) => ["preparing", "running", "recovering"].includes(r.status)).length;
-  const attention = all.filter((r) => ["stopped", "failed"].includes(r.status) || (r.questions ?? 0) > 0).length;
-  const toTriage = all.filter((r) => r.status === "done").length;
-  const cost = all.reduce((n, r) => n + r.cost, 0);
+  const tpsNow = (snap?.runs ?? []).reduce((a, r) => a + rate(r.tps), 0);
 
   return (
     <div>
-      <PageHeader
-        title="Runs"
-        actions={
-          <Link to="/new" className="btn btn-primary hover:no-underline">
-            New run
-          </Link>
-        }
-      />
-      <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Stat label="Active" value={active} />
-        <Stat label="Need you" value={attention} />
-        <Stat label="To triage" value={toTriage} />
-        <Stat label="Total cost" value={money(cost)} />
+      <div className="bar">
+        <h1>Runs</h1>
+        <div className="tabs" role="tablist">
+          {FILTERS.map((f) => (
+            <button key={f.id} role="tab" aria-selected={tab === f.id} className={`tab ${tab === f.id ? "on" : ""}`} onClick={() => setFilter(f.id)}>
+              {f.label} <span className="num">{counts[f.id]}</span>
+            </button>
+          ))}
+        </div>
+        <button className="searchbtn" onClick={() => openPalette()} aria-label="Open command palette">
+          <Icon name="search" />
+          <span>Search or run a command</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <Link to="/new" className="btn btn-primary">
+          <Icon name="plus" />
+          New run
+        </Link>
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
-          <button key={f.id} className={`btn btn-sm ${filter === f.id ? "btn-primary" : ""}`} onClick={() => setFilter(f.id)}>
-            {f.label}
-          </button>
-        ))}
-        <input className="input ml-auto w-56" placeholder="Filter by name, repo, model…" value={text} onChange={(e) => setText(e.target.value)} />
-      </div>
-      <ErrorBox error={runs.error} />
-      {runs.data && !shown.length ? (
-        <Empty>{all.length ? "No runs match." : "No runs yet. Start one from “New run”."}</Empty>
-      ) : (
-        <div className="card overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr>
-                {["Run", "Status", "Agent", "Model", "Runtime", "Tokens", "Cost", "Active", "Report", "Cont / OOM"].map((h) => (
-                  <th key={h} className="th">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((r) => (
-                <tr key={r.id} className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/50" onClick={() => navigate(`/runs/${encodeURIComponent(r.id)}`)}>
-                  <td className="td">
-                    <div className="font-medium">{r.id}</div>
-                    <div className="max-w-64 truncate text-xs muted" title={r.repo}>
-                      {r.repo.replace(/^https?:\/\/(www\.)?/, "")}
-                      {r.language ? ` · ${r.language}` : ""}
-                    </div>
-                  </td>
-                  <td className="td">
-                    <Badge value={r.status} />
-                    {(r.questions ?? 0) > 0 && <Badge value="question" className="ml-1 border-amber-500 text-amber-600" />}
-                    {r.status_detail && <div className="max-w-56 truncate text-xs muted">{r.status_detail}</div>}
-                  </td>
-                  <td className="td">{["running", "recovering"].includes(r.status) ? <Badge value={r.agent_status} /> : <span className="muted">–</span>}</td>
-                  <td className="td font-mono text-xs whitespace-nowrap">{r.model}</td>
-                  <td className="td tabular-nums">{duration(runtimeOf(r))}</td>
-                  <td className="td tabular-nums">{tokens(r.tokens_in + r.tokens_out + r.tokens_reasoning)}</td>
-                  <td className="td tabular-nums">{money(r.cost)}</td>
-                  <td className="td whitespace-nowrap">{ago(r.last_activity)}</td>
-                  <td className="td">{r.report_ready ? "✓" : <span className="muted">–</span>}</td>
-                  <td className="td whitespace-nowrap tabular-nums">
-                    {r.continues} / {r.oom_restarts}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {snap && (
+        <div className="stats">
+          <div className="stat">
+            <div className="head">
+              <div className="k eyebrow">
+                <span className={`live-dot ${tpsNow ? "" : "off"}`} style={tpsNow ? undefined : { background: "var(--fg3)" }} />
+                Tokens / s · {RATE_WINDOW} s avg
+              </div>
+              <div className="v">{fmtInt(tpsNow)}</div>
+            </div>
+            <TokenSpectrum runs={snap.runs} window={snap.window} />
+          </div>
+          <div className="stat">
+            <div className="head">
+              <div className="k eyebrow">{snap.memory.label}</div>
+              <div className="v">
+                {(snap.memory.used / 1024 ** 3).toFixed(1)}
+                <small>/ {(snap.memory.total / 1024 ** 3).toFixed(0)} GB</small>
+              </div>
+            </div>
+            <MemorySplit snap={snap} />
+          </div>
+          <div className="stat">
+            <div className="head">
+              <div className="k eyebrow">Spend today</div>
+              <div className="v">{money(snap.spend.total)}</div>
+            </div>
+            <SpendLine spend={snap.spend} />
+            <div className="legend">
+              <span>
+                <i style={{ background: "var(--fg2)" }} />
+                so far
+              </span>
+              <span>
+                <i style={{ background: "var(--fg3)", opacity: 0.6 }} />
+                projected <b>{money(snap.spend.projected)}</b>
+              </span>
+            </div>
+          </div>
         </div>
       )}
+
+      <div style={{ padding: error ? "12px 16px 0" : 0 }}>
+        <ErrorBox error={error} />
+      </div>
+
+      <div className={`split ${selRun ? "" : "closed"}`}>
+        <div className="tablewrap">
+          {runs && !shown.length ? (
+            <div className="muted" style={{ padding: "48px 16px", textAlign: "center" }}>
+              {all.length ? "No runs here." : <>No runs yet. <Link to="/new">Start one</Link>, or press <kbd>⌘K</kbd>.</>}
+            </div>
+          ) : (
+            <table className="runs">
+              <thead>
+                <tr>
+                  <th className="th">Run</th>
+                  <th className="th">Now</th>
+                  <th className="th">Agents</th>
+                  <th className="th">Activity · 30m</th>
+                  <th className="th r">Tok/s</th>
+                  <th className="th r">CPU · Mem</th>
+                  <th className="th r">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((r) => {
+                  const f = fleetById.get(r.id);
+                  return (
+                    <tr key={r.id} className={r.id === selected ? "sel" : ""} tabIndex={0} onClick={() => select(r.id === selected ? null : r.id)} onDoubleClick={() => navigate(`/runs/${encodeURIComponent(r.id)}`)} onKeyDown={(e) => e.key === " " && (e.preventDefault(), select(r.id))}>
+                      <td>
+                        <div className="runcell">
+                          <span className={`dot ${r.status}`} title={r.status} />
+                          <div style={{ minWidth: 0 }}>
+                            <div className="name">
+                              {r.id}
+                              {(r.questions ?? 0) > 0 && (
+                                <span className="badge question" style={{ marginLeft: 6 }}>
+                                  question
+                                </span>
+                              )}
+                            </div>
+                            <div className="repo">{r.repo.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <NowCell run={r} fleet={f} />
+                      </td>
+                      <td>
+                        <AgentBlocks run={r} fleet={f} />
+                      </td>
+                      <td>{f ? <Barcode activity={f.activity} max={maxActivity} /> : <span className="muted">–</span>}</td>
+                      <td className="r num">{f?.tps.length ? fmtInt(rate(f.tps)) : <span className="muted">–</span>}</td>
+                      <td className="r">{f ? <MiniMeters run={f} /> : <span className="muted">–</span>}</td>
+                      <td className="r num">{duration(elapsed(r)).replace(/ \d+s$/, "")}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {selRun && <RunPanel key={selRun.id} run={selRun} onClose={() => select(null)} />}
+      </div>
     </div>
   );
 }

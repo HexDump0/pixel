@@ -2,8 +2,9 @@
 import type { PublicRun } from "../../../server/src/runs/state.ts";
 import type { Settings } from "../../../server/src/settings.ts";
 import type { AgentPaths } from "../../../server/src/runtime/types.ts";
+import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity } from "../../../server/src/fleet.ts";
 
-export type { Settings, AgentPaths };
+export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity };
 
 export type Run = PublicRun & { questions?: number; cross_reads?: number };
 export type RunStatus = Run["status"];

@@ -5,6 +5,8 @@ import { Link } from "../../lib/router.tsx";
 import { ago, money, tokens } from "../../lib/format.ts";
 import type { Question, RunDetail, Todo } from "../../lib/types.ts";
 import { Button, Card, CopyText, Empty } from "../../components/ui.tsx";
+import { AgentTree, RunLanes } from "../../components/RunPanel.tsx";
+import { useFleet } from "../../lib/fleet.ts";
 
 const TODO_ICON: Record<string, string> = { completed: "✓", in_progress: "▸", cancelled: "✗", pending: "○" };
 
@@ -81,6 +83,7 @@ export function OverviewTab({ detail, onChange }: { detail: RunDetail; onChange:
   const sessionTitle = (sid: string) => detail.sessions.find((s) => s.id === sid)?.title ?? sid;
   const others = new Map<string, number>();
   for (const x of reads.data ?? []) others.set(x.other_run, (others.get(x.other_run) ?? 0) + 1);
+  const fleet = useFleet()?.runs.find((f) => f.id === r.id);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -93,6 +96,17 @@ export function OverviewTab({ detail, onChange }: { detail: RunDetail; onChange:
           </div>
         </Card>
       )}
+      {fleet && (
+        <section className="card sec" style={{ padding: 16 }}>
+          <AgentTree run={r} fleet={fleet} />
+        </section>
+      )}
+      <section className="card sec" style={{ padding: 16 }}>
+        <h3>
+          Timeline <span>last 60 min</span>
+        </h3>
+        <RunLanes runId={r.id} minutes={60} />
+      </section>
       <Card title="Todos">
         {root.length ? <TodoList todos={root} /> : <Empty>No todos yet.</Empty>}
         {sub.map((t) => (

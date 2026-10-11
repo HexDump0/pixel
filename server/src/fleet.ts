@@ -75,6 +75,11 @@ export function describeCall(run: RunRow | undefined, tool: string, state: any):
     default:
       text = String(state?.title ?? "");
   }
+  // Shorten the run's own paths so commands read like they would in a terminal opened there.
+  if (run) {
+    const p = runtime.paths(run);
+    text = text.split(`${p.target}/`).join("").split(p.target).join(".").split(`${p.workbases}/`).join("workbases/").split(p.scratch).join("scratch");
+  }
   return text.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
@@ -198,7 +203,7 @@ interface SubAgent {
   parent: string | null;
   title: string;
   status: "running" | "done" | "interrupted" | "failed";
-  now: { tool: string; kind: Kind; text: string; ts: number } | null;
+  now: { tool: string; kind: Kind; text: string; ts: number; status: string } | null;
   started: number;
 }
 
@@ -215,7 +220,7 @@ function latestCalls(run: RunRow) {
     .all(run.id);
   for (const r of rows) {
     const part = JSON.parse(r.data);
-    out.set(r.session_id, { tool: part.tool, kind: kindOf(part.tool), text: describeCall(run, part.tool, part.state), ts: part.state?.time?.start ?? 0 });
+    out.set(r.session_id, { tool: part.tool, kind: kindOf(part.tool), text: describeCall(run, part.tool, part.state), ts: part.state?.time?.start ?? 0, status: part.state?.status ?? "completed" });
   }
   return out;
 }
@@ -252,11 +257,13 @@ function subAgents(run: RunRow, calls: Map<string, SubAgent["now"]>): SubAgent[]
 /** Tokens in the root session's context right now (from its last assistant message). */
 function contextUsed(run: RunRow): number | null {
   if (!run.session_id) return null;
-  const m = db.query<{ data: string }, [string]>("SELECT data FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1").get(run.session_id);
-  if (!m) return null;
-  const t = JSON.parse(m.data).tokens;
-  if (!t) return null;
-  return (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
+  // The newest message may still be streaming with zero tokens; use the latest one that has counts.
+  for (const m of db.query<{ data: string }, [string]>("SELECT data FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 5").all(run.session_id)) {
+    const t = JSON.parse(m.data).tokens;
+    const n = t ? (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
+    if (n > 0) return n;
+  }
+  return null;
 }
 
 /** Context window per model, asked from opencode once and cached. */
@@ -348,7 +355,7 @@ export async function fleetSnapshot() {
     const rootNow = r.session_id ? (calls.get(r.session_id) ?? null) : null;
     const working = subs.filter((s) => s.status === "running").length;
     const main =
-      r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
+      r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
     const m = latestMetrics(r.id);
     const size = JSON.parse(r.size);
     out.push({
@@ -435,9 +442,13 @@ export function recentActivity(limit: number, runId?: string) {
     };
   });
   const events = db
-    .query<{ run_id: string; ts: number; actor: string; kind: string; message: string }, [number, string | null, string | null, number]>(
+    .query<{ run_id: string; ts: number; actor: "pixel" | "user" | "agent"; kind: string; message: string }, [number, string | null, string | null, number]>(
       "SELECT run_id, ts, actor, kind, message FROM timeline WHERE ts >= ? AND (? IS NULL OR run_id = ?) AND kind NOT IN ('prepare', 'permission') ORDER BY ts DESC LIMIT ?",
     )
     .all(since, runId ?? null, runId ?? null, limit);
   return { calls, events };
 }
+
+export type FleetSnapshot = Awaited<ReturnType<typeof fleetSnapshot>>;
+export type Lanes = NonNullable<ReturnType<typeof lanes>>;
+export type RecentActivity = ReturnType<typeof recentActivity>;

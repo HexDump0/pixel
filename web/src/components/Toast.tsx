@@ -30,7 +30,8 @@ export function Toasts() {
       {items.map((t) => (
         <div
           key={t.id}
-          className={`card px-3 py-2 text-sm shadow-lg ${t.kind === "error" ? "border-red-500 text-red-700 dark:text-red-300" : ""}`}
+          className="card px-3 py-2 text-sm shadow-lg"
+          style={t.kind === "error" ? { borderColor: "var(--bad)", color: "var(--bad)" } : { borderColor: "var(--line)" }}
           onClick={() => setItems((xs) => xs.filter((x) => x.id !== t.id))}
         >
           {t.text}
