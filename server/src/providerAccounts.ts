@@ -10,6 +10,7 @@
 import { db } from "./db.ts";
 import { getSettings, saveSettings, type Settings } from "./settings.ts";
 import { cachedCatalog, catalogProvider } from "./catalog.ts";
+import { githubForAgents } from "./github.ts";
 
 export interface ProviderAccount {
   id: string;
@@ -154,12 +155,19 @@ export function connectedProviders(s: Settings = getSettings()) {
   return [...out.values()].sort((a, b) => (b.added ?? 0) - (a.added ?? 0) || a.name.localeCompare(b.name));
 }
 
-/** The environment and auth.json every agent (and the speed test) gets: Settings plus the providers added here. */
+/**
+ * The environment and auth.json every agent (and the speed and live tests) gets: Settings, plus the
+ * providers added on the Models page, plus GitHub (token as env, read-only MCP server in the config).
+ */
 export function agentCredentials(s: Settings = getSettings()): { env: Record<string, string>; authJson: string } {
   const accounts = Object.values(load());
-  if (!accounts.length) return { env: s.agentEnv, authJson: s.agentAuthJson };
+  const github = githubForAgents();
+  // Settings env first, so the GitHub card wins over a GITHUB_TOKEN typed there by hand.
+  const env = { ...s.agentEnv, ...github.env };
+  if (!accounts.length && !github.mcp) return { env, authJson: s.agentAuthJson };
+
   const auth = parseAuth(s.agentAuthJson);
-  if (auth === null) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
+  if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
   const merged: Record<string, any> = { ...(auth ?? {}) };
   for (const a of accounts) if (a.key) merged[a.id] = { type: "api", key: a.key };
 
@@ -175,17 +183,20 @@ export function agentCredentials(s: Settings = getSettings()): { env: Record<str
       };
     else if (Object.keys(options).length) provider[a.id] = { options };
   }
-  const env = { ...s.agentEnv };
   const cacheKey = accounts.filter((a) => a.cacheKey).map((a) => a.id);
   if (cacheKey.length) env.PIXEL_CACHE_KEY_PROVIDERS = cacheKey.join(",");
-  if (Object.keys(provider).length) {
+  if (Object.keys(provider).length || github.mcp) {
     let base: Record<string, any> = {};
     try {
       base = env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT) : {};
     } catch {}
-    env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, provider: { ...(base.provider ?? {}), ...provider } });
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+      ...base,
+      ...(Object.keys(provider).length && { provider: { ...(base.provider ?? {}), ...provider } }),
+      ...(github.mcp && { mcp: { ...(base.mcp ?? {}), ...github.mcp } }),
+    });
   }
-  return { env, authJson: Object.keys(merged).length ? JSON.stringify(merged, null, 2) : "" };
+  return { env, authJson: !accounts.length ? s.agentAuthJson : Object.keys(merged).length ? JSON.stringify(merged, null, 2) : "" };
 }
 
 /** Ask an endpoint which models it serves (GET {baseURL}/models, the same path in both APIs). */

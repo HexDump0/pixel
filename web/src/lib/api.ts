@@ -26,6 +26,14 @@ import type {
   WorkbaseInfo,
 } from "./types.ts";
 
+export interface GithubInfo {
+  tokenHint: string | null;
+  mcp: boolean;
+  toolsets: string;
+  defaultToolsets: string;
+  mcpUrl: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -125,6 +133,10 @@ export const api = {
 
   settings: () => request<Settings & { defaults: Settings }>("GET", "/settings"),
   saveSettings: (patch: Partial<Settings>) => request<Settings & { defaults: Settings }>("PUT", "/settings", patch),
+  github: () => request<GithubInfo>("GET", "/github"),
+  saveGithub: (body: { token?: string; mcp?: boolean; toolsets?: string }) => request<GithubInfo>("PUT", "/github", body),
+  checkGithub: () =>
+    request<{ login: string; kind: string; scopes: string[] | null; writeScopes: string[]; rateLimit: number | null; rateRemaining: number | null }>("POST", "/github/check"),
   testNotify: () => request<{ results: string[] }>("POST", "/settings/test-notify"),
   system: () => request<SystemInfo>("GET", "/system"),
   fleet: () => request<FleetSnapshot>("GET", "/fleet"),

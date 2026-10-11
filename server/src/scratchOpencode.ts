@@ -19,6 +19,17 @@ export interface ScratchOpencode {
   stop(): Promise<void>;
 }
 
+/** Model tests answer in text only, so skip the agents' MCP servers (and their start-up time and tool definitions). */
+function withoutMcp(env: Record<string, string>) {
+  if (!env.OPENCODE_CONFIG_CONTENT) return env;
+  try {
+    const { mcp, ...rest } = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+    return { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify(rest) };
+  } catch {
+    return env;
+  }
+}
+
 const freePort = () => {
   const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   const p = s.port;
@@ -28,6 +39,7 @@ const freePort = () => {
 
 export async function startScratchOpencode(kind: string): Promise<ScratchOpencode> {
   const creds = agentCredentials();
+  const env = withoutMcp(creds.env);
   mkdirSync(join(config.dataDir, kind), { recursive: true, mode: 0o700 });
   const dir = mkdtempSync(join(config.dataDir, kind, "run-"));
   const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
@@ -50,7 +62,7 @@ export async function startScratchOpencode(kind: string): Promise<ScratchOpencod
     proc = Bun.spawn([config.opencodeBin, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: work,
       // Only what opencode needs plus the provider credentials; none of Pixel's own environment.
-      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...creds.env, OPENCODE_SERVER_PASSWORD: password },
+      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...env, OPENCODE_SERVER_PASSWORD: password },
       stdout: "ignore",
       stderr: "ignore",
     });

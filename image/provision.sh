@@ -18,7 +18,7 @@ apt-get install -y --no-install-recommends \
   python3 python3-pip python3-venv python3-dev pipx \
   openjdk-21-jdk-headless \
   afl++ \
-  ripgrep fd-find universal-ctags binutils patchelf radare2 \
+  ripgrep fd-find universal-ctags binutils patchelf radare2 gh \
   docker.io docker-buildx docker-compose-v2 \
   qemu-user-static binfmt-support \
   golang-go rustc cargo \

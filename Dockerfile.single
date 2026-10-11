@@ -20,7 +20,7 @@ RUN apt-get update \
       curl wget gnupg git-lfs jq unzip zip xz-utils file less vim-tiny tmux strace ltrace lsof \
       build-essential clang lld llvm libclang-rt-dev gdb valgrind cmake ninja-build meson autoconf automake libtool pkg-config bison flex \
       python3 python3-pip python3-venv python3-dev pipx \
-      afl++ ripgrep fd-find universal-ctags binutils patchelf \
+      afl++ ripgrep fd-find universal-ctags binutils patchelf gh \
       golang-go rustc cargo nodejs npm \
       iproute2 dnsutils netcat-openbsd \
  && rm -rf /var/lib/apt/lists/*

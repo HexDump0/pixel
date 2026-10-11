@@ -11,6 +11,7 @@ import { crossReadGraph } from "../crossreads.ts";
 import { fleetSnapshot, lanes, recentActivity } from "../fleet.ts";
 import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
+import { checkGithub, githubPublic, saveGithub } from "../github.ts";
 import { get, post, put, readJson } from "./router.ts";
 
 // ---- knowledge ----
@@ -70,6 +71,9 @@ put("/settings", async ({ req }) => {
   saveSettings(Object.fromEntries(Object.entries(patch).filter(([k]) => known.includes(k))) as Partial<Settings>);
   return withDefaults(getSettings());
 });
+get("/github", () => githubPublic());
+put("/github", async ({ req }) => saveGithub(await readJson(req)));
+post("/github/check", () => checkGithub());
 post("/settings/test-notify", async () => ({
   results: await notify("test", "Pixel test notification", "If you can read this, notifications work.", config.publicUrl || undefined),
 }));

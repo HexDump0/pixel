@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { config } from "../src/config.ts";
 import { getSettings, saveSettings } from "../src/settings.ts";
 import { catalogProvider, catalogProviders } from "../src/catalog.ts";
+import { saveGithub } from "../src/github.ts";
 import { agentCredentials, connectedProviders, discoverModels, removeAccount, saveAccount } from "../src/providerAccounts.ts";
 
 beforeAll(() => {
@@ -102,6 +103,25 @@ describe("provider accounts", () => {
     removeAccount("home");
     saveSettings({ agentEnv: { A: "1" }, agentAuthJson: "not json" });
     expect(agentCredentials()).toEqual({ env: { A: "1" }, authJson: "not json" });
+  });
+});
+
+describe("github", () => {
+  test("the token reaches agents as env and as a read-only MCP server", () => {
+    saveSettings({ agentEnv: { GITHUB_TOKEN: "typed-by-hand" }, agentAuthJson: "" });
+    expect(() => saveGithub({ token: "not a token!" })).toThrow("GitHub token");
+    saveGithub({ token: "github_pat_" + "a".repeat(40), toolsets: "repos, issues" });
+    const c = agentCredentials();
+    expect(c.env.GITHUB_TOKEN).toBe("github_pat_" + "a".repeat(40));
+    expect(c.env.GH_TOKEN).toBe(c.env.GITHUB_TOKEN);
+    const gh = JSON.parse(c.env.OPENCODE_CONFIG_CONTENT).mcp.github;
+    expect(gh).toMatchObject({ type: "remote", url: "https://api.githubcopilot.com/mcp/readonly", oauth: false, enabled: true });
+    expect(gh.headers).toMatchObject({ "X-MCP-Readonly": "true", "X-MCP-Toolsets": "repos,issues" });
+
+    saveGithub({ mcp: false });
+    expect(agentCredentials().env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+    saveGithub({ token: "" });
+    expect(agentCredentials().env.GITHUB_TOKEN).toBe("typed-by-hand");
   });
 });
 

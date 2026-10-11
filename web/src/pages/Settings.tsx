@@ -5,6 +5,7 @@ import { useAsync } from "../lib/hooks.ts";
 import type { Settings } from "../lib/types.ts";
 import { Link } from "../lib/router.tsx";
 import { Button, Card, ErrorBox, Field, PageHeader } from "../components/ui.tsx";
+import { GithubCard } from "../components/GithubCard.tsx";
 
 type Update = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 
@@ -141,6 +142,8 @@ export function SettingsPage() {
           </div>
         </Card>
 
+        <GithubCard />
+
         <Card title="Machine sizes">
           <SizePresets s={s} update={update} />
         </Card>
@@ -165,9 +168,9 @@ export function SettingsPage() {
         <Card title="Agent credentials">
           <div className="flex flex-col gap-3">
             <div className="text-xs muted">
-              Injected into every new machine. Use read-only tokens only (e.g. a fine-grained GitHub token without write scopes). Provider keys are easier to add on the <Link to="/models">Models page</Link>; use this for anything else.
+              Injected into every new machine. Use read-only tokens only. Provider keys go on the <Link to="/models">Models page</Link> and the GitHub token in the GitHub card; use this for anything else.
             </div>
-            <Field label="Environment variables (GITHUB_TOKEN, extra provider variables…)">
+            <Field label="Environment variables">
               <EnvEditor value={s.agentEnv} onChange={(v) => update("agentEnv", v)} />
             </Field>
             <Field label="opencode auth.json (optional)" hint="Copied to ~/.local/share/opencode/auth.json in each machine">
