@@ -13,6 +13,7 @@ import { TemplatesPage } from "./pages/Templates.tsx";
 import { SettingsPage } from "./pages/Settings.tsx";
 import { SystemPage } from "./pages/System.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
+import { ModelsPage } from "./pages/Models.tsx";
 
 function Routes() {
   const { path } = useLocation();
@@ -21,6 +22,7 @@ function Routes() {
   if (path === "/new") return <NewRunPage />;
   if ((p = match("/runs/:id", path))) return <RunPage key={p.id} id={p.id} />;
   if (path === "/activity") return <ActivityPage />;
+  if (path === "/models") return <ModelsPage />;
   if (path === "/knowledge") return <KnowledgePage />;
   if ((p = match("/templates/:id", path))) return <TemplatesPage selected={p.id} />;
   if (path === "/templates") return <TemplatesPage />;

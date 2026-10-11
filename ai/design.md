@@ -71,6 +71,14 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - Tool kinds: shell (bash), read (read/grep/glob/list), edit (edit/write/patch/todowrite), task, web, other. Commands are shown with the run's own target/workbase/scratch paths shortened.
 - Styling: tokens in `web/src/index.css`; Tailwind's zinc scale is remapped onto the same greys so older pages match. Light by default, dark with the OS.
 
+## Models and providers (providers.ts)
+
+- Tables (created by providers.ts on import): `llm_calls` (one row per assistant message: provider, model, created, first_token, completed, tokens, cost, error), `provider_events` (ratelimit / error / retry, with message), `speedtests`.
+- Capture in events.ts: `message.updated` → `onMessage` (upsert call; errors become provider events, 429 / "rate limit" text → ratelimit); first `message.part.updated` or `message.part.delta` of an assistant message → `first_token`; `session.status` retry → `onRetry` (deduped per session + attempt). Live `provider` events go to `*`.
+- Health (`/api/providers/health?minutes=`): per provider/model: calls, time to first token p50/p90, output tok/s p50 (calls with ≥ 30 output tokens), errors, rate limits, retries, tokens and requests per minute (last 5 min), 12-bucket series, state ok/degraded/limited/idle. Limits per "provider/model" live in settings `providerLimits` (edited on the Models page).
+- Leaderboard (`/api/providers/leaderboard`): per `runs.model`: finish rate (report written vs stopped/failed), median duration, tokens/cost per run, continues/OOM per run, real-findings rate from triage verdicts ("real findings", "partly real"), cost per real finding, plus call medians.
+- Speed test (`POST /api/speedtests {models}`, `GET /api/speedtests`): spawns `config.opencodeBin serve` in `data/speedtest/run-*` with only PATH/HOME/LANG/XDG + Settings agentEnv/auth.json, opencode config with every permission "deny", and per-request `tools` all false (ids from `/experimental/tool/ids` plus a known list). Fixed ~250-word prose prompt; records TTFT, total time, output tokens, tok/s. Verified only that opencode accepts the config and lists its tools; not run end to end. Needs opencode in Pixel's container (true for local/single, not for the incus Dockerfile).
+
 ## Recovery details
 
 - `onIdle` and `recover` run serialised per run, so an idle event and a watchdog check can't both act.

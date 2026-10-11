@@ -55,3 +55,9 @@
 - **Flash goes into data, not interaction** (user): no hover glitches or scan lines. Instead: stacked tokens/s spectrum per run, memory split by run, spend line with projection, 30-minute activity barcode per run, per-agent swimlanes, context gauge, sidebar mesh of runs/subagents/workbase reads.
 - **Tokens/s** (user asked for total tokens per second): sampled every second from run token totals; shown as a 10-second average because opencode reports tokens in bursts at step end.
 - **Features this round** (user): live fleet view, ⌘K command palette, Activity feed, subagent tree. No spend cap shown (cost limits were declined earlier).
+
+## 2026-10-11 (models and providers)
+
+- **Provider benchmarking** (user picked from Claude's list): (1) Models leaderboard across runs, (2) live provider health, (4) quick speed test. Deferred: (3) benchmark suites with known bugs, (5) per-finding triage.
+- **Speed test is text-only** (Claude, agreed by the user): a throwaway `opencode serve` with every permission denied and every tool switched off per request, so the model can only answer in text; no tool-call reliability check.
+- **Built so far**: capture + health + leaderboard API, Models page with health and leaderboard. The speed test API exists but has no UI; the user asked to leave it for the next session.
