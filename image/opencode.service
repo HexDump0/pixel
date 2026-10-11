@@ -1,0 +1,21 @@
+[Unit]
+Description=opencode server driven by Pixel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+# Per-run secrets (OPENCODE_SERVER_PASSWORD, provider keys), written by Pixel.
+EnvironmentFile=/etc/pixel/opencode.env
+WorkingDirectory=/work/target
+ExecStart=/usr/local/bin/opencode serve --hostname 0.0.0.0 --port 4096
+# Pixel decides restarts, so it can tell the agent why it stopped.
+Restart=no
+# A fuzzer or build in the agent's tool calls may hit the OOM killer; that must not take opencode down too.
+OOMPolicy=continue
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

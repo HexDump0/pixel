@@ -1,0 +1,100 @@
+/** Pixel server entry: dashboard, API, websockets and the background loops. */
+import { config } from "./config.ts";
+import { listRuns, ACTIVE_STATUSES } from "./db.ts";
+import { getSettings } from "./settings.ts";
+import { dispatch } from "./api/index.ts";
+import { authEnabled, isAuthed, login, logoutCookie } from "./auth.ts";
+import { feedData, terminalData, websocket, type SocketData } from "./live.ts";
+import { reattach, startWatchdog, stopWatchdog } from "./runs/index.ts";
+import { seedTemplates } from "./templates.ts";
+import { indexWorkbases } from "./search.ts";
+import { snapshotWorkbase } from "./history.ts";
+import { writeIndex } from "./knowledge.ts";
+import { startBackupSchedule } from "./backup.ts";
+import { runtime } from "./runtime/index.ts";
+import dashboard from "../../web/index.html";
+
+/** Client-side routes of the dashboard SPA. */
+const SPA_ROUTES = ["/", "/runs/*", "/new", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/login"];
+
+async function handleAuth(req: Request, url: URL): Promise<Response | null> {
+  switch (url.pathname) {
+    case "/api/login": {
+      if (req.method !== "POST") return null;
+      const { password } = await req.json().catch(() => ({}) as any);
+      const cookie = login(String(password ?? ""));
+      if (!cookie) return Response.json({ error: "wrong password" }, { status: 401 });
+      return Response.json({ ok: true }, { headers: { "set-cookie": cookie } });
+    }
+    case "/api/logout":
+      return Response.json({ ok: true }, { headers: { "set-cookie": logoutCookie } });
+    case "/api/me":
+      return Response.json({ authed: isAuthed(req), authEnabled: authEnabled(), runtime: runtime.kind });
+  }
+  return null;
+}
+
+const server = Bun.serve<SocketData>({
+  hostname: config.host,
+  port: config.port,
+  idleTimeout: 120,
+  development: config.dev ? { hmr: true, console: false } : false,
+  routes: Object.fromEntries(SPA_ROUTES.map((r) => [r, dashboard])),
+  async fetch(req, server) {
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
+    const auth = await handleAuth(req, url);
+    if (auth) return auth;
+    if (!isAuthed(req)) return Response.json({ error: "login required" }, { status: 401 });
+
+    if (url.pathname === "/api/ws") {
+      return server.upgrade(req, { data: feedData() }) ? undefined : new Response("upgrade failed", { status: 400 });
+    }
+    const term = /^\/api\/runs\/([^/]+)\/terminal$/.exec(url.pathname);
+    if (term) {
+      return server.upgrade(req, { data: terminalData(decodeURIComponent(term[1])) }) ? undefined : new Response("upgrade failed", { status: 400 });
+    }
+    return dispatch(req, url);
+  },
+  websocket,
+});
+
+// ---- background work ----
+
+seedTemplates();
+writeIndex();
+await reattach();
+startWatchdog();
+startBackupSchedule();
+
+/** Full-text index of the workbases, for dashboard search. */
+setTimeout(() => indexWorkbases(), 2000);
+setInterval(() => {
+  try {
+    indexWorkbases();
+  } catch (e) {
+    console.error("indexing failed", e);
+  }
+}, 60_000);
+
+/** Git snapshots of active workbases every `historyIntervalMin`. */
+let lastHistory = 0;
+setInterval(async () => {
+  const every = getSettings().historyIntervalMin * 60_000;
+  if (every <= 0 || Date.now() - lastHistory < every) return;
+  lastHistory = Date.now();
+  for (const r of listRuns().filter((r) => ACTIVE_STATUSES.includes(r.status))) {
+    await snapshotWorkbase(r.id).catch((e) => console.error(`history snapshot ${r.id}`, e));
+  }
+}, 30_000);
+
+if (!authEnabled()) console.warn("PIXEL_PASSWORD is not set: the dashboard has no login. Only do this on a trusted machine.");
+console.log(`Pixel (${runtime.kind} runtime) listening on http://${server.hostname}:${server.port}`);
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    stopWatchdog();
+    server.stop();
+    process.exit(0);
+  });
+}

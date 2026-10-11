@@ -1,0 +1,122 @@
+/** Typed client for the Pixel API. */
+import type {
+  CrossReadEdge,
+  FileContent,
+  FileEntry,
+  HistoryEntry,
+  Message,
+  MetricRow,
+  Run,
+  RunDetail,
+  SearchHit,
+  Settings,
+  SystemInfo,
+  Template,
+  TemplateVersion,
+  TimelineEntry,
+  WorkbaseInfo,
+} from "./types.ts";
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Called on 401 so the app can show the login page. */
+export let onUnauthorized = () => {};
+export const setOnUnauthorized = (fn: () => void) => (onUnauthorized = fn);
+
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401) onUnauthorized();
+  if (!res.ok) throw new ApiError(res.status, json.error ?? res.statusText);
+  return json as T;
+}
+
+const q = (params: Record<string, string | number | undefined>) => {
+  const s = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") s.set(k, String(v));
+  const str = s.toString();
+  return str ? `?${str}` : "";
+};
+const r = (id: string) => `/runs/${encodeURIComponent(id)}`;
+
+export interface CreateRunInput {
+  repo: string;
+  ref?: string;
+  templateId: string;
+  templateVersion?: number;
+  model?: string;
+  models?: string[];
+  templateVersions?: number[];
+  size?: string;
+  parentRun?: string;
+  autopilot?: boolean;
+  promptOverride?: string;
+  name?: string;
+}
+
+export const api = {
+  me: () => request<{ authed: boolean; authEnabled: boolean; runtime: string }>("GET", "/me"),
+  login: (password: string) => request("POST", "/login", { password }),
+  logout: () => request("POST", "/logout"),
+
+  runs: () => request<Run[]>("GET", "/runs"),
+  createRun: (input: CreateRunInput) => request<Run[]>("POST", "/runs", input),
+  run: (id: string) => request<RunDetail>("GET", r(id)),
+  transcript: (id: string, session?: string) => request<Message[]>("GET", `${r(id)}/transcript${q({ session })}`),
+  timeline: (id: string) => request<TimelineEntry[]>("GET", `${r(id)}/timeline`),
+  metrics: (id: string) => request<MetricRow[]>("GET", `${r(id)}/metrics`),
+  runCrossReads: (id: string) => request<{ other_run: string; tool: string; path: string | null; ts: number }[]>("GET", `${r(id)}/crossreads`),
+  report: (id: string) => request<{ content: string | null }>("GET", `${r(id)}/report`),
+  vm: (id: string) => request<{ state: string; opencode: boolean }>("GET", `${r(id)}/vm`),
+  snapshots: (id: string) => request<{ name: string; created: string }[]>("GET", `${r(id)}/snapshots`),
+
+  files: (id: string, path: string) => request<FileEntry[]>("GET", `${r(id)}/files${q({ path })}`),
+  file: (id: string, path: string) => request<FileContent>("GET", `${r(id)}/file${q({ path })}`),
+  rawFileUrl: (id: string, path: string) => `/api${r(id)}/raw${q({ path })}`,
+  saveFile: (id: string, path: string, content: string) => request("PUT", `${r(id)}/file${q({ path })}`, { content }),
+  history: (id: string) => request<HistoryEntry[]>("GET", `${r(id)}/history`),
+  snapshotHistory: (id: string) => request<{ commit: string | null }>("POST", `${r(id)}/history`),
+  historyShow: (id: string, commit: string) => request<{ patch: string }>("GET", `${r(id)}/history/${commit}`),
+
+  /** Simple POST controls: continue, abort, pause, stop, done, retry, restart-opencode, reset-counters, sync. */
+  control: (id: string, action: string, body: unknown = {}) => request("POST", `${r(id)}/${action}`, body),
+  message: (id: string, text: string) => request("POST", `${r(id)}/message`, { text }),
+  resume: (id: string, message?: string) => request("POST", `${r(id)}/resume`, { message }),
+  setModel: (id: string, model: string) => request("POST", `${r(id)}/model`, { model }),
+  setAutopilot: (id: string, on: boolean) => request("POST", `${r(id)}/autopilot`, { on }),
+  vmAction: (id: string, action: "start" | "stop" | "snapshot" | "restore", snapshot?: string) => request("POST", `${r(id)}/vm/${action}`, { snapshot }),
+  deleteVm: (id: string) => request("DELETE", `${r(id)}/vm`),
+  answer: (id: string, qid: string, answers: string[][] | null) => request("POST", `${r(id)}/question/${qid}`, answers ? { answers } : { reject: true }),
+  triage: (id: string, body: { verdict?: string | null; notes?: string | null; markTriaged?: boolean; keepVm?: boolean }) => request("POST", `${r(id)}/triage`, body),
+  rerun: (id: string, body: { asFollowUp?: boolean; model?: string; templateVersion?: number }) => request<Run>("POST", `${r(id)}/rerun`, body),
+  deleteRun: (id: string, workbase: boolean) => request("DELETE", `${r(id)}${q({ workbase: workbase ? 1 : undefined })}`),
+
+  templates: () => request<Template[]>("GET", "/templates"),
+  template: (id: string) => request<{ versions: TemplateVersion[]; variables: string[] }>("GET", `/templates/${encodeURIComponent(id)}`),
+  createTemplate: (t: { id: string; name?: string; body: string; note?: string }) => request<TemplateVersion>("POST", "/templates", t),
+  addTemplateVersion: (id: string, body: string, note?: string) => request<TemplateVersion>("POST", `/templates/${encodeURIComponent(id)}/versions`, { body, note }),
+  preview: (input: { body: string; repo?: string; ref?: string; model?: string; size?: string; parentRun?: string; name?: string }) =>
+    request<{ prompt: string }>("POST", "/templates/preview", input),
+
+  search: (query: string) => request<SearchHit[]>("GET", `/search${q({ q: query })}`),
+  crossReads: () => request<CrossReadEdge[]>("GET", "/crossreads"),
+  workbases: () => request<WorkbaseInfo[]>("GET", "/workbases"),
+  workbaseIndex: () => request<{ content: string }>("GET", "/workbases/index"),
+
+  settings: () => request<Settings & { defaults: Settings }>("GET", "/settings"),
+  saveSettings: (patch: Partial<Settings>) => request<Settings & { defaults: Settings }>("PUT", "/settings", patch),
+  testNotify: () => request<{ results: string[] }>("POST", "/settings/test-notify"),
+  system: () => request<SystemInfo>("GET", "/system"),
+  backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
+};

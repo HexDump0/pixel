@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": "allow",
+  "autoupdate": false,
+  "share": "disabled",
+  "mcp": {
+    "ghidra": {
+      "type": "local",
+      "command": ["/root/.local/bin/pyghidra-mcp", "--transport", "stdio"],
+      "environment": { "GHIDRA_INSTALL_DIR": "/opt/ghidra" },
+      "timeout": 120000,
+      "enabled": true
+    }
+  }
+}

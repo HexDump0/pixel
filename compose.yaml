@@ -1,0 +1,24 @@
+# Runs Pixel on the pixel host. See README.md for host setup (Incus, image, data dir).
+services:
+  pixel:
+    build: .
+    image: pixel:latest
+    restart: unless-stopped
+    # Host networking: Pixel talks to every agent VM on incusbr0 directly.
+    network_mode: host
+    environment:
+      PIXEL_PASSWORD: ${PIXEL_PASSWORD:?set PIXEL_PASSWORD in .env}
+      # Bind the dashboard to a private address only (e.g. the Tailscale IP). Never 0.0.0.0:
+      # agent VMs share the host network and could reach it.
+      PIXEL_HOST: ${PIXEL_HOST:-127.0.0.1}
+      PIXEL_PORT: ${PIXEL_PORT:-7700}
+      PIXEL_PUBLIC_URL: ${PIXEL_PUBLIC_URL:-}
+      PIXEL_PUBLIC_HOST: ${PIXEL_PUBLIC_HOST:-}
+      PIXEL_IMAGE: ${PIXEL_IMAGE:-pixel-image}
+      INCUS_POOL: ${INCUS_POOL:-default}
+      INCUS_NETWORK: ${INCUS_NETWORK:-incusbr0}
+      INCUS_PROJECT: ${INCUS_PROJECT:-default}
+    volumes:
+      # Same path inside and outside: Incus resolves share sources on the host.
+      - /srv/pixel:/srv/pixel
+      - /var/lib/incus/unix.socket:/var/lib/incus/unix.socket
