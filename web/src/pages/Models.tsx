@@ -17,7 +17,8 @@ const TABS: Tab[] = ["providers", "health", "leaderboard", "speed"];
 
 export function ModelsPage() {
   const loc = useLocation();
-  const fromUrl = new URLSearchParams(loc.search).get("tab") as Tab | null;
+  const params = new URLSearchParams(loc.search);
+  const fromUrl = params.get("tab") as Tab | null;
   const tab: Tab = fromUrl && TABS.includes(fromUrl) ? fromUrl : "providers";
   const setTab = (t: Tab) => navigate(t === "providers" ? "/models" : `/models?tab=${t}`, true);
 
@@ -25,8 +26,9 @@ export function ModelsPage() {
   const settingsReq = useAsync(() => api.settings(), []);
   const health = useAsync(() => api.providerHealth(60), []);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [dialog, setDialog] = useState<{ edit?: ConnectedProvider } | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  // ?add=1 opens the add dialog, ?provider=<id> opens that provider's models (links from elsewhere).
+  const [dialog, setDialog] = useState<{ edit?: ConnectedProvider } | null>(() => (params.get("add") ? {} : null));
+  const [open, setOpen] = useState<string | null>(() => params.get("provider"));
   useEffect(() => {
     if (settingsReq.data) setSettings(settingsReq.data);
   }, [settingsReq.data]);

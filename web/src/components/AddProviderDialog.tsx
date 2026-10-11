@@ -8,6 +8,7 @@ import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import type { CatalogList, ConnectedProvider } from "../lib/types.ts";
 import { Button, ErrorBox, Field, Notice } from "./ui.tsx";
+import { ProviderMark } from "./ProviderList.tsx";
 
 type CatalogEntry = CatalogList["providers"][number];
 type CustomApi = "openai" | "anthropic";
@@ -67,10 +68,13 @@ function ProviderPicker({ catalog, connected, onPick, onCustom }: { catalog: Cat
 
   const item = (p: CatalogEntry) => (
     <button key={p.id} onClick={() => onPick(p)}>
-      <span className="pick-name">{p.name}</span>
-      <span className="pick-sub">
-        {p.id}
-        {p.env.length ? ` · ${p.env.join(", ")}` : ""}
+      <ProviderMark id={p.id} name={p.name} />
+      <span className="pick-text">
+        <div className="pick-name">{p.name}</div>
+        <div className="pick-sub">
+          {p.id}
+          {p.env.length ? ` · ${p.env.join(", ")}` : ""}
+        </div>
       </span>
       <span className="pick-side">{isOn(p.id) ? <span className="badge done">connected</span> : `${p.toolModels} models with tools`}</span>
     </button>
@@ -82,9 +86,12 @@ function ProviderPicker({ catalog, connected, onPick, onCustom }: { catalog: Cat
       {!catalog && <div className="muted">Loading the provider catalogue…</div>}
       {catalog?.source === "none" && <Notice>Pixel could not download the provider catalogue (models.dev) and has no cached copy. You can still add a custom endpoint.</Notice>}
       <div className="pick">
-        <button onClick={onCustom}>
-          <span className="pick-name">Custom endpoint</span>
-          <span className="pick-sub">anything speaking the OpenAI or Anthropic API: Ollama, vLLM, LiteLLM, a gateway…</span>
+        <button className="custom" onClick={onCustom}>
+          <span className="pmark">+</span>
+          <span className="pick-text">
+            <div className="pick-name">Custom endpoint</div>
+            <div className="pick-sub">OpenAI or Anthropic API · Ollama, vLLM, LiteLLM, a gateway…</div>
+          </span>
           <span className="pick-side">base URL + key</span>
         </button>
         {shown.popular.length > 0 && <div className="pick-group">Popular</div>}

@@ -1,5 +1,5 @@
 /** Every provider agents can use, how it's connected, how it's doing right now, and its models. */
-import { Fragment } from "react";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { api } from "../lib/api.ts";
 import type { ConnectedProvider, ProviderHealth, Settings } from "../lib/types.ts";
 import { Link } from "../lib/router.tsx";
@@ -12,6 +12,19 @@ const VIA: Record<string, (p: ConnectedProvider) => string> = {
   "auth.json": () => "auth.json in Settings",
   builtin: () => "built in · free models",
 };
+
+/** Stable tint per provider, from the run palette (--r0…--r5). */
+const hue = (id: string) => [...id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % 6;
+
+/** A provider's initial on a tile tinted by its id; children sit in the corner (the health dot). */
+export function ProviderMark({ id, name, children }: { id: string; name: string; children?: ReactNode }) {
+  return (
+    <span className="pmark" style={{ "--hue": `var(--r${hue(id)})` } as CSSProperties} aria-hidden="true">
+      {name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase() || "?"}
+      {children}
+    </span>
+  );
+}
 
 const STATE_DOT: Record<string, string> = { ok: "running", degraded: "recovering", limited: "failed" };
 const WORST = ["limited", "degraded", "ok", "idle"];
@@ -53,60 +66,64 @@ export function ProviderList({
     <section className="card" style={{ padding: 0 }}>
       <div className="sec">
         <h3>
-          Providers <span>what agents can use · click one for its models</span>
+          {providers.length} provider{providers.length === 1 ? "" : "s"} <span>click one to choose its models</span>
         </h3>
       </div>
       {providers.map((p) => {
         const s = summary(p.id, health);
-        const offered = settings.models.filter((m) => m.startsWith(`${p.id}/`)).length;
+        const offered = settings.models.filter((m) => m.startsWith(`${p.id}/`));
         const isOpen = open === p.id;
         const removable = p.via.includes("pixel");
         return (
           <div key={p.id} className={`prov ${isOpen ? "open" : ""}`}>
-            <div className="row" style={{ cursor: "pointer" }} onClick={() => onOpen(isOpen ? null : p.id)}>
-              <span className={`dot ${STATE_DOT[s.state] ?? ""}`} title={s.state === "idle" ? "no calls in the last hour" : s.state} />
+            <div className="row" onClick={() => onOpen(isOpen ? null : p.id)}>
+              <ProviderMark id={p.id} name={p.name}>
+                <i className={`dot ${STATE_DOT[s.state] ?? ""}`} title={s.state === "idle" ? "no calls in the last hour" : s.state} />
+              </ProviderMark>
               <div className="min-w-0">
                 <button
-                  style={{ all: "unset", cursor: "pointer", fontWeight: 500 }}
+                  className="name"
                   aria-expanded={isOpen}
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpen(isOpen ? null : p.id);
                   }}
                 >
-                  {isOpen ? "▾" : "▸"} {p.name}
+                  {p.name}
                 </button>
-                <div className="mono muted" style={{ fontSize: 11.5 }}>
+                <div className="mono muted truncate" style={{ fontSize: 11.5 }} title={p.baseURL ?? undefined}>
                   {p.id}
-                  {p.baseURL ? ` · ${p.baseURL}` : ""}
+                  {p.baseURL ? ` · ${p.baseURL.replace(/^https?:\/\//, "")}` : ""}
                 </div>
               </div>
               <div className="via wide">
                 {p.via.map((v) => (
-                  <span key={v} className={`badge ${v === "pixel" || v === "builtin" ? "" : "stopped"}`} title={v === "pixel" ? "Added here" : "Set up by hand under Settings → Agent credentials"}>
+                  <span key={v} className={`badge ${v === "pixel" || v === "builtin" ? "" : "stopped"}`} title={v === "pixel" ? "Added here" : v === "builtin" ? "opencode's own gateway, no key needed" : "Set up by hand under Settings → Agent credentials"}>
                     {VIA[v]?.(p) ?? v}
                   </span>
                 ))}
               </div>
-              <div className="wide num" style={{ color: offered ? "var(--fg)" : "var(--fg3)" }}>
-                {offered} model{offered === 1 ? "" : "s"}
-                {settings.defaultModel.startsWith(`${p.id}/`) && (
-                  <span className="star on" title="Has the default model">
-                    ★
+              <div className="chips wide">
+                {offered.length === 0 ? (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    no models offered yet
                   </span>
-                )}
-              </div>
-              <div className="wide num muted" style={{ fontSize: 12 }}>
-                {s.calls ? (
-                  <>
-                    {s.calls} calls/h
-                    {s.problems > 0 && <span style={{ color: "var(--warn)" }}> · {s.problems} errors</span>}
-                  </>
                 ) : (
-                  "idle"
+                  <>
+                    {offered.slice(0, 2).map((m) => (
+                      <span key={m} className={`chip ${m === settings.defaultModel ? "on" : ""}`} title={m === settings.defaultModel ? "Default model for new runs" : m}>
+                        {m === settings.defaultModel && "★ "}
+                        {m.slice(p.id.length + 1)}
+                      </span>
+                    ))}
+                    {offered.length > 2 && <span className="chip more">+{offered.length - 2}</span>}
+                  </>
                 )}
               </div>
-              <div className="flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <div className="wide num" style={{ fontSize: 12, color: s.problems ? "var(--warn)" : s.calls ? "var(--fg2)" : "var(--fg3)" }}>
+                {s.calls ? `${s.calls} calls/h${s.problems ? ` · ${s.problems} err` : ""}` : "idle"}
+              </div>
+              <div className="acts" onClick={(e) => e.stopPropagation()}>
                 {p.via.includes("builtin") ? null : removable ? (
                   <>
                     <button className="btn btn-sm" onClick={() => onEdit(p)}>
@@ -115,7 +132,7 @@ export function ProviderList({
                     <Button
                       small
                       variant="danger"
-                      confirm={`Remove ${p.name}? Its key is deleted and its ${offered} model${offered === 1 ? "" : "s"} leave the new-run form. Running agents keep working.`}
+                      confirm={`Remove ${p.name}? Its key is deleted and its ${offered.length} model${offered.length === 1 ? "" : "s"} leave the new-run form. Running agents keep working.`}
                       onClick={async () => {
                         await api.removeProvider(p.id);
                         onRemoved();
@@ -131,6 +148,9 @@ export function ProviderList({
                   </Link>
                 )}
               </div>
+              <span className="chev" aria-hidden="true">
+                ›
+              </span>
             </div>
             {isOpen && (
               <div className="models">
