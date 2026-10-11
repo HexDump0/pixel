@@ -11,6 +11,7 @@ import { AddProviderDialog } from "../components/AddProviderDialog.tsx";
 import { ProviderHealth } from "../components/ProviderHealth.tsx";
 import { ModelLeaderboard } from "../components/ModelLeaderboard.tsx";
 import { SpeedTest } from "../components/SpeedTest.tsx";
+import { LiveTest } from "../components/LiveTest.tsx";
 
 type Tab = "providers" | "health" | "leaderboard" | "speed";
 const TABS: Tab[] = ["providers", "health", "leaderboard", "speed"];
@@ -29,6 +30,8 @@ export function ModelsPage() {
   // ?add=1 opens the add dialog, ?provider=<id> opens that provider's models (links from elsewhere).
   const [dialog, setDialog] = useState<{ edit?: ConnectedProvider } | null>(() => (params.get("add") ? {} : null));
   const [open, setOpen] = useState<string | null>(() => params.get("provider"));
+  // ?test=<provider/model> opens the live test on that model.
+  const [live, setLive] = useState<string | null>(() => params.get("test"));
   useEffect(() => {
     if (settingsReq.data) setSettings(settingsReq.data);
   }, [settingsReq.data]);
@@ -63,9 +66,14 @@ export function ModelsPage() {
         title="Models"
         subtitle="The providers your agents can use and which models the new-run form offers, plus live health, results across runs, and a quick speed test."
         actions={
-          <button className="btn btn-primary" onClick={() => setDialog({})}>
-            Add provider
-          </button>
+          <>
+            <button className="btn" onClick={() => setLive(settings?.defaultModel ?? "opencode/big-pickle")}>
+              <span style={{ color: "var(--accent)" }}>▶</span> Live test
+            </button>
+            <button className="btn btn-primary" onClick={() => setDialog({})}>
+              Add provider
+            </button>
+          </>
         }
       />
       <ErrorBox error={providers.error ?? settingsReq.error} />
@@ -102,6 +110,7 @@ export function ModelsPage() {
             onSettings={setSettings}
             onEdit={(p) => setDialog({ edit: p })}
             onAdd={() => setDialog({})}
+            onTest={setLive}
             onRemoved={() => {
               void providers.reload();
               void settingsReq.reload();
@@ -113,6 +122,7 @@ export function ModelsPage() {
         {tab === "speed" && <SpeedTest />}
       </div>
 
+      {live && <LiveTest model={live} models={settings?.models ?? []} onClose={() => setLive(null)} />}
       {dialog && <AddProviderDialog connected={list} edit={dialog.edit} onClose={() => setDialog(null)} onSaved={(id, offer) => void saved(id, offer)} />}
     </div>
   );

@@ -14,6 +14,7 @@ import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
 import dashboard from "../../web/index.html";
+import { liveShutdown } from "./liveTest.ts";
 
 /** Client-side routes of the dashboard SPA. */
 const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/login"];
@@ -98,6 +99,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     stopWatchdog();
     stopFleet();
     server.stop();
-    process.exit(0);
+    // Don't leave the live test's opencode running; give it a few seconds at most.
+    void Promise.race([liveShutdown(), Bun.sleep(6000)]).finally(() => process.exit(0));
   });
 }

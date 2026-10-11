@@ -1,56 +1,26 @@
 /**
- * One provider's models: tick the ones offered in the new-run form, star the default, and run a
- * one-model speed test to check the key works. Changes save straight away.
+ * One provider's models: tick the ones offered in the new-run form, star the default, and open a
+ * live test to check the key and the model. Changes save straight away.
  */
 import { useMemo, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
-import { useLive } from "../lib/live.ts";
 import { tokens } from "../lib/format.ts";
-import type { CatalogModel, ConnectedProvider, Settings, SpeedTestRow } from "../lib/types.ts";
+import type { CatalogModel, ConnectedProvider, Settings } from "../lib/types.ts";
 import { ErrorBox } from "./ui.tsx";
 import { toast } from "./Toast.tsx";
 
 const price = (n: number | null) => (n == null ? "–" : n === 0 ? "0" : n < 1 ? n.toFixed(2) : String(Math.round(n * 10) / 10));
-const ms = (n: number | null) => (n == null ? "–" : n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(1)} s`);
 const SHOW = 60;
 
-type Test = { state: "running" } | { state: "done"; row: SpeedTestRow };
-
-function TestResult({ t }: { t: Test | undefined }) {
-  if (!t) return null;
-  if (t.state === "running") return <span className="muted">testing…</span>;
-  const r = t.row;
-  if (!r.ok)
-    return (
-      <span style={{ color: "var(--bad)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", display: "inline-block", verticalAlign: "middle" }} title={r.error ?? ""}>
-        ✕ {r.error}
-      </span>
-    );
-  return (
-    <span style={{ color: "var(--ok)" }} className="num">
-      ✓ {r.tps == null ? "" : `${Math.round(r.tps)} tok/s · `}
-      {ms(r.ttft_ms)} first
-    </span>
-  );
-}
-
-export function ModelPicker({ provider, settings, onSettings }: { provider: ConnectedProvider; settings: Settings; onSettings: (s: Settings) => void }) {
+export function ModelPicker({ provider, settings, onSettings, onTest }: { provider: ConnectedProvider; settings: Settings; onSettings: (s: Settings) => void; onTest: (model: string) => void }) {
   const cat = useAsync(() => (provider.custom ? Promise.resolve(null) : api.catalogProvider(provider.id).catch(() => null)), [provider.id, !!provider.custom]);
   const [query, setQuery] = useState("");
   const [toolsOnly, setToolsOnly] = useState(true);
   const [all, setAll] = useState(false);
   const [extra, setExtra] = useState("");
-  const [tests, setTests] = useState<Record<string, Test>>({});
   const prefix = `${provider.id}/`;
   const freeOnly = provider.via.length === 1 && provider.via[0] === "builtin";
-
-  useLive("*", (m) => {
-    if (m.type !== "speedtest" || !m.data?.result) return;
-    const row = m.data.result as SpeedTestRow;
-    if (row.provider !== provider.id) return;
-    setTests((t) => (t[row.model]?.state === "running" ? { ...t, [row.model]: { state: "done", row } } : t));
-  });
 
   const models: CatalogModel[] = useMemo(() => {
     const list: CatalogModel[] = provider.custom
@@ -87,14 +57,6 @@ export function ModelPicker({ provider, settings, onSettings }: { provider: Conn
   const makeDefault = (id: string) => {
     const full = prefix + id;
     void save({ defaultModel: full, models: settings.models.includes(full) ? settings.models : [...settings.models, full] });
-  };
-  const test = async (id: string) => {
-    try {
-      await api.startSpeedTest([prefix + id]);
-      setTests((t) => ({ ...t, [id]: { state: "running" } }));
-    } catch (e: any) {
-      toast(e.message ?? String(e), "error");
-    }
   };
   const addExtra = () => {
     const id = extra.trim().replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "");
@@ -133,7 +95,7 @@ export function ModelPicker({ provider, settings, onSettings }: { provider: Conn
                   $ in · out /M
                 </th>
                 <th className="th" />
-                <th className="th">Check</th>
+                <th className="th">Live test</th>
                 <th className="th r" style={{ width: 70 }}>
                   Default
                 </th>
@@ -167,12 +129,9 @@ export function ModelPicker({ provider, settings, onSettings }: { provider: Conn
                       </span>
                     </td>
                     <td>
-                      <span className="flex items-center gap-2">
-                        <button className="btn btn-sm" disabled={tests[m.id]?.state === "running"} onClick={() => void test(m.id)} title="Send a short text prompt to this model">
-                          Test
-                        </button>
-                        <TestResult t={tests[m.id]} />
-                      </span>
+                      <button className="btn btn-sm" onClick={() => onTest(prefix + m.id)} title="Chat with this model and watch it answer live">
+                        <span style={{ color: "var(--accent)" }}>▶</span> Test
+                      </button>
                     </td>
                     <td className="r">
                       <button className={`star ${isDefault ? "on" : ""}`} onClick={() => makeDefault(m.id)} aria-pressed={isDefault} aria-label={`Make ${m.id} the default model`} title={isDefault ? "Default model for new runs" : "Make default"}>

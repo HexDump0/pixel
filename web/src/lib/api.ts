@@ -140,6 +140,8 @@ export const api = {
   discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
   catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
   catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),
+  livePrompt: (body: { model: string; text: string; session?: string; turn: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
+  liveAbort: (session: string) => request("POST", `/live/${encodeURIComponent(session)}/abort`),
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
 };

@@ -48,6 +48,7 @@ export function ProviderList({
   onEdit,
   onAdd,
   onRemoved,
+  onTest,
 }: {
   providers: ConnectedProvider[];
   settings: Settings;
@@ -58,6 +59,7 @@ export function ProviderList({
   onEdit: (p: ConnectedProvider) => void;
   onAdd: () => void;
   onRemoved: () => void;
+  onTest: (model: string) => void;
 }) {
   const ids = new Set(providers.map((p) => p.id));
   const orphans = settings.models.filter((m) => !ids.has(m.split("/")[0]));
@@ -154,7 +156,7 @@ export function ProviderList({
             </div>
             {isOpen && (
               <div className="models">
-                <ModelPicker provider={p} settings={settings} onSettings={onSettings} />
+                <ModelPicker provider={p} settings={settings} onSettings={onSettings} onTest={onTest} />
               </div>
             )}
           </div>

@@ -3,20 +3,17 @@
  * cost, error), provider retries/errors/rate limits, a per-model leaderboard across runs, and a
  * text-only speed test.
  *
- * Calls and events are captured from the run event streams in events.ts. The speed test starts a
+ * Calls and events are captured from the run event streams in events.ts. The speed test uses a
  * throwaway `opencode serve` in an empty folder where every permission is "ask" and Pixel rejects
  * every request, so the model can only answer in text. The tools stay in the request: opencode's own
  * gateways (Zen, Go) refuse requests whose tool set differs from opencode's, so denying or
  * switching off tools breaks free and Go models.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { config } from "./config.ts";
 import { db, listRuns } from "./db.ts";
 import { publish } from "./bus.ts";
 import { getSettings } from "./settings.ts";
 import { OpencodeClient } from "./opencode.ts";
-import { agentCredentials } from "./providerAccounts.ts";
+import { startScratchOpencode, type ScratchOpencode } from "./scratchOpencode.ts";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -283,13 +280,6 @@ export function speedTests(limit = 200) {
   return db.query("SELECT * FROM speedtests ORDER BY ts DESC LIMIT ?").all(limit);
 }
 
-const freePort = () => {
-  const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-  const p = s.port;
-  s.stop(true);
-  return p;
-};
-
 export function startSpeedTest(models: string[]) {
   if (speedRunning) throw new Error("a speed test is already running");
   const list = [...new Set(models.map((m) => m.trim()).filter((m) => m.includes("/")))].slice(0, 12);
@@ -324,21 +314,6 @@ function rejectTools(client: OpencodeClient, tries: { n: number }) {
 }
 
 async function runSpeedTest(batch: string, models: string[]) {
-  const creds = agentCredentials();
-  mkdirSync(join(config.dataDir, "speedtest"), { recursive: true, mode: 0o700 });
-  const dir = mkdtempSync(join(config.dataDir, "speedtest", "run-"));
-  const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
-  mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
-  writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: "ask" }));
-  if (creds.authJson.trim()) {
-    mkdirSync(join(xdg.XDG_DATA_HOME, "opencode"), { recursive: true });
-    writeFileSync(join(xdg.XDG_DATA_HOME, "opencode", "auth.json"), creds.authJson, { mode: 0o600 });
-  }
-  const work = join(dir, "work");
-  mkdirSync(work);
-  const password = Buffer.from(crypto.getRandomValues(new Uint8Array(18))).toString("base64url");
-  const port = freePort();
-  let proc: ReturnType<typeof Bun.spawn> | null = null;
   const record = (model: string, r: { ttft?: number | null; total?: number | null; out?: number | null; tps?: number | null; ok: boolean; error?: string | null }) => {
     const [provider, ...rest] = model.split("/");
     const row = { batch, ts: Date.now(), provider, model: rest.join("/"), ttft_ms: r.ttft ?? null, total_ms: r.total ?? null, tokens_out: r.out ?? null, tps: r.tps ?? null, ok: r.ok ? 1 : 0, error: r.error ?? null };
@@ -347,36 +322,23 @@ async function runSpeedTest(batch: string, models: string[]) {
     );
     publish("*", "speedtest", { batch, result: row });
   };
+  let oc: ScratchOpencode;
   try {
-    proc = Bun.spawn([config.opencodeBin, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
-      cwd: work,
-      // Only what opencode needs plus the provider keys from Settings; none of Pixel's own environment.
-      env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", ...xdg, ...creds.env, OPENCODE_SERVER_PASSWORD: password },
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    oc = await startScratchOpencode("speedtest");
   } catch (e: any) {
-    for (const m of models) record(m, { ok: false, error: `cannot start opencode (${config.opencodeBin}): ${e.message}` });
-    rmSync(dir, { recursive: true, force: true });
+    for (const m of models) record(m, { ok: false, error: e.message });
     return;
   }
-  const client = new OpencodeClient(`http://127.0.0.1:${port}`, password, work);
+  const client = oc.client;
   try {
-    await client.waitHealthy(30_000);
-    // An unknown model makes opencode answer with a bare 500, so check the catalogue first.
-    const catalogue = await client.req<{ providers: { id: string; models: Record<string, unknown> }[] }>("GET", "/config/providers").catch(() => null);
-    const known = (providerID: string, modelID: string) => {
-      if (!catalogue?.providers) return true;
-      const p = catalogue.providers.find((x) => x.id === providerID);
-      return !!p && modelID in (p.models ?? {});
-    };
     for (const model of models) {
       if (speedRunning) speedRunning.current = model;
       publish("*", "speedtest", { batch, current: model });
       const [providerID, ...rest] = model.split("/");
       const modelID = rest.join("/");
-      if (!known(providerID, modelID)) {
-        record(model, { ok: false, error: catalogue!.providers.some((x) => x.id === providerID) ? `unknown model for ${providerID}` : `provider ${providerID} not configured (add it under Models → Providers)` });
+      const unknown = await oc.check(model);
+      if (unknown) {
+        record(model, { ok: false, error: unknown });
         continue;
       }
       const toolTries = { n: 0 };
@@ -421,16 +383,8 @@ async function runSpeedTest(batch: string, models: string[]) {
         guard.stop();
       }
     }
-  } catch (e: any) {
-    for (const m of models) record(m, { ok: false, error: `opencode did not start: ${e.message}` });
   } finally {
-    // opencode serve can ignore SIGTERM (seen with 1.18.23), so don't wait on it for long.
-    proc?.kill();
-    if (proc && (await Promise.race([proc.exited.then(() => true), Bun.sleep(5000).then(() => false)])) === false) {
-      proc.kill("SIGKILL");
-      await proc.exited;
-    }
-    rmSync(dir, { recursive: true, force: true });
+    await oc.stop();
   }
 }
 

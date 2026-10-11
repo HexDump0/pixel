@@ -1,6 +1,7 @@
 /** /api/providers, /api/catalog and /api/speedtests: connected providers, the model catalogue, provider health, the model leaderboard, and text-only speed tests. */
 import { health, leaderboard, speedTests, speedTestStatus, startSpeedTest } from "../providers.ts";
 import { catalogProvider, catalogProviders } from "../catalog.ts";
+import { liveAbort, livePrompt, liveStatus } from "../liveTest.ts";
 import { connectedProviders, discoverModels, removeAccount, saveAccount, type AccountInput } from "../providerAccounts.ts";
 import { del, get, post, put, readJson, HttpError } from "./router.ts";
 
@@ -33,3 +34,9 @@ post("/providers/discover", async ({ req }) => {
   const b = await readJson<{ baseURL?: string; key?: string; id?: string; api?: "openai" | "anthropic" }>(req);
   return discoverModels(b.baseURL ?? "", b.key, b.id, b.api === "anthropic" ? "anthropic" : "openai");
 });
+
+// ---- live test ----
+
+get("/live", () => liveStatus());
+post("/live", async ({ req }) => livePrompt(await readJson(req)));
+post("/live/:session/abort", ({ params: { session } }) => liveAbort(session));
