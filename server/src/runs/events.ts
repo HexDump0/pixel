@@ -141,7 +141,13 @@ function touch(runId: string) {
   updateRun(runId, { last_activity: now });
 }
 
-const errorText = (err: any) => `${err?.name ?? "unknown"}: ${err?.data?.message ?? ""}`.slice(0, 500);
+/** Provider errors: name, HTTP status, message, and the provider's own response when it says more. */
+function errorText(err: any) {
+  const d = err?.data ?? {};
+  const msg = String(d.message ?? "");
+  const body = d.responseBody && !msg.includes(String(d.responseBody)) ? ` · ${d.responseBody}` : "";
+  return `${err?.name ?? "unknown"}${d.statusCode ? ` (HTTP ${d.statusCode})` : ""}: ${msg}${body}`.slice(0, 500);
+}
 
 function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
   const p = e.properties ?? {};

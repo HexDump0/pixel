@@ -64,6 +64,14 @@ function PartView({ part, sessions, onOpenSession }: { part: Part; sessions: Run
   }
 }
 
+/** What the provider said: HTTP status, message, and its response body when that adds anything. */
+function errorDetail(err: { name: string; data?: any }) {
+  const d = err.data ?? {};
+  const msg = String(d.message ?? "");
+  const body = d.responseBody && !msg.includes(String(d.responseBody)) ? String(d.responseBody) : "";
+  return [d.statusCode && `HTTP ${d.statusCode}`, msg, body.slice(0, 1000)].filter(Boolean).join(" · ") || "no details from the provider";
+}
+
 function MessageView({ m, sessions, onOpenSession }: { m: Message; sessions: RunDetail["sessions"]; onOpenSession: (id: string) => void }) {
   const user = m.info.role === "user";
   return (
@@ -73,6 +81,7 @@ function MessageView({ m, sessions, onOpenSession }: { m: Message; sessions: Run
         {m.info.modelID && ` · ${m.info.modelID}`}
         {m.info.error && <span className="text-red-500"> · {m.info.error.name}</span>}
       </div>
+      {m.info.error && m.info.error.name !== "MessageAbortedError" && <div className="mb-1 whitespace-pre-wrap break-words text-xs text-red-500">{errorDetail(m.info.error)}</div>}
       <div className="flex flex-col gap-1.5 text-sm">
         {m.parts.map((p) => (
           <PartView key={p.id} part={p} sessions={sessions} onOpenSession={onOpenSession} />
