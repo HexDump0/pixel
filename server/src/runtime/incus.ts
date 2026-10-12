@@ -1,7 +1,7 @@
 /** Production runtime: one Incus VM per run, driven through the Incus REST API on its unix socket. */
 import { config } from "../config.ts";
 import type { RunRow } from "../db.ts";
-import type { AgentPaths, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
+import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
 
 class IncusError extends Error {}
 
@@ -183,14 +183,7 @@ export class IncusRuntime implements Runtime {
     if (ro.code === 0) throw new IncusError("Other workbases are writable from the VM: the /workbases share is not read-only");
 
     o.log("Injecting credentials");
-    const envFile = Object.entries({ ...o.env, OPENCODE_SERVER_PASSWORD: o.opencodePassword })
-      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-      .join("\n");
-    await this.pushFile(name, "/etc/pixel/opencode.env", envFile + "\n");
-    if (o.authJson.trim()) {
-      await this.mustExec(name, ["mkdir", "-p", "/root/.local/share/opencode"], "mkdir");
-      await this.pushFile(name, "/root/.local/share/opencode/auth.json", o.authJson);
-    }
+    await this.pushCredentials(name, o, o.opencodePassword);
 
     const cloned = await this.execByName(name, ["test", "-d", `${p.target}/.git`]);
     if (cloned.code !== 0) {
@@ -228,13 +221,25 @@ export class IncusRuntime implements Runtime {
     }
   }
 
-  async restartOpencode(run: RunRow) {
+  private async pushCredentials(name: string, creds: Credentials, opencodePassword: string) {
+    const envFile = Object.entries({ ...creds.env, OPENCODE_SERVER_PASSWORD: opencodePassword })
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join("\n");
+    await this.pushFile(name, "/etc/pixel/opencode.env", envFile + "\n");
+    if (creds.authJson.trim()) {
+      await this.mustExec(name, ["mkdir", "-p", "/root/.local/share/opencode"], "mkdir");
+      await this.pushFile(name, "/root/.local/share/opencode/auth.json", creds.authJson);
+    } else await this.mustExec(name, ["rm", "-f", "/root/.local/share/opencode/auth.json"], "Removing auth.json");
+  }
+
+  async restartOpencode(run: RunRow, creds?: Credentials) {
     const name = this.name(run);
     const st = await this.state(name);
     if (st.status !== "Running") {
       await call("PUT", `/1.0/instances/${name}/state`, { action: "start" });
       await this.waitForAgent(name);
     }
+    if (creds) await this.pushCredentials(name, creds, run.opencode_password!);
     await this.mustExec(name, ["sh", "-c", "systemctl reset-failed opencode 2>/dev/null; systemctl restart opencode"], "Restarting opencode");
   }
 

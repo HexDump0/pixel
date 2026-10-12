@@ -158,7 +158,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, 
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -193,6 +193,8 @@ export interface RunRow {
   model: string;
   /** opencode model variant (thinking level), null = the model's default. */
   variant: string | null;
+  /** Fingerprint of the keys and provider settings the run's opencode was last started with. */
+  creds_hash: string | null;
   size: string;
   status: RunStatus;
   status_detail: string | null;

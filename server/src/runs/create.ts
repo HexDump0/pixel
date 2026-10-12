@@ -8,7 +8,7 @@ import { runtime } from "../runtime/index.ts";
 import { detectLanguage, ensureWorkbase, refreshRunFiles, workbasePath } from "../knowledge.ts";
 import { getVersion, latestVersion, render } from "../templates.ts";
 import { snapshotWorkbase } from "../history.ts";
-import { clientFor, notifyRun, publicRun, setRun, setStatus, timeline } from "./state.ts";
+import { clientFor, credsHash, notifyRun, publicRun, setRun, setStatus, timeline } from "./state.ts";
 import { watch } from "./events.ts";
 
 export interface NewRun {
@@ -143,7 +143,7 @@ export async function prepare(id: string) {
         timeline(id, "pixel", "prepare", m);
       },
     });
-    run = setRun(id, { vm_name: prepared.vmName, endpoint: prepared.endpoint })!;
+    run = setRun(id, { vm_name: prepared.vmName, endpoint: prepared.endpoint, creds_hash: credsHash(creds) })!;
 
     const target = runtime.paths(run).target;
     const [head, files] = await Promise.all([

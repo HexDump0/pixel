@@ -65,6 +65,19 @@ describe("run lifecycle", () => {
     expect(prompts).toBe(3);
   });
 
+  test("stopped after its continues, key replaced → resume restarts opencode with the new key and starts over", async () => {
+    const run = createRun({ repo, templateId: "audit", name: "newkey", promptOverride: "just stop" });
+    await until("stopped", () => getRun(run.id)!.status === "stopped");
+    saveSettings({ agentEnv: { FAKE_API_KEY: "new" } });
+    await controls.resumeRun(run.id, `REPORT ${join(config.workbasesDir, run.id, "REPORT.md")}`);
+    expect(getRun(run.id)!.continues).toBe(0);
+    expect(timelineKinds(run.id)).toContain("restart");
+    const launch = JSON.parse(readFileSync(join(config.machinesDir, ".launch", `${run.id}.json`), "utf8"));
+    expect(launch.env.FAKE_API_KEY).toBe("new");
+    await until("done", () => getRun(run.id)!.status === "done");
+    saveSettings({ agentEnv: {} });
+  });
+
   test("opencode SIGKILLed → restarted, OOM message sent to the same session", async () => {
     saveSettings({ oomMessage: "the oom killer killed you" });
     const run = createRun({ repo, templateId: "audit", name: "oom", promptOverride: "HANG" });

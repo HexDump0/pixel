@@ -1,9 +1,12 @@
 /** Shared helpers for changing a run and telling everyone about it (dashboard, workbase files, notifications). */
+import { createHash } from "node:crypto";
 import { config } from "../config.ts";
 import { addTimeline, getRun, updateRun, type RunRow, type RunSize, type RunStatus } from "../db.ts";
 import { publish } from "../bus.ts";
 import { OpencodeClient } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
+import type { Credentials } from "../runtime/types.ts";
+import { agentCredentials } from "../providerAccounts.ts";
 import { refreshRunFiles } from "../knowledge.ts";
 import { notify, type NotifyKind } from "../notify.ts";
 
@@ -18,7 +21,7 @@ export function timeline(runId: string, actor: Actor, kind: string, message: str
 
 /** The run as the dashboard sees it (no secrets, size parsed). */
 export function publicRun(run: RunRow) {
-  const { opencode_password, prompt, ...rest } = run;
+  const { opencode_password, prompt, creds_hash, ...rest } = run;
   return { ...rest, size: JSON.parse(run.size) as RunSize };
 }
 export type PublicRun = ReturnType<typeof publicRun>;
@@ -56,6 +59,18 @@ export function mustSession(run: RunRow) {
 export function clientFor(run: RunRow) {
   if (!run.endpoint) throw new Error("run has no opencode endpoint yet");
   return new OpencodeClient(run.endpoint, run.opencode_password, runtime.paths(run).target);
+}
+
+export const credsHash = (creds: Credentials) => createHash("sha256").update(JSON.stringify(creds)).digest("hex").slice(0, 16);
+
+/** True when keys or provider settings changed since the run's opencode was started. */
+export const credsStale = (run: RunRow) => run.creds_hash !== credsHash(agentCredentials());
+
+/** (Re)start the run's opencode with the current keys and provider settings. */
+export async function restartOpencode(run: RunRow) {
+  const creds = agentCredentials();
+  await runtime.restartOpencode(run, creds);
+  setRun(run.id, { creds_hash: credsHash(creds) });
 }
 
 export function notifyRun(kind: NotifyKind, run: RunRow, title: string, body: string) {

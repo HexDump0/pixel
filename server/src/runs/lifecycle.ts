@@ -7,7 +7,7 @@ import { getSettings } from "../settings.ts";
 import { runtime } from "../runtime/index.ts";
 import { hasReport } from "../knowledge.ts";
 import { snapshotWorkbase } from "../history.ts";
-import { clientFor, notifyRun, setRun, setStatus, timeline } from "./state.ts";
+import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { syncTranscript, transcript, unwatch } from "./events.ts";
 
 export async function sendPrompt(run: RunRow, text: string) {
@@ -100,7 +100,7 @@ export async function recover(id: string) {
   }
   try {
     timeline(id, "pixel", "recover", state === "vm-down" ? "Starting the machine and opencode" : "Restarting opencode");
-    await runtime.restartOpencode(run);
+    await restartOpencode(run);
     await client.waitHealthy(180_000);
     run = setStatus(id, "running")!;
     await syncTranscript(id);

@@ -9,10 +9,10 @@
  * Set CPU/memory limits on the container itself so a runaway can never reach other apps on the host.
  */
 import { join } from "node:path";
-import { chmodSync, chownSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lchownSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { config } from "../config.ts";
 import type { RunRow, RunSize } from "../db.ts";
-import type { Metrics, PrepareOptions } from "./types.ts";
+import type { Credentials, Metrics, PrepareOptions } from "./types.ts";
 import { launchDir, ProcessRuntime, sh } from "./process.ts";
 
 const GiB = 1024 ** 3;
@@ -33,6 +33,11 @@ interface ProcInfo {
   rss: number;
   /** utime + stime + reaped children, in clock ticks. */
   ticks: number;
+}
+
+function chownTree(dir: string, uid: number) {
+  lchownSync(dir, uid, uid);
+  for (const f of readdirSync(dir, { recursive: true }) as string[]) lchownSync(join(dir, f), uid, uid);
 }
 
 /** Every process on the system, grouped by real uid. */
@@ -182,10 +187,19 @@ export class SingleRuntime extends ProcessRuntime {
 
   // ---- lifecycle ----
 
-  async restartOpencode(run: RunRow) {
+  /** Files written after preparing (new keys) must still belong to the agent's user. */
+  protected writeAgentFiles(run: RunRow, authJson: string) {
+    super.writeAgentFiles(run, authJson);
+    if (!existsSync(this.uidPath(run))) return;
+    const uid = this.uid(run);
+    const env = this.xdgEnv(run);
+    for (const dir of [join(env.XDG_CONFIG_HOME, "opencode"), join(env.XDG_DATA_HOME, "opencode")]) if (existsSync(dir)) chownTree(dir, uid);
+  }
+
+  async restartOpencode(run: RunRow, creds?: Credentials) {
     await this.ensureUser(run);
     this.track(run, JSON.parse(run.size));
-    await super.restartOpencode(run);
+    await super.restartOpencode(run, creds);
   }
 
   /** Stop opencode and everything the agent left running (fuzzers, builds, servers). */

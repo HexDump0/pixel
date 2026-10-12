@@ -8,17 +8,24 @@ import { publish } from "../bus.ts";
 import { runtime } from "../runtime/index.ts";
 import { workbasePath, writeIndex, writeTriage } from "../knowledge.ts";
 import { dropRunIndex } from "../search.ts";
-import { clientFor, mustRun, mustSession, setRun, setStatus, timeline } from "./state.ts";
+import { clientFor, credsStale, mustRun, mustSession, restartOpencode as restartWithCurrentKeys, setRun, setStatus, timeline } from "./state.ts";
 import { unwatch, watch } from "./events.ts";
 import { finish, sendPrompt } from "./lifecycle.ts";
 import { createRun, prepare } from "./create.ts";
 
-/** Make sure the machine and opencode are up, e.g. to talk to a stopped or done run. */
+/**
+ * Make sure the machine and opencode are up, e.g. to talk to a stopped or done run. An idle agent whose
+ * keys changed since opencode started (say, a key that ran out was replaced) gets opencode restarted with the new ones.
+ */
 async function ensureMachine(run: RunRow) {
   const client = clientFor(run);
-  if (await client.healthy()) return;
-  timeline(run.id, "user", "vm", "Starting the machine and opencode");
-  await runtime.restartOpencode(run);
+  if (await client.healthy()) {
+    if (!credsStale(run)) return;
+    const busy = (await client.status().catch(() => ({}) as Record<string, unknown>))[run.session_id!];
+    if (busy) return;
+    timeline(run.id, "user", "restart", "Keys or provider settings changed since opencode started; restarting it to pick them up");
+  } else timeline(run.id, "user", "vm", "Starting the machine and opencode");
+  await restartWithCurrentKeys(run);
   await client.waitHealthy(180_000);
 }
 
@@ -57,9 +64,10 @@ export function pauseRun(id: string) {
 export async function resumeRun(id: string, message?: string) {
   const run = mustSession(mustRun(id));
   await ensureMachine(run);
-  setStatus(id, "running", null, { finished_at: null });
+  // A resume is a fresh start: otherwise a run stopped after its last automatic continue stops again the moment it idles.
+  setStatus(id, "running", null, { finished_at: null, continues: 0 });
   watch(id);
-  timeline(id, "user", "resume", "Resumed");
+  timeline(id, "user", "resume", run.continues ? `Resumed (automatic continues reset from ${run.continues})` : "Resumed");
   const status = await clientFor(run).status().catch(() => ({}) as Record<string, unknown>);
   if (message || !status[run.session_id!]) await sendPrompt(getRun(id)!, message || getSettings().continueMessage);
 }
@@ -88,7 +96,7 @@ export function retryPrepare(id: string) {
 export async function restartOpencode(id: string) {
   const run = mustRun(id);
   timeline(id, "user", "restart", "Restarting opencode");
-  await runtime.restartOpencode(run);
+  await restartWithCurrentKeys(run);
   await clientFor(run).waitHealthy(180_000);
   watch(id);
   timeline(id, "pixel", "restart", "opencode is back (no message sent)");

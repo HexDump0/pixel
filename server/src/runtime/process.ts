@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync
 import type { Subprocess } from "bun";
 import { config } from "../config.ts";
 import type { RunRow } from "../db.ts";
-import type { AgentPaths, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
+import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
 
 interface Proc {
   proc: Subprocess;
@@ -123,7 +123,7 @@ export abstract class ProcessRuntime implements Runtime {
     if (authJson.trim()) {
       mkdirSync(join(env.XDG_DATA_HOME, "opencode"), { recursive: true });
       writeFileSync(join(env.XDG_DATA_HOME, "opencode", "auth.json"), authJson, { mode: 0o600 });
-    }
+    } else rmSync(join(env.XDG_DATA_HOME, "opencode", "auth.json"), { force: true });
     mkdirSync(env.TMPDIR, { recursive: true });
   }
 
@@ -192,8 +192,13 @@ export abstract class ProcessRuntime implements Runtime {
     }
   }
 
-  async restartOpencode(run: RunRow) {
+  async restartOpencode(run: RunRow, creds?: Credentials) {
     await this.stopOpencode(run);
+    if (creds) {
+      this.writeAgentFiles(run, creds.authJson);
+      const launch: LaunchInfo = JSON.parse(readFileSync(this.launchPath(run), "utf8"));
+      writeFileSync(this.launchPath(run), JSON.stringify({ ...launch, env: creds.env } satisfies LaunchInfo), { mode: 0o600 });
+    }
     this.spawnOpencode(run);
   }
 

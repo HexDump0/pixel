@@ -19,6 +19,12 @@ export interface PrepareOptions {
   log: (msg: string) => void;
 }
 
+/** Keys and provider settings for an agent's opencode (from Settings and the Models page). */
+export interface Credentials {
+  env: Record<string, string>;
+  authJson: string;
+}
+
 export interface Prepared {
   vmName: string;
   endpoint: string;
@@ -52,8 +58,8 @@ export interface Runtime {
   exec(run: RunRow, cmd: string[], timeoutMs?: number): Promise<ExecResult>;
   /** Why opencode is not answering. */
   opencodeState(run: RunRow): Promise<OpencodeState>;
-  /** Start opencode again (after OOM or crash). Starts the VM first if needed. */
-  restartOpencode(run: RunRow): Promise<void>;
+  /** Start opencode again (after OOM or crash). Starts the VM first if needed. With `creds`, the new keys replace the old ones first. */
+  restartOpencode(run: RunRow, creds?: Credentials): Promise<void>;
   metrics(run: RunRow): Promise<Metrics>;
   vmState(run: RunRow): Promise<string>;
   startVm(run: RunRow): Promise<void>;

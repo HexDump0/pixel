@@ -7,7 +7,7 @@ import { publish } from "../bus.ts";
 import type { OpencodeClient } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
 import { workbaseSize } from "../knowledge.ts";
-import { clientFor, notifyRun, setRun, setStatus, timeline } from "./state.ts";
+import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { autoApprove, getWatcher, serial, unwatch, watch, watchedRuns, type Watcher } from "./events.ts";
 import { onIdle, recover, sendPrompt } from "./lifecycle.ts";
 import { prepare } from "./create.ts";
@@ -151,7 +151,7 @@ export async function reattach() {
     if (runtime.agentsDieWithPixel && run.endpoint) {
       // opencode ran as Pixel's child and died with it; bring it back without counting it as a recovery.
       try {
-        await runtime.restartOpencode(run);
+        await restartOpencode(run);
         await clientFor(run).waitHealthy(60_000);
         if (run.status === "running" && run.agent_status !== "idle") {
           timeline(run.id, "pixel", "continue", `Restarted opencode; sending "${getSettings().continueMessage}" (not counted)`);
