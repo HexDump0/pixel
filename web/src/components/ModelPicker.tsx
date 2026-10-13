@@ -25,12 +25,12 @@ export function ModelPicker({ provider, settings, onSettings, onTest }: { provid
 
   const models: CatalogModel[] = useMemo(() => {
     const list: CatalogModel[] = provider.custom
-      ? provider.custom.models.map((id) => ({ id, name: id, family: null, context: provider.custom!.context, output: null, costIn: null, costOut: null, tools: true, reasoning: false, openWeights: false, released: null, status: null }))
+      ? provider.custom.models.map((id) => ({ id, name: id, family: null, context: provider.custom!.context, output: null, costIn: null, costOut: null, costCacheRead: null, tools: true, reasoning: false, openWeights: false, released: null, status: null }))
       : [...(cat.data?.models ?? [])];
     // Offered models that the catalogue doesn't list (typed in by hand, or newer than the catalogue).
     for (const m of settings.models)
       if (m.startsWith(prefix) && !list.some((x) => x.id === m.slice(prefix.length)))
-        list.push({ id: m.slice(prefix.length), name: m.slice(prefix.length), family: null, context: null, output: null, costIn: null, costOut: null, tools: true, reasoning: false, openWeights: false, released: null, status: null });
+        list.push({ id: m.slice(prefix.length), name: m.slice(prefix.length), family: null, context: null, output: null, costIn: null, costOut: null, costCacheRead: null, tools: true, reasoning: false, openWeights: false, released: null, status: null });
     return list;
   }, [cat.data, provider, settings.models]);
 

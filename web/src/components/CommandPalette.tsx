@@ -101,6 +101,7 @@ export function CommandPalette() {
       { group: "Go to", icon: <Icon name="runs" />, label: "Runs", run: () => navigate("/") },
       { group: "Go to", icon: <Icon name="activity" />, label: "Activity", run: () => navigate("/activity") },
       { group: "Go to", icon: <Icon name="gauge" />, label: "Models: provider health and leaderboard", run: () => navigate("/models") },
+      { group: "Go to", icon: <Icon name="chart" />, label: "Stats: tokens, cache hit rate, cost, health", run: () => navigate("/stats") },
       { group: "Go to", icon: <Icon name="book" />, label: "Knowledge", run: () => navigate("/knowledge") },
       { group: "Go to", icon: <Icon name="file" />, label: "Templates", run: () => navigate("/templates") },
       { group: "Go to", icon: <Icon name="settings" />, label: "Settings", run: () => navigate("/settings") },

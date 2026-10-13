@@ -12,6 +12,7 @@ import { fleetSnapshot, lanes, recentActivity } from "../fleet.ts";
 import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
+import { stats } from "../stats.ts";
 import { get, post, put, readJson } from "./router.ts";
 
 // ---- knowledge ----
@@ -121,3 +122,4 @@ get("/system", async () => {
   };
 });
 post("/backup", () => runBackup());
+get("/stats", ({ query }) => stats(Number(query.get("days") ?? 7), Number(query.get("tz") ?? 0)));

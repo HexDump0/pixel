@@ -14,6 +14,7 @@ import { SettingsPage } from "./pages/Settings.tsx";
 import { SystemPage } from "./pages/System.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { ModelsPage } from "./pages/Models.tsx";
+import { StatsPage } from "./pages/Stats.tsx";
 
 function Routes() {
   const { path } = useLocation();
@@ -28,6 +29,7 @@ function Routes() {
   if (path === "/templates") return <TemplatesPage />;
   if (path === "/settings") return <SettingsPage />;
   if (path === "/system") return <SystemPage />;
+  if (path === "/stats") return <StatsPage />;
   return <div className="muted">Page not found.</div>;
 }
 

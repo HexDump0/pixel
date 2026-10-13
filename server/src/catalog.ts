@@ -17,6 +17,7 @@ export interface CatalogModel {
   /** USD per million tokens. */
   costIn: number | null;
   costOut: number | null;
+  costCacheRead: number | null;
   tools: boolean;
   reasoning: boolean;
   openWeights: boolean;
@@ -52,6 +53,7 @@ function slim(raw: Record<string, any>): Map<string, CatalogProvider> {
       output: m?.limit?.output ?? null,
       costIn: m?.cost?.input ?? null,
       costOut: m?.cost?.output ?? null,
+      costCacheRead: m?.cost?.cache_read ?? null,
       tools: !!m?.tool_call,
       reasoning: !!m?.reasoning,
       openWeights: !!m?.open_weights,

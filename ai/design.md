@@ -97,3 +97,11 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 
 - `bun test`: unit tests plus lifecycle tests using `server/test/fake-opencode.ts` (scripted by prompt text: `REPORT <path>`, `HANG`; the synchronous message endpoint used by the speed test is scripted by model id: `fake/fast`, `fake/broken`, `fake/tool`). `providers.test.ts` covers capture, health, leaderboard and the speed test; `fleet.test.ts` covers the snapshot, swimlanes, activity and the tokens/s sampler on a seeded run.
 - Manual e2e: `PIXEL_RUNTIME=local OPENCODE_BIN=<opencode> bun server/src/index.ts` with a tiny local git repo and the free `opencode/big-pickle` model.
+
+## Stats page (stats.ts)
+
+- `GET /api/stats?days=1|7|30|90&tz=<minutes east of UTC>` → `/stats`. Buckets: hourly ≤ 2 days, 6-hourly ≤ 14, daily beyond, aligned to the viewer's clock via `tz`.
+- Tokens come from the stored assistant messages (`json_extract` over `messages.data`), not `llm_calls`/`runs`, because those merge cache read and write into one `tokens_cache` column. That means history from before the page counts too; deleted runs drop out. Index `messages_created` is created by stats.ts.
+- Cache hit rate = cache read / (input + cache read + cache write); opencode's `input` already excludes cached tokens. Savings ≈ cache read × (input price − cache-read price) for models in the models.dev catalogue (`costCacheRead`); custom endpoints aren't priced.
+- Aborted calls (`MessageAbortedError`) aren't counted as errors. Tool stats come from `parts` (type tool) updated in the window.
+- Health checks (runtime, data disk vs `PIXEL_MIN_FREE_GIB`, host memory, memory promised, event streams, provider errors in the last hour, backups) are computed on the server; the System page still holds machines and backups.

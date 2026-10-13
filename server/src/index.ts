@@ -17,7 +17,7 @@ import dashboard from "../../web/index.html";
 import { liveShutdown } from "./liveTest.ts";
 
 /** Client-side routes of the dashboard SPA. */
-const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/login"];
+const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/stats", "/login"];
 
 async function handleAuth(req: Request, url: URL): Promise<Response | null> {
   switch (url.pathname) {

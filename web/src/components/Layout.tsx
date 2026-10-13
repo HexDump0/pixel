@@ -11,6 +11,7 @@ const NAV: { to: string; label: string; icon: IconName; match: (p: string) => bo
   { to: "/", label: "Runs", icon: "runs", match: (p) => p === "/" || p.startsWith("/runs") },
   { to: "/activity", label: "Activity", icon: "activity", match: (p) => p === "/activity" },
   { to: "/models", label: "Models", icon: "gauge", match: (p) => p === "/models" },
+  { to: "/stats", label: "Stats", icon: "chart", match: (p) => p === "/stats" },
   { to: "/knowledge", label: "Knowledge", icon: "book", match: (p) => p.startsWith("/knowledge") },
   { to: "/templates", label: "Templates", icon: "file", match: (p) => p.startsWith("/templates") },
   { to: "/new", label: "New run", icon: "plus", match: (p) => p === "/new" },
