@@ -9,12 +9,13 @@ import { useAsync, useThrottled } from "../lib/hooks.ts";
 import { useLive } from "../lib/live.ts";
 import { navigate, Link } from "../lib/router.tsx";
 import { bytes, duration, money, tokens } from "../lib/format.ts";
-import { kindColor, useFleet } from "../lib/fleet.ts";
+import { kindColor, runName, useFleet } from "../lib/fleet.ts";
 import type { Activity, FleetRun, FleetSnapshot, Run, TimelineEntry } from "../lib/types.ts";
 import { LanesChart } from "./viz.tsx";
 import { Icon } from "./icons.tsx";
 import { openPalette } from "./CommandPalette.tsx";
 import { toast } from "./Toast.tsx";
+import { RunName } from "./RunName.tsx";
 
 const age = (ts: number | null | undefined) => (ts ? duration(Date.now() - ts).replace(/ \d+s$/, "") : "");
 
@@ -106,10 +107,10 @@ function Decrypt({ text }: { text: string }) {
     return () => clearInterval(t);
   }, [text]);
   return (
-    <h2 aria-label={text}>
+    <>
       {shown.done}
       <span className="scr">{shown.noise}</span>
-    </h2>
+    </>
   );
 }
 
@@ -233,7 +234,12 @@ export function RunPanel({ run, onClose }: { run: Run; onClose: () => void }) {
             <Icon name="x" />
           </button>
         </div>
-        <Decrypt text={run.id} />
+        <h2 aria-label={runName(run)}>
+          <RunName run={run} pencil>
+            <Decrypt text={runName(run)} />
+          </RunName>
+        </h2>
+        {run.label && <div className="meta num">{run.id}</div>}
         <div className="meta">
           {run.repo.replace(/^https?:\/\/(www\.)?/, "")}
           {run.ref ? ` @ ${run.ref}` : ""} · {run.language ?? "?"} · {run.model}

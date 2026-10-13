@@ -2,15 +2,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { navigate, Link, useLocation } from "../lib/router.tsx";
 import { useTick } from "../lib/hooks.ts";
-import { duration, money } from "../lib/format.ts";
+import { duration, money, tokens } from "../lib/format.ts";
 import { rate, RATE_WINDOW, useFleet } from "../lib/fleet.ts";
 import { useRuns, ACTIVE } from "../lib/runs.ts";
 import type { FleetRun, Run, RunStatus } from "../lib/types.ts";
-import { Barcode, fmtInt, MemorySplit, MiniMeters, SpendLine, TokenSpectrum } from "../components/viz.tsx";
+import { Barcode, fmtInt, MemorySplit, MiniMeters, SpendBars, TokenFlow, TokensToday } from "../components/viz.tsx";
 import { RunPanel } from "../components/RunPanel.tsx";
 import { openPalette } from "../components/CommandPalette.tsx";
 import { Icon } from "../components/icons.tsx";
 import { ErrorBox } from "../components/ui.tsx";
+import { RunName } from "../components/RunName.tsx";
 
 const FILTERS: { id: string; label: string; match: (r: Run) => boolean }[] = [
   { id: "active", label: "Active", match: (r) => ACTIVE.includes(r.status) },
@@ -121,11 +122,23 @@ export function RunsPage() {
             <div className="head">
               <div className="k eyebrow">
                 <span className={`live-dot ${tpsNow ? "" : "off"}`} style={tpsNow ? undefined : { background: "var(--fg3)" }} />
-                Tokens / s · {RATE_WINDOW} s avg
+                <span title="Tokens the models are generating (text, reasoning, tool calls). Live from the stream, corrected to exact counts as each call finishes.">
+                  Output tokens / s · {RATE_WINDOW} s avg
+                </span>
               </div>
               <div className="v">{fmtInt(tpsNow)}</div>
             </div>
-            <TokenSpectrum runs={snap.runs} window={snap.window} />
+            <TokenFlow runs={snap.runs} window={snap.window} />
+          </div>
+          <div className="stat">
+            <div className="head">
+              <div className="k eyebrow">Tokens today</div>
+              <div className="v">
+                {tokens(snap.tokens.total)}
+                {snap.tokens.hitRate != null && <small>{Math.round(snap.tokens.hitRate * 100)}% cached</small>}
+              </div>
+            </div>
+            <TokensToday t={snap.tokens} />
           </div>
           <div className="stat">
             <div className="head">
@@ -140,19 +153,12 @@ export function RunsPage() {
           <div className="stat">
             <div className="head">
               <div className="k eyebrow">Spend today</div>
-              <div className="v">{money(snap.spend.total)}</div>
+              <div className="v">
+                {money(snap.spend.total)}
+                <small title="Today so far plus the last hour's rate until midnight">→ {money(snap.spend.projected)}</small>
+              </div>
             </div>
-            <SpendLine spend={snap.spend} />
-            <div className="legend">
-              <span>
-                <i style={{ background: "var(--fg2)" }} />
-                so far
-              </span>
-              <span>
-                <i style={{ background: "var(--fg3)", opacity: 0.6 }} />
-                projected <b>{money(snap.spend.projected)}</b>
-              </span>
-            </div>
+            <SpendBars spend={snap.spend} runs={snap.runs} />
           </div>
         </div>
       )}
@@ -190,7 +196,7 @@ export function RunsPage() {
                           <span className={`dot ${r.status}`} title={r.status} />
                           <div style={{ minWidth: 0 }}>
                             <div className="name">
-                              {r.id}
+                              <RunName run={r} />
                               {(r.questions ?? 0) > 0 && (
                                 <span className="badge question" style={{ marginLeft: 6 }}>
                                   question

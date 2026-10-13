@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { db, getRun } from "../src/db.ts";
 import { runtime } from "../src/runtime/index.ts";
-import { describeCall, fleetSnapshot, kindOf, lanes, recentActivity, startFleet, stopFleet } from "../src/fleet.ts";
+import { describeCall, fleetSnapshot, kindOf, lanes, onAssistantMessage, onDelta, recentActivity, startFleet, stopFleet } from "../src/fleet.ts";
 
 const now = Date.now();
 const S = 1000;
@@ -33,7 +33,7 @@ addTool("fl-1", "fl-child", "bash", { status: "running", input: { command: `make
 db.query("INSERT INTO timeline (run_id, ts, actor, kind, message) VALUES ('fl-1', ?, 'pixel', 'recover', 'restarted opencode')").run(now - 90 * S);
 // Context: the newest assistant message is still streaming (no counts yet), so the one before counts.
 const msg = db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, 'fl-1', 'fl-root', 'assistant', ?, ?)");
-msg.run("fl-m1", JSON.stringify({ tokens: { input: 1000, output: 200, reasoning: 0, cache: { read: 500, write: 0 } } }), now - 50 * S);
+msg.run("fl-m1", JSON.stringify({ cost: 1.5, tokens: { input: 1000, output: 200, reasoning: 0, cache: { read: 500, write: 0 } } }), now - 50 * S);
 msg.run("fl-m2", JSON.stringify({ tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }), now - 5 * S);
 db.query("INSERT INTO metrics (run_id, ts, cpu, mem_used, mem_total, cost) VALUES ('fl-1', ?, 0.5, ?, NULL, 2.5)").run(now - 10 * S, 1024 ** 3);
 db.query("INSERT INTO cross_reads (run_id, other_run, tool, path, ts) VALUES ('fl-1', 'zlib-1', 'read', 'REPORT.md', ?)").run(now);
@@ -89,9 +89,14 @@ describe("fleet", () => {
     expect(stopped.agents.subs[0].status).toBe("interrupted");
     expect(stopped.cpu).toBeNull();
 
-    expect(snap.spend.total).toBeGreaterThanOrEqual(2.5);
-    expect(snap.spend.hourly.length).toBe(new Date(now).getHours() + 1);
+    expect(snap.spend.total).toBeCloseTo(1.5);
+    expect(snap.spend.hours).toBe(new Date(now).getHours() + 1);
+    expect(snap.spend.runs).toEqual([{ id: "fl-1", cost: 1.5, hourly: expect.any(Array) }]);
+    expect(snap.spend.runs[0].hourly.at(-1)).toBeCloseTo(1.5);
+    expect(snap.spend.perHour).toBeCloseTo(1.5);
     expect(snap.spend.projected).toBeGreaterThanOrEqual(snap.spend.total);
+    expect(snap.tokens).toMatchObject({ input: 1000, output: 200, cacheRead: 500, total: 1700, calls: 2 });
+    expect(snap.tokens.hitRate).toBeCloseTo(1 / 3);
     expect(snap.links).toContainEqual(expect.objectContaining({ run_id: "fl-1", other_run: "zlib-1", n: 1 }));
     expect(snap.memory.total).toBeGreaterThan(0);
   });
@@ -120,19 +125,26 @@ describe("fleet", () => {
     expect(recentActivity(1, "fl-1").calls.length).toBe(1);
   });
 
-  test("tokens per second are sampled every second for active runs", async () => {
+  test("tokens per second: live from streamed deltas, then corrected to the real output count", async () => {
     startFleet();
+    let snap;
     try {
-      await Bun.sleep(1200);
-      db.query("UPDATE runs SET tokens_in = tokens_in + 500, tokens_out = tokens_out + 20 WHERE id = 'fl-1'").run();
       await Bun.sleep(1100);
+      onDelta("fl-1", "fl-live", "x".repeat(380)); // ~100 tokens by the character estimate
+      await Bun.sleep(1050);
+      snap = await fleetSnapshot();
+      expect(snap.runs.find((r) => r.id === "fl-1")!.tps.at(-1)).toBe(100);
+      // The call finishes with 300 real output tokens: the estimate is replaced, spread over its time.
+      onAssistantMessage("fl-1", { id: "fl-live", role: "assistant", time: { created: Date.now() - 2000, completed: Date.now() }, tokens: { output: 280, reasoning: 20 } });
+      await Bun.sleep(1050);
     } finally {
       stopFleet();
     }
-    const snap = await fleetSnapshot();
+    snap = await fleetSnapshot();
     const tps = snap.runs.find((r) => r.id === "fl-1")!.tps;
     expect(tps.length).toBe(snap.window);
-    expect(tps).toContain(520);
+    expect(tps.reduce((a, b) => a + b, 0)).toBe(300);
+    expect(tps.at(-1)).toBe(150);
     expect(snap.runs.find((r) => r.id === "fl-2")!.tps).toEqual([]);
   });
 });

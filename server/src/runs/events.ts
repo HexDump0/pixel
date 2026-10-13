@@ -4,7 +4,7 @@ import { publish } from "../bus.ts";
 import type { OpencodeEvent } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
 import { recordCrossReads } from "../crossreads.ts";
-import { onPart } from "../fleet.ts";
+import { onAssistantMessage, onDelta, onPart } from "../fleet.ts";
 import { onMessage, onPartActivity, onRetry } from "../providers.ts";
 import { clientFor, notifyRun, setRun, timeline } from "./state.ts";
 import { onIdle } from "./lifecycle.ts";
@@ -164,6 +164,7 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
     case "message.updated":
       storeMessage(id, p.info);
       onMessage(id, p.info);
+      onAssistantMessage(id, p.info);
       if (isRoot && p.info?.role === "assistant" && p.info.error && p.info.error.name !== "MessageAbortedError") timeline(id, "agent", "error", `Agent error: ${errorText(p.info.error)}`);
       break;
     case "message.part.updated":
@@ -173,6 +174,7 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
     case "message.part.delta":
       publish(id, "delta", p);
       onPartActivity(p.messageID);
+      onDelta(id, p.messageID, p.delta);
       break;
     case "message.removed":
       db.query("DELETE FROM messages WHERE id = ?").run(p.messageID);

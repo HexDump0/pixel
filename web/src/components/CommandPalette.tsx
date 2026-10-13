@@ -9,6 +9,7 @@ import { useRuns } from "../lib/runs.ts";
 import type { SearchHit } from "../lib/types.ts";
 import { Icon } from "./icons.tsx";
 import { toast } from "./Toast.tsx";
+import { startRename } from "./RunName.tsx";
 
 interface Item {
   group: string;
@@ -87,15 +88,16 @@ export function CommandPalette() {
     const list: Item[] = [];
     const cur = runs?.find((r) => r.id === here);
     if (cur) {
-      const g = `This run · ${cur.id}`;
+      const g = `This run · ${cur.label ?? cur.id}`;
       list.push({ group: g, icon: <Icon name="msg" />, label: "Message the agent…", run: () => setMessageTo(cur.id), stay: true });
+      list.push({ group: g, icon: <Icon name="edit" />, label: "Rename run…", run: () => startRename(cur.id) });
       if (["running", "recovering"].includes(cur.status)) list.push({ group: g, icon: <Icon name="pause" />, label: "Pause", run: ctl(cur.id, "pause", "Paused") });
       if (["paused", "stopped", "done"].includes(cur.status)) list.push({ group: g, icon: <Icon name="play" />, label: "Resume", run: () => api.resume(cur.id).then(() => toast("Resumed")) });
       if (cur.status === "running") list.push({ group: g, icon: <Icon name="next" />, label: "Send “continue”", run: ctl(cur.id, "continue", "Sent continue") });
       list.push({ group: g, icon: <Icon name="term" />, label: "Open terminal", run: () => navigate(`/runs/${encodeURIComponent(cur.id)}#terminal`) });
       list.push({ group: g, icon: <Icon name="open" />, label: "Open run page", run: () => navigate(`/runs/${encodeURIComponent(cur.id)}`) });
     }
-    for (const r of runs ?? []) list.push({ group: "Runs", icon: <span className={`dot ${r.status}`} style={{ margin: "0 3px" }} />, label: r.id, sub: `${r.status} · ${r.repo.replace(/^https?:\/\/(www\.)?/, "")}`, run: () => navigate(`/?run=${encodeURIComponent(r.id)}`) });
+    for (const r of runs ?? []) list.push({ group: "Runs", icon: <span className={`dot ${r.status}`} style={{ margin: "0 3px" }} />, label: r.label ? `${r.label} · ${r.id}` : r.id, sub: `${r.status} · ${r.repo.replace(/^https?:\/\/(www\.)?/, "")}`, run: () => navigate(`/?run=${encodeURIComponent(r.id)}`) });
     list.push(
       { group: "Go to", icon: <Icon name="plus" />, label: "New run", run: () => navigate("/new") },
       { group: "Go to", icon: <Icon name="runs" />, label: "Runs", run: () => navigate("/") },

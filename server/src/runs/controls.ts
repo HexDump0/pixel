@@ -119,6 +119,15 @@ export function setAutopilot(id: string, on: boolean) {
   timeline(id, "user", "autopilot", `Autopilot ${on ? "on" : "off"}`);
 }
 
+/** Set or clear the display name. Only the dashboard uses it; the id and workbase folder stay the same. */
+export function setLabel(id: string, label: unknown) {
+  const run = mustRun(id);
+  const next = typeof label === "string" ? label.replace(/\s+/g, " ").trim().slice(0, 80) || null : null;
+  if (next === run.label) return;
+  setRun(id, { label: next });
+  timeline(id, "user", "rename", next ? `Renamed to "${next}"` : "Name reset to the run id");
+}
+
 export function resetCounters(id: string) {
   mustRun(id);
   setRun(id, { continues: 0, oom_restarts: 0 });

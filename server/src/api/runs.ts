@@ -140,6 +140,7 @@ post("/runs/:id/model", async ({ req, params: { id } }) => {
   return controls.setModel(id, b.model, b.variant);
 });
 post("/runs/:id/autopilot", async ({ req, params: { id } }) => controls.setAutopilot(id, !!(await readJson(req)).on));
+post("/runs/:id/label", async ({ req, params: { id } }) => controls.setLabel(id, (await readJson(req)).label));
 post("/runs/:id/reset-counters", ({ params: { id } }) => controls.resetCounters(id));
 post("/runs/:id/sync", ({ params: { id } }) => syncTranscript(id));
 post("/runs/:id/vm/:action", async ({ req, params: { id, action } }) => {

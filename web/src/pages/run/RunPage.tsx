@@ -12,6 +12,7 @@ import { WorkbaseBrowser } from "../../components/WorkbaseBrowser.tsx";
 import { ReportTab } from "./ReportTab.tsx";
 import { TerminalTab } from "./TerminalTab.tsx";
 import { MachineTab } from "./MachineTab.tsx";
+import { RunName } from "../../components/RunName.tsx";
 import { OverviewTab } from "./OverviewTab.tsx";
 
 type TabId = "overview" | "transcript" | "timeline" | "workbase" | "report" | "terminal" | "machine";
@@ -44,7 +45,7 @@ export function RunPage({ id }: { id: string }) {
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-2">
-            {r.id} <Badge value={r.status} />
+            <RunName run={r} pencil /> <Badge value={r.status} />
             {["running", "recovering"].includes(r.status) && <Badge value={r.agent_status} />}
           </span>
         }

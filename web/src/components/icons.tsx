@@ -7,6 +7,7 @@ const PATHS = {
   system: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM8 20h8M12 16v4",
   settings: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4",
   plus: "M12 5v14M5 12h14",
+  edit: "M15.5 4.5l4 4L8 20H4v-4z",
   term: "M4 17l6-5-6-5M12 19h8",
   pause: "M9 5v14M15 5v14",
   play: "M7 4l13 8-13 8z",

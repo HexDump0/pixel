@@ -126,6 +126,7 @@ export const api = {
   resume: (id: string, message?: string) => request("POST", `${r(id)}/resume`, { message }),
   setModel: (id: string, model: string, variant?: string | null) => request("POST", `${r(id)}/model`, { model, variant }),
   setAutopilot: (id: string, on: boolean) => request("POST", `${r(id)}/autopilot`, { on }),
+  setLabel: (id: string, label: string) => request("POST", `${r(id)}/label`, { label }),
   vmAction: (id: string, action: "start" | "stop" | "snapshot" | "restore", snapshot?: string) => request("POST", `${r(id)}/vm/${action}`, { snapshot }),
   deleteVm: (id: string) => request("DELETE", `${r(id)}/vm`),
   answer: (id: string, qid: string, answers: string[][] | null) => request("POST", `${r(id)}/question/${qid}`, answers ? { answers } : { reject: true }),

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at);
 
 CREATE TABLE IF NOT EXISTS parts (
   id         TEXT PRIMARY KEY,
@@ -158,7 +159,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, 
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -195,6 +196,8 @@ export interface RunRow {
   variant: string | null;
   /** Fingerprint of the keys and provider settings the run's opencode was last started with. */
   creds_hash: string | null;
+  /** Display name set by the user; the id (and workbase folder) never changes. */
+  label: string | null;
   size: string;
   status: RunStatus;
   status_detail: string | null;

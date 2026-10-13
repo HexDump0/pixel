@@ -93,6 +93,17 @@ describe("run lifecycle", () => {
     await controls.stopRun(run.id);
   });
 
+  test("rename: display name is trimmed, cleared by an empty name, and the id never changes", () => {
+    const run = createRun({ repo, templateId: "audit", name: "named", promptOverride: "HANG" });
+    controls.setLabel(run.id, "  Folia   chunk  regression ");
+    expect(getRun(run.id)!.label).toBe("Folia chunk regression");
+    expect(timelineKinds(run.id)).toContain("rename");
+    controls.setLabel(run.id, "");
+    expect(getRun(run.id)!.label).toBeNull();
+    expect(() => controls.setLabel("no-such-run", "x")).toThrow();
+    void controls.stopRun(run.id);
+  });
+
   test("manual controls: pause stops autopilot, message reopens", async () => {
     const run = createRun({ repo, templateId: "audit", name: "manual", promptOverride: "HANG" });
     await until("running", () => getRun(run.id)!.status === "running" && !!getRun(run.id)!.session_id);

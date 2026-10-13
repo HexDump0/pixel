@@ -2,7 +2,7 @@
  * Live fleet telemetry for the dashboard: tokens/s per run, what each agent is doing right now,
  * subagent states, 30-minute activity history, per-agent swimlanes, context use, memory and spend.
  *
- * Tokens/s comes from a 1-second sampler over each active run's token totals. Everything else is
+ * Tokens/s comes from a 1-second sampler over streamed output (see below). Everything else is
  * derived from what events.ts already stores (parts, sessions, timeline, metrics), so it survives
  * Pixel restarts.
  */
@@ -131,27 +131,85 @@ export function onPart(runId: string, part: any) {
 }
 
 // ---- tokens per second ----
+//
+// Output tokens (text, reasoning and tool-call arguments) the models are generating, per second.
+// Token totals only arrive when a model call finishes, so live numbers are estimated from the
+// streamed text deltas (characters / CHARS_PER_TOKEN). When the call finishes, the estimate for
+// its seconds is corrected to the real output count, spread evenly over the time it streamed.
+// Prompt tokens are left out on purpose: they are re-sent context, not generation.
 
 const WINDOW = 90;
 const ACTIVE = ["preparing", "running", "recovering", "paused"];
-const rates = new Map<string, { last: number; samples: number[] }>();
-const totalOf = (r: RunRow) => r.tokens_in + r.tokens_out + r.tokens_reasoning;
+const CHARS_PER_TOKEN = 3.8;
+/** Per run: one sample per second (oldest first) and the estimate for the second in progress. */
+const rates = new Map<string, { samples: number[]; pending: number }>();
+/** Per assistant message still streaming: what we've estimated for it so far, by sampler tick. */
+const streaming = new Map<string, { run: string; est: Map<number, number> }>();
+const finished = new Set<string>();
+/** Runs whose recent samples were corrected; their whole window goes out with the next tick. */
+const corrected = new Set<string>();
+/** Number of samples taken; deltas arriving now belong to sample number `tick`. */
+let tick = 0;
+
+const rateFor = (runId: string) => {
+  let e = rates.get(runId);
+  if (!e) rates.set(runId, (e = { samples: Array(WINDOW).fill(0), pending: 0 }));
+  return e;
+};
+
+/** A streamed text or reasoning delta. */
+export function onDelta(runId: string, messageId: string | undefined, delta: unknown) {
+  if (!messageId || typeof delta !== "string" || !delta || finished.has(messageId)) return;
+  const v = delta.length / CHARS_PER_TOKEN;
+  rateFor(runId).pending += v;
+  let m = streaming.get(messageId);
+  if (!m) streaming.set(messageId, (m = { run: runId, est: new Map() }));
+  m.est.set(tick, (m.est.get(tick) ?? 0) + v);
+}
+
+/** An assistant message update: once it has finished, swap the estimate for the real output count. */
+export function onAssistantMessage(runId: string, info: any) {
+  if (info?.role !== "assistant" || !info.time?.completed || finished.has(info.id)) return;
+  finished.add(info.id);
+  if (finished.size > 5000) finished.delete(finished.values().next().value!);
+  const m = streaming.get(info.id);
+  streaming.delete(info.id);
+  // Messages that finished before Pixel was watching (a resync) are history, not live throughput.
+  if (Date.now() - info.time.completed > 30_000) return;
+  const actual = (info.tokens?.output ?? 0) + (info.tokens?.reasoning ?? 0);
+  // Spread over the ticks it streamed in; without deltas, over its whole duration.
+  const first = m?.est.size ? Math.min(...m.est.keys()) : tick - Math.floor((info.time.completed - (info.time.created ?? info.time.completed)) / 1000);
+  const ticks = tick - first + 1;
+  const e = rateFor(runId);
+  for (let t = first; t <= tick; t++) {
+    const delta = actual / ticks - (m?.est.get(t) ?? 0);
+    if (t === tick) e.pending = Math.max(0, e.pending + delta);
+    else {
+      const i = WINDOW - (tick - t); // sample number t sits this far back in the window
+      if (i >= 0) e.samples[i] = Math.max(0, e.samples[i] + delta);
+    }
+  }
+  if (first < tick) corrected.add(runId);
+}
 
 function sample() {
   const now: Record<string, number> = {};
+  const fix: Record<string, number[]> = {};
   const active = listRuns().filter((r) => ACTIVE.includes(r.status));
   for (const r of active) {
-    const t = totalOf(r);
-    let e = rates.get(r.id);
-    if (!e) rates.set(r.id, (e = { last: t, samples: Array(WINDOW).fill(0) }));
-    const v = Math.max(0, t - e.last);
-    e.last = t;
-    e.samples.push(v);
+    const e = rateFor(r.id);
+    e.samples.push(e.pending);
     e.samples.shift();
-    now[r.id] = v;
+    e.pending = 0;
+    now[r.id] = Math.round(e.samples[WINDOW - 1]);
+    if (corrected.has(r.id)) fix[r.id] = e.samples.map(Math.round);
   }
+  tick++;
+  corrected.clear();
   for (const id of rates.keys()) if (!active.some((r) => r.id === id)) rates.delete(id);
-  if (active.length) publish("*", "fleet.tick", { ts: Date.now(), tps: now });
+  // Aborted messages never finish; forget them once they've scrolled out of the window.
+  for (const [id, m] of streaming) if (!rates.has(m.run) || Math.max(...m.est.keys()) < tick - WINDOW) streaming.delete(id);
+  if (active.length) publish("*", "fleet.tick", { ts: Date.now(), tps: now, fix });
 }
 
 let sampler: Timer | null = null;
@@ -303,35 +361,83 @@ function sharedMemory() {
 }
 
 /** Spend since local midnight, cumulative per hour, and a projection to the end of the day. */
-function spendToday(runs: RunRow[], now: number) {
+/**
+ * Today's spend and token use, from every assistant message (opencode's own per-call cost and
+ * token counts), with yesterday up to the same time of day for comparison. Cached briefly since
+ * every open dashboard asks for a snapshot every few seconds.
+ */
+let todayCache: { at: number; value: ReturnType<typeof computeToday> } | null = null;
+function today(now: number) {
+  if (!todayCache || now - todayCache.at > 10_000) todayCache = { at: now, value: computeToday(now) };
+  return todayCache.value;
+}
+
+function computeToday(now: number) {
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
   const start = day.getTime();
+  const yStart = start - 86_400_000;
   const hours = Math.floor((now - start) / 3_600_000) + 1;
-  const hourly = Array(hours).fill(0);
+  const rows = db
+    .query<{ t: number; run: string; i: number; o: number; r: number; cr: number; cw: number; cost: number }, [number]>(
+      `SELECT created_at AS t, run_id AS run,
+         COALESCE(json_extract(data, '$.tokens.input'), 0) AS i, COALESCE(json_extract(data, '$.tokens.output'), 0) AS o,
+         COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r, COALESCE(json_extract(data, '$.tokens.cache.read'), 0) AS cr,
+         COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cw, COALESCE(json_extract(data, '$.cost'), 0) AS cost
+       FROM messages WHERE created_at >= ? AND role = 'assistant'`,
+    )
+    .all(yStart);
+  const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+  const yTok = { prompt: 0, cacheRead: 0, total: 0 };
+  const perRun = new Map<string, number[]>();
   let total = 0;
-  for (const r of runs) {
-    if ((r.finished_at ?? now) < start || r.cost <= 0) continue;
-    const base = db.query<{ cost: number | null }, [string, number]>("SELECT cost FROM metrics WHERE run_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1").get(r.id, start)?.cost ?? 0;
-    const rows = db.query<{ ts: number; cost: number | null }, [string, number]>("SELECT ts, cost FROM metrics WHERE run_id = ? AND ts >= ? ORDER BY ts").all(r.id, start);
-    let last = base;
-    let row = 0;
-    for (let h = 0; h < hours; h++) {
-      const end = start + (h + 1) * 3_600_000;
-      while (row < rows.length && rows[row].ts < end) last = rows[row++].cost ?? last;
-      if (h === hours - 1) last = r.cost; // the current hour uses the live total
-      hourly[h] += Math.max(0, last - base);
+  let yesterday = 0;
+  let lastHour = 0;
+  for (const c of rows) {
+    if (c.t < start) {
+      // yesterday, only up to the same time of day
+      if (c.t > now - 86_400_000) continue;
+      yesterday += c.cost;
+      yTok.prompt += c.i + c.cr + c.cw;
+      yTok.cacheRead += c.cr;
+      yTok.total += c.i + c.o + c.r + c.cr + c.cw;
+      continue;
     }
-    total += Math.max(0, r.cost - base);
+    tokens.input += c.i;
+    tokens.output += c.o;
+    tokens.reasoning += c.r;
+    tokens.cacheRead += c.cr;
+    tokens.cacheWrite += c.cw;
+    tokens.calls++;
+    total += c.cost;
+    if (c.t > now - 3_600_000) lastHour += c.cost;
+    if (!c.cost) continue;
+    const h = Math.min(hours - 1, Math.floor((c.t - start) / 3_600_000));
+    let list = perRun.get(c.run);
+    if (!list) perRun.set(c.run, (list = Array(hours).fill(0)));
+    list[h] += c.cost;
   }
-  // Projection: the last two hours' rate for the rest of the day.
-  const recent = hours > 2 ? (hourly[hours - 1] - hourly[hours - 3]) / 2 : total / Math.max(1, (now - start) / 3_600_000);
+  // The four biggest spenders get their own colour; the rest are summed as "other".
+  const ranked = [...perRun].map(([id, hourly]) => ({ id, hourly, cost: hourly.reduce((a, b) => a + b, 0) })).sort((a, b) => b.cost - a.cost);
+  const top: { id: string | null; cost: number; hourly: number[] }[] = ranked.slice(0, 4);
+  const rest = ranked.slice(4);
+  if (rest.length) top.push({ id: null, cost: rest.reduce((a, r) => a + r.cost, 0), hourly: Array.from({ length: hours }, (_, h) => rest.reduce((a, r) => a + r.hourly[h], 0)) });
+  const prompt = tokens.input + tokens.cacheRead + tokens.cacheWrite;
   const left = (start + 86_400_000 - now) / 3_600_000;
-  return { total, hourly, projected: total + Math.max(0, recent) * left, dayStart: start };
+  return {
+    spend: { total, perHour: lastHour, projected: total + lastHour * left, yesterday, dayStart: start, hours, runs: top },
+    tokens: {
+      ...tokens,
+      total: prompt + tokens.output + tokens.reasoning,
+      hitRate: prompt ? tokens.cacheRead / prompt : null,
+      yesterday: { total: yTok.total, hitRate: yTok.prompt ? yTok.cacheRead / yTok.prompt : null },
+    },
+  };
 }
 
 export interface FleetRun {
   id: string;
+  label: string | null;
   tps: number[];
   now: SubAgent["now"];
   agents: { main: string; subs: SubAgent[] };
@@ -360,7 +466,8 @@ export async function fleetSnapshot() {
     const size = JSON.parse(r.size);
     out.push({
       id: r.id,
-      tps: rates.get(r.id)?.samples ?? [],
+      label: r.label,
+      tps: rates.get(r.id)?.samples.map(Math.round) ?? [],
       now: rootNow,
       agents: { main, subs },
       activity: activityHistory(r.id, now),
@@ -376,7 +483,7 @@ export async function fleetSnapshot() {
     window: WINDOW,
     runs: out,
     memory: { ...sharedMemory(), pixel: process.memoryUsage().rss },
-    spend: spendToday(runs, now),
+    ...today(now),
     links: crossReadGraph(),
   };
 }

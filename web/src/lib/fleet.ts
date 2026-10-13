@@ -51,8 +51,15 @@ function start() {
     if (!snap) return;
     if (m.type === "fleet.tick") {
       const tps: Record<string, number> = m.data.tps;
+      // The server corrects recent seconds when a model call finishes; those runs get their whole window.
+      const fix: Record<string, number[]> = m.data.fix ?? {};
       let changed = false;
       for (const r of snap.runs) {
+        if (fix[r.id]) {
+          r.tps = fix[r.id];
+          changed = true;
+          continue;
+        }
         if (!(r.id in tps) && !r.tps.length) continue;
         const s = r.tps.length ? r.tps.slice(1) : Array(snap.window - 1).fill(0);
         s.push(tps[r.id] ?? 0);
@@ -113,3 +120,23 @@ export const kindColor = (k: string | null | undefined) =>
 
 /** Short name for charts: the repo part of `<repo>-<date>`. */
 export const shortName = (id: string) => id.replace(/-\d{4}-\d{2}-\d{2}(-\d+)?$/, "");
+
+/** What to call a run: the name the user gave it, else its id without the date. */
+export const runName = (r: { id: string; label?: string | null }) => r.label || shortName(r.id);
+
+/**
+ * Names for a set of runs that tell same-named runs apart, by the day (and number) from their id:
+ * two "folia" runs become "folia ·12" and "folia ·13".
+ */
+export function distinctNames(runs: { id: string; label?: string | null }[]) {
+  const names = new Map(runs.map((r) => [r.id, runName(r)]));
+  const count = new Map<string, number>();
+  for (const n of names.values()) count.set(n, (count.get(n) ?? 0) + 1);
+  for (const r of runs) {
+    const n = names.get(r.id)!;
+    if (count.get(n)! < 2) continue;
+    const m = r.id.match(/-\d{4}-\d{2}-(\d{2})(-\d+)?$/);
+    if (m) names.set(r.id, `${n} ·${m[1]}${m[2] ?? ""}`);
+  }
+  return names;
+}

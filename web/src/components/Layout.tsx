@@ -54,7 +54,7 @@ export function Layout({ runtime, authEnabled, children }: { runtime: string; au
             {active.slice(0, 8).map((r) => (
               <Link key={r.id} to={`/?run=${encodeURIComponent(r.id)}`} className={`runlink ${selected === r.id ? "nav on" : ""}`} title={r.id}>
                 <span className={`dot ${r.status}`} />
-                {r.id}
+                {r.label ?? r.id}
               </Link>
             ))}
           </>
