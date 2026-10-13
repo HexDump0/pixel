@@ -9,7 +9,8 @@
  * gateways (Zen, Go) refuse requests whose tool set differs from opencode's, so denying or
  * switching off tools breaks free and Go models.
  */
-import { db, listRuns } from "./db.ts";
+import { db, getRun, listRuns } from "./db.ts";
+import { keyFor } from "./providerAccounts.ts";
 import { publish } from "./bus.ts";
 import { getSettings } from "./settings.ts";
 import { OpencodeClient } from "./opencode.ts";
@@ -60,13 +61,16 @@ CREATE TABLE IF NOT EXISTS speedtests (
 );
 `);
 
+// Which API key each call went out on, for cost per key (added after llm_calls first shipped).
+if (!db.query<{ name: string }, []>("PRAGMA table_info(llm_calls)").all().some((c) => c.name === "key_id")) db.exec("ALTER TABLE llm_calls ADD COLUMN key_id TEXT");
+
 const RATE_LIMIT = /rate.?limit|429|too many requests|quota|overloaded|capacity/i;
 
 // ---- capture (called from events.ts) ----
 
 const upsertCall = db.query(
-  `INSERT INTO llm_calls (id, run_id, session_id, provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, tokens_cache, cost, error)
-   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+  `INSERT INTO llm_calls (id, run_id, session_id, provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, tokens_cache, cost, error, key_id)
+   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
    ON CONFLICT(id) DO UPDATE SET first_token = COALESCE(llm_calls.first_token, excluded.first_token), completed = excluded.completed,
      tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out, tokens_reasoning = excluded.tokens_reasoning,
      tokens_cache = excluded.tokens_cache, cost = excluded.cost, error = excluded.error`,
@@ -105,6 +109,7 @@ export function onMessage(runId: string, info: any) {
     (t.cache?.read ?? 0) + (t.cache?.write ?? 0),
     info.cost ?? 0,
     err,
+    keyFor(getRun(runId), info.providerID)?.id ?? null,
   );
   if (info.time?.completed) assistant.delete(info.id);
   if (err && !erroredMessages.has(info.id)) {

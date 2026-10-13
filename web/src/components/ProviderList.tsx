@@ -5,9 +5,13 @@ import type { ConnectedProvider, ProviderHealth, Settings } from "../lib/types.t
 import { Link } from "../lib/router.tsx";
 import { Button, Empty } from "./ui.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { KeyList } from "./KeyList.tsx";
 
 const VIA: Record<string, (p: ConnectedProvider) => string> = {
-  pixel: (p) => (p.custom ? `${p.custom.api === "anthropic" ? "Anthropic" : "OpenAI"} API · ${p.keyHint ? `key ${p.keyHint}` : "no key"}` : p.keyHint ? `key ${p.keyHint}` : "no key"),
+  pixel: (p) => {
+    const keys = p.keys.length > 1 ? `${p.keys.length} keys` : p.keyHint ? `key ${p.keyHint}` : "no key";
+    return p.custom ? `${p.custom.api === "anthropic" ? "Anthropic" : "OpenAI"} API · ${keys}` : keys;
+  },
   env: (p) => `env ${p.envVars.join(", ")}`,
   "auth.json": () => "auth.json in Settings",
   builtin: () => "built in · free models",
@@ -156,6 +160,7 @@ export function ProviderList({
             </div>
             {isOpen && (
               <div className="models">
+                {removable && <KeyList provider={p} onChanged={onRemoved} />}
                 <ModelPicker provider={p} settings={settings} onSettings={onSettings} onTest={onTest} />
               </div>
             )}

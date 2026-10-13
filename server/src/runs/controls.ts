@@ -223,5 +223,7 @@ export function rerun(id: string, opts: { asFollowUp?: boolean; model?: string; 
     size: JSON.parse(run.size),
     parentRun: opts.asFollowUp ? run.id : undefined,
     autopilot: !!run.autopilot,
+    keyId: !opts.model || opts.model.split("/")[0] === run.model.split("/")[0] ? (run.key_id ?? undefined) : undefined,
+    keyFailover: !!run.key_failover,
   });
 }

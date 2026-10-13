@@ -4,7 +4,9 @@ import { catalogProvider, catalogProviders } from "../catalog.ts";
 import { liveAbort, livePrompt, liveStatus, modelVariants } from "../liveTest.ts";
 import { cachedCatalog } from "../catalog.ts";
 import { getSettings } from "../settings.ts";
-import { connectedProviders, discoverModels, removeAccount, saveAccount, type AccountInput } from "../providerAccounts.ts";
+import { addKey, connectedProviders, discoverModels, editKey, orderKeys, removeAccount, removeKey, saveAccount, testKey, type AccountInput, type KeyInput } from "../providerAccounts.ts";
+import { db } from "../db.ts";
+import { timeline } from "../runs/state.ts";
 import { del, get, post, put, readJson, HttpError } from "./router.ts";
 
 get("/providers/health", ({ query }) => health(Math.min(24 * 60, Math.max(5, Number(query.get("minutes") ?? 60)))));
@@ -32,6 +34,27 @@ put("/providers/:id", async ({ req, params: { id } }) => {
   return { id: a.id };
 });
 del("/providers/:id", ({ params: { id } }) => removeAccount(id));
+
+// ---- a provider's keys ----
+
+/** Runs on each key and its calls in the last hour, for the Models page. */
+get("/providers/:id/keys/usage", ({ params: { id } }) => {
+  const runs = db.query<{ key_id: string | null; n: number }, [string]>("SELECT key_id, COUNT(*) AS n FROM runs WHERE model LIKE ? || '/%' AND status IN ('preparing', 'running', 'recovering', 'paused') GROUP BY key_id").all(id);
+  const calls = db.query<{ key_id: string | null; n: number }, [string, number]>("SELECT key_id, COUNT(*) AS n FROM llm_calls WHERE provider = ? AND created >= ? GROUP BY key_id").all(id, Date.now() - 3_600_000);
+  return { runs: Object.fromEntries(runs.map((r) => [r.key_id ?? "", r.n])), callsPerHour: Object.fromEntries(calls.map((r) => [r.key_id ?? "", r.n])) };
+});
+post("/providers/:id/keys", async ({ req, params: { id } }) => addKey(id, await readJson<KeyInput>(req)));
+put("/providers/:id/keys/:key", async ({ req, params: { id, key } }) => editKey(id, key, await readJson<KeyInput>(req)));
+del("/providers/:id/keys/:key", ({ params: { id, key } }) => {
+  const moved = removeKey(id, key);
+  for (const run of moved) {
+    db.query("UPDATE runs SET key_id = NULL WHERE id = ?").run(run);
+    timeline(run, "user", "key", "Its API key was removed; the run uses the provider's default key from its next restart");
+  }
+  return { moved };
+});
+put("/providers/:id/keys-order", async ({ req, params: { id } }) => orderKeys(id, (await readJson<{ ids: string[] }>(req)).ids ?? []));
+post("/providers/:id/keys/:key/test", ({ params: { id, key } }) => testKey(id, key));
 post("/providers/discover", async ({ req }) => {
   const b = await readJson<{ baseURL?: string; key?: string; id?: string; api?: "openai" | "anthropic" }>(req);
   return discoverModels(b.baseURL ?? "", b.key, b.id, b.api === "anthropic" ? "anthropic" : "openai");

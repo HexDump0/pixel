@@ -35,6 +35,8 @@ export interface Settings {
   providerLimits: Record<string, { tpm?: number; rpm?: number }>;
   /** Custom thinking levels per "provider/model": level name → provider options (opencode model variants). */
   thinkingLevels: Record<string, Record<string, Record<string, unknown>>>;
+  /** New runs switch to the provider's next key when theirs runs out or is rejected. */
+  keyFailover: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -65,6 +67,7 @@ export const defaultSettings: Settings = {
   historyIntervalMin: 5,
   providerLimits: {},
   thinkingLevels: {},
+  keyFailover: true,
 };
 
 export function getSettings(): Settings {

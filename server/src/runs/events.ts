@@ -5,6 +5,7 @@ import type { OpencodeEvent } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
 import { recordCrossReads } from "../crossreads.ts";
 import { onAssistantMessage, onDelta, onPart } from "../fleet.ts";
+import * as keys from "./keys.ts";
 import { onMessage, onPartActivity, onRetry } from "../providers.ts";
 import { clientFor, notifyRun, setRun, timeline } from "./state.ts";
 import { onIdle } from "./lifecycle.ts";
@@ -165,6 +166,8 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
       storeMessage(id, p.info);
       onMessage(id, p.info);
       onAssistantMessage(id, p.info);
+      if (p.info?.role === "assistant" && p.info.error) keys.onCallError(id, p.info.error);
+      else keys.onCallOk(id, p.info);
       if (isRoot && p.info?.role === "assistant" && p.info.error && p.info.error.name !== "MessageAbortedError") timeline(id, "agent", "error", `Agent error: ${errorText(p.info.error)}`);
       break;
     case "message.part.updated":
@@ -192,13 +195,17 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
     case "session.status":
       if (isRoot && (p.status?.type === "busy" || p.status?.type === "retry")) setRun(id, { agent_status: p.status.type });
       if (isRoot && p.status?.type === "retry") publish(id, "retry", p.status);
-      if (p.status?.type === "retry") onRetry(id, run.model, p.sessionID ?? "", p.status);
+      if (p.status?.type === "retry") {
+        onRetry(id, run.model, p.sessionID ?? "", p.status);
+        keys.onRetry(id, p.status);
+      }
       break;
     case "session.idle":
       if (isRoot) serial(w, () => onIdle(id, "event"));
       break;
     case "session.error":
       if ((!p.sessionID || isRoot) && p.error?.name !== "MessageAbortedError") timeline(id, "agent", "error", `Session error: ${errorText(p.error)}`);
+      keys.onCallError(id, p.error);
       break;
     case "permission.asked":
       autoApprove(id, p);

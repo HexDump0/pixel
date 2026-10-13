@@ -7,7 +7,7 @@ import { getSettings } from "../settings.ts";
 import { runtime } from "../runtime/index.ts";
 import { hasReport } from "../knowledge.ts";
 import { snapshotWorkbase } from "../history.ts";
-import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
+import { clientFor, credsStale, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { syncTranscript, transcript, unwatch } from "./events.ts";
 
 export async function sendPrompt(run: RunRow, text: string) {
@@ -22,6 +22,8 @@ const pendingQuestions = (runId: string) =>
 export async function onIdle(id: string, source: "event" | "watchdog") {
   const run = getRun(id);
   if (!run || run.status !== "running" || run.agent_status === "idle") return;
+  // An idle event that waited in the queue behind a restart (say, a key switch that already sent "continue") is stale.
+  if (source === "event" && run.session_id && (await clientFor(run).status().catch(() => null))?.[run.session_id]) return;
   setRun(id, { agent_status: "idle" });
   if (pendingQuestions(id)) return;
 
@@ -39,6 +41,12 @@ export async function onIdle(id: string, source: "event" | "watchdog") {
     timeline(id, "pixel", "stopped", `Agent went idle without REPORT.md after ${run.continues} automatic continues; stopping`);
     notifyRun("stopped", run, "Run stopped", `The agent stopped without writing REPORT.md after ${run.continues} automatic continues.`);
     return;
+  }
+  // Keys changed while it was busy (a key was replaced or the run moved to another): restart opencode first.
+  if (credsStale(run)) {
+    timeline(id, "pixel", "restart", "Keys or provider settings changed while the agent was busy; restarting opencode to pick them up");
+    await restartOpencode(run);
+    await clientFor(run).waitHealthy(180_000);
   }
   const n = run.continues + 1;
   setRun(id, { continues: n, status_detail: null });

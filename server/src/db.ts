@@ -159,7 +159,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, 
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -198,6 +198,10 @@ export interface RunRow {
   creds_hash: string | null;
   /** Display name set by the user; the id (and workbase folder) never changes. */
   label: string | null;
+  /** API key (ProviderAccount key id) the run uses for its model's provider; null = the provider's default. */
+  key_id: string | null;
+  /** 1 = move to the provider's next key when this one runs out or is rejected. */
+  key_failover: number;
   size: string;
   status: RunStatus;
   status_detail: string | null;

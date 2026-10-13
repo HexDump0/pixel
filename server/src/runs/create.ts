@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { db, getRun, type RunRow, type RunSize } from "../db.ts";
 import { getSettings } from "../settings.ts";
-import { agentCredentials } from "../providerAccounts.ts";
+import { agentCredentials, keyFor, providerKeys } from "../providerAccounts.ts";
 import { publish } from "../bus.ts";
 import { runtime } from "../runtime/index.ts";
 import { detectLanguage, ensureWorkbase, refreshRunFiles, workbasePath } from "../knowledge.ts";
@@ -28,6 +28,10 @@ export interface NewRun {
   /** Template body edited in the dashboard for this run only; rendered like a template. */
   promptOverride?: string;
   name?: string;
+  /** API key of the model's provider; omitted = the provider's default key. */
+  keyId?: string;
+  /** Move to the provider's next key if this one runs out or is rejected; omitted = the Settings default. */
+  keyFailover?: boolean;
 }
 
 export function repoName(repo: string) {
@@ -61,6 +65,8 @@ export function createRun(o: NewRun): RunRow {
   if (!model.includes("/")) throw new Error("model must look like provider/model");
   const id = o.name?.trim() ? o.name.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-") : newRunId(repo);
   if (taken(id)) throw new Error(`a run or workbase named ${id} already exists`);
+  const key = o.keyId ? providerKeys(model.split("/")[0]).find((k) => k.id === o.keyId) : null;
+  if (o.keyId && !key) throw new Error(`key ${o.keyId} does not belong to ${model.split("/")[0]}`);
 
   db.query(
     `INSERT INTO runs (id, repo, ref, template_id, template_version, prompt, model, size, status, runtime, autopilot, parent_run, compare_group, opencode_password, created_at)
@@ -83,9 +89,11 @@ export function createRun(o: NewRun): RunRow {
   );
   const variant = o.variant?.trim();
   if (variant) db.query("UPDATE runs SET variant = ? WHERE id = ?").run(variant, id);
+  db.query("UPDATE runs SET key_id = ?, key_failover = ? WHERE id = ?").run(key?.id ?? null, (o.keyFailover ?? s.keyFailover) ? 1 : 0, id);
   ensureWorkbase(id);
   refreshRunFiles(id);
-  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}${variant ? ` (thinking ${variant})` : ""}, template ${tv.template_id} v${tv.version}`);
+  const keyNote = providerKeys(model.split("/")[0]).length > 1 ? `, key ${(key ?? keyFor(null, model.split("/")[0]))!.name}${(o.keyFailover ?? s.keyFailover) ? " (failover on)" : ""}` : "";
+  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}${variant ? ` (thinking ${variant})` : ""}${keyNote}, template ${tv.template_id} v${tv.version}`);
   const run = getRun(id)!;
   publish("*", "run", publicRun(run));
   void prepare(id);
@@ -128,7 +136,7 @@ export async function prepare(id: string) {
   preparing.add(id);
   try {
     let run = getRun(id)!;
-    const creds = agentCredentials();
+    const creds = agentCredentials(undefined, run);
     ensureWorkbase(id);
     timeline(id, "pixel", "prepare", "Preparing machine");
     const prepared = await runtime.prepare({

@@ -162,6 +162,10 @@ export function SettingsPage() {
             <Field label="Message after an OOM kill" className="sm:col-span-2">
               <input className="input" value={s.oomMessage} onChange={(e) => update("oomMessage", e.target.value)} />
             </Field>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" checked={s.keyFailover} onChange={(e) => update("keyFailover", e.target.checked)} />
+              Key failover on for new runs: when a run's API key runs out or is rejected, move it to the provider's next key (each run can override this)
+            </label>
           </div>
         </Card>
 

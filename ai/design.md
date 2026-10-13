@@ -105,3 +105,10 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - Cache hit rate = cache read / (input + cache read + cache write); opencode's `input` already excludes cached tokens. Savings ≈ cache read × (input price − cache-read price) for models in the models.dev catalogue (`costCacheRead`); custom endpoints aren't priced.
 - Aborted calls (`MessageAbortedError`) aren't counted as errors. Tool stats come from `parts` (type tool) updated in the window.
 - Health checks (runtime, data disk vs `PIXEL_MIN_FREE_GIB`, host memory, memory promised, event streams, provider errors in the last hour, backups) are computed on the server; the System page still holds machines and backups.
+
+## API keys and failover
+
+- Provider accounts hold `keys[]` in order; the first is the default. The API returns `PublicKey` (hint only, status only while it counts as failing).
+- Each run's opencode gets its own key for its model's provider (`runs.key_id`, null = default); other providers get their default key. `credsStale` compares per run, so changing a run's key restarts its opencode when it is idle (directly, or in `onIdle` before the automatic continue).
+- `runs/keys.ts`: classifies errors from `message.updated` errors, `session.error` and `session.status` retries. A failing key is marked on the account; the switch runs in the run's serial queue, so the idle event from the failed call can't send a second continue (`onIdle` also ignores idle events when opencode says the session is busy). Errors in the 30 s after a switch are ignored.
+- Routes: `/providers/:id/keys` (POST add), `/providers/:id/keys/:key` (PUT edit, DELETE remove; runs on it fall back to the default), `/providers/:id/keys-order`, `/providers/:id/keys/:key/test`, `/providers/:id/keys/usage`; `/runs/:id/keys` (GET current key, next failover key, cost per key), `/runs/:id/key`, `/runs/:id/failover`.

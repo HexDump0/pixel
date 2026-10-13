@@ -4,6 +4,7 @@
  * and event stream Pixel uses. Behaviour is scripted by the prompt text:
  *   "REPORT <path>"  write <path> then go idle
  *   "HANG"           stay busy forever
+ *   "KEYCHECK"       a 402 "insufficient balance" error when any key in auth.json starts with "dead"
  *   anything else    reply and go idle (no report)
  * Synchronous `POST /session/:id/message` (the speed test) is scripted by model id instead:
  *   fake/fast    a ~300-token text answer
@@ -74,6 +75,19 @@ async function handlePrompt(sid: string, text: string) {
 
   await Bun.sleep(100);
   const reply: Msg = { info: { id: id("msg"), sessionID: sid, role: "assistant", time: { created: Date.now() } }, parts: [] };
+  if (text.includes("KEYCHECK")) {
+    const auth = await Bun.file(`${process.env.XDG_DATA_HOME}/opencode/auth.json`).json().catch(() => ({}));
+    if (Object.values(auth).some((a: any) => String(a?.key).startsWith("dead"))) {
+      reply.info.providerID = "kp";
+      reply.info.modelID = "m";
+      reply.info.time.completed = Date.now();
+      reply.info.error = { name: "APIError", data: { statusCode: 402, message: "insufficient balance" } };
+      s.messages.push(reply);
+      emit("message.updated", { sessionID: sid, info: reply.info });
+      setStatus(sid, false);
+      return;
+    }
+  }
   const report = /REPORT (\S+)/.exec(text)?.[1];
   if (report) {
     mkdirSync(dirname(report), { recursive: true });

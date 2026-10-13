@@ -87,6 +87,53 @@ export function RunLanes({ runId, minutes = 20 }: { runId: string; minutes?: num
   return lanes.data ? <LanesChart data={lanes.data} /> : <span className="muted text-xs">Loading…</span>;
 }
 
+/**
+ * COST, plus KEY and FAILOVER when the run's provider has several keys: which key it's on (change it
+ * here), whether it moves to the next key when this one fails, and what it spent on each key.
+ */
+export function RunKeyRows({ run }: { run: Run }) {
+  const info = useAsync(() => api.runKeys(run.id), [run.id, run.key_id, run.key_failover, run.model, run.status]);
+  const k = info.data;
+  const many = !!k && k.keys.length > 1;
+  const act = (fn: () => Promise<unknown>, done: string) => fn().then(() => (toast(done), info.reload()), (e) => toast(e.message ?? String(e), "error"));
+  return (
+    <>
+      <dt>COST</dt>
+      <dd className={k && k.costs.length > 1 ? "wide" : undefined}>
+        {money(run.cost)}
+        {k && k.costs.length > 1 && <span className="muted"> · {k.costs.map((c) => `${money(c.cost)} on ${c.name}`).join(", ")}</span>}
+      </dd>
+      {many && (
+        <>
+          <dt>KEY</dt>
+          <dd className="wide">
+            <select
+              className="keysel"
+              aria-label="API key for this run"
+              value={k.current ?? ""}
+              onChange={(e) => act(() => api.setRunKey(run.id, e.target.value), `Key changed to ${k.keys.find((x) => x.id === e.target.value)?.name}`)}
+            >
+              {k.keys.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name} · {x.hint}
+                  {x.status ? " · failing" : ""}
+                </option>
+              ))}
+            </select>
+          </dd>
+          <dt>FAILOVER</dt>
+          <dd className="wide">
+            <button className="linkbtn" onClick={() => act(() => api.setFailover(run.id, !k.failover), k.failover ? "Failover off" : "Failover on")}>
+              {k.failover ? "on" : "off"}
+            </button>
+            <span className="muted">{k.failover ? (k.next ? ` · next: ${k.next}` : " · no other working key") : " · pauses if the key fails"}</span>
+          </dd>
+        </>
+      )}
+    </>
+  );
+}
+
 /** The run name resolves from random glyphs, once, when a run is opened. */
 function Decrypt({ text }: { text: string }) {
   const [shown, setShown] = useState<{ done: string; noise: string }>({ done: text, noise: "" });
@@ -258,8 +305,7 @@ export function RunPanel({ run, onClose }: { run: Run; onClose: () => void }) {
           <dd className="wide">{run.session_id ?? "–"}</dd>
           <dt>TOKENS</dt>
           <dd>{tokens(run.tokens_in + run.tokens_out + run.tokens_reasoning)}</dd>
-          <dt>COST</dt>
-          <dd>{money(run.cost)}</dd>
+          <RunKeyRows run={run} />
           <dt>CONTEXT</dt>
           <dd className="wide">
             {ctx?.used ? (

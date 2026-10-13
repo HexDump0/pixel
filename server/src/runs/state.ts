@@ -64,11 +64,11 @@ export function clientFor(run: RunRow) {
 export const credsHash = (creds: Credentials) => createHash("sha256").update(JSON.stringify(creds)).digest("hex").slice(0, 16);
 
 /** True when keys or provider settings changed since the run's opencode was started. */
-export const credsStale = (run: RunRow) => run.creds_hash !== credsHash(agentCredentials());
+export const credsStale = (run: RunRow) => run.creds_hash !== credsHash(agentCredentials(undefined, run));
 
 /** (Re)start the run's opencode with the current keys and provider settings. */
 export async function restartOpencode(run: RunRow) {
-  const creds = agentCredentials();
+  const creds = agentCredentials(undefined, getRun(run.id) ?? run);
   await runtime.restartOpencode(run, creds);
   setRun(run.id, { creds_hash: credsHash(creds) });
 }

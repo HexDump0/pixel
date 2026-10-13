@@ -8,6 +8,8 @@ import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseF
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
+import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
+import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
 
 function mustRun(id: string) {
   const r = getRun(id);
@@ -57,6 +59,8 @@ post("/runs", async ({ req }) => {
             // a fixed name or edited prompt only makes sense for a single run
             name: compare ? undefined : b.name,
             promptOverride: compare ? undefined : b.promptOverride,
+            // compare mode uses each provider's default key
+            keyId: compare ? undefined : b.keyId,
           }),
         ),
       );
@@ -140,6 +144,24 @@ post("/runs/:id/model", async ({ req, params: { id } }) => {
   return controls.setModel(id, b.model, b.variant);
 });
 post("/runs/:id/autopilot", async ({ req, params: { id } }) => controls.setAutopilot(id, !!(await readJson(req)).on));
+get("/runs/:id/keys", ({ params: { id } }) => {
+  const run = mustRun(id);
+  const provider = run.model.split("/")[0];
+  const keys = providerKeys(provider);
+  const cur = keyFor(run, provider);
+  const costs = db.query<{ key_id: string | null; cost: number }, [string]>("SELECT key_id, SUM(cost) AS cost FROM llm_calls WHERE run_id = ? GROUP BY key_id").all(id);
+  const nameOf = (k: string | null) => (k && findKey(k)?.key.name) || (k ? "removed key" : "before keys were tracked");
+  return {
+    provider,
+    current: cur?.id ?? null,
+    failover: !!run.key_failover,
+    next: cur && run.key_failover ? (nextKey(provider, cur.id)?.name ?? null) : null,
+    keys: keys.map(publicKey),
+    costs: costs.filter((c) => c.cost > 0).map((c) => ({ key: c.key_id, name: nameOf(c.key_id), cost: c.cost })),
+  };
+});
+post("/runs/:id/key", async ({ req, params: { id } }) => chooseKey(id, (await readJson(req)).keyId ?? null));
+post("/runs/:id/failover", async ({ req, params: { id } }) => setFailover(id, !!(await readJson(req)).on));
 post("/runs/:id/label", async ({ req, params: { id } }) => controls.setLabel(id, (await readJson(req)).label));
 post("/runs/:id/reset-counters", ({ params: { id } }) => controls.resetCounters(id));
 post("/runs/:id/sync", ({ params: { id } }) => syncTranscript(id));

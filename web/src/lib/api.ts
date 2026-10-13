@@ -9,6 +9,7 @@ import type {
   CatalogList,
   CatalogProvider,
   ConnectedProvider,
+  PublicKey,
   ProviderHealth,
   SpeedTestRow,
   Lanes,
@@ -94,6 +95,17 @@ export interface CreateRunInput {
   autopilot?: boolean;
   promptOverride?: string;
   name?: string;
+  keyId?: string;
+  keyFailover?: boolean;
+}
+
+export interface RunKeys {
+  provider: string;
+  current: string | null;
+  failover: boolean;
+  next: string | null;
+  keys: PublicKey[];
+  costs: { key: string | null; name: string; cost: number }[];
 }
 
 export const api = {
@@ -165,6 +177,15 @@ export const api = {
   saveProvider: (id: string, body: { name?: string; key?: string; baseURL?: string; custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number; reasoning?: boolean } }) =>
     request<{ id: string }>("PUT", `/providers/${encodeURIComponent(id)}`, body),
   removeProvider: (id: string) => request("DELETE", `/providers/${encodeURIComponent(id)}`),
+  keyUsage: (id: string) => request<{ runs: Record<string, number>; callsPerHour: Record<string, number> }>("GET", `/providers/${encodeURIComponent(id)}/keys/usage`),
+  addKey: (id: string, body: { name?: string; key: string; note?: string }) => request<PublicKey>("POST", `/providers/${encodeURIComponent(id)}/keys`, body),
+  editKey: (id: string, key: string, body: { name?: string; key?: string; note?: string }) => request<PublicKey>("PUT", `/providers/${encodeURIComponent(id)}/keys/${encodeURIComponent(key)}`, body),
+  removeKey: (id: string, key: string) => request<{ moved: string[] }>("DELETE", `/providers/${encodeURIComponent(id)}/keys/${encodeURIComponent(key)}`),
+  orderKeys: (id: string, ids: string[]) => request("PUT", `/providers/${encodeURIComponent(id)}/keys-order`, { ids }),
+  testKey: (id: string, key: string) => request<{ ok: boolean; status: number; message: string }>("POST", `/providers/${encodeURIComponent(id)}/keys/${encodeURIComponent(key)}/test`),
+  runKeys: (id: string) => request<RunKeys>("GET", `${r(id)}/keys`),
+  setRunKey: (id: string, keyId: string | null) => request("POST", `${r(id)}/key`, { keyId }),
+  setFailover: (id: string, on: boolean) => request("POST", `${r(id)}/failover`, { on }),
   discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
   catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
   catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),

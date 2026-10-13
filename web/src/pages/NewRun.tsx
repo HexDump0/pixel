@@ -28,6 +28,9 @@ export function NewRunPage() {
   const [size, setSize] = useState("");
   const [parentRun, setParentRun] = useState(init.parentRun);
   const [autopilot, setAutopilot] = useState(true);
+  const [keyId, setKeyId] = useState("");
+  const [failover, setFailover] = useState<boolean | null>(null);
+  const providers = useAsync(api.providers, []);
   const [compare, setCompare] = useState(false);
   const [compareModels, setCompareModels] = useState<string[]>([]);
   const [compareVersions, setCompareVersions] = useState<number[]>([]);
@@ -37,6 +40,10 @@ export function NewRunPage() {
   const [error, setError] = useState<string | null>(null);
 
   const s = settings.data;
+  const keys = providers.data?.find((p) => p.id === model.split("/")[0])?.keys ?? [];
+  const chosenKey = keys.find((k) => k.id === keyId) ?? keys[0];
+  const failoverOn = failover ?? s?.keyFailover ?? true;
+  const failoverOrder = chosenKey ? [...keys.slice(keys.indexOf(chosenKey) + 1), ...keys.slice(0, keys.indexOf(chosenKey))].map((k) => (k.status ? `${k.name} (failing, skipped)` : k.name)) : [];
   const versions = useAsync(() => (templateId ? api.template(templateId) : Promise.resolve(null)), [templateId]);
 
   useEffect(() => {
@@ -76,6 +83,8 @@ export function NewRunPage() {
       autopilot,
       name: name || undefined,
       promptOverride: edited ? body : undefined,
+      keyId: !compare && keys.length > 1 ? chosenKey?.id : undefined,
+      keyFailover: failoverOn,
     };
     if (compare) {
       input.models = compareModels.length ? compareModels : [model];
@@ -127,8 +136,30 @@ export function NewRunPage() {
               <div className="label sm:col-span-2">
                 <span>Model and thinking</span>
                 {model ? <ModelAndThinking model={model} variant={variant} onModel={setModel} onVariant={setVariant} /> : <div className="input muted">loading…</div>}
-                {compare && <span className="text-[11px]">Compare mode runs every model below at its default thinking.</span>}
+                {compare && <span className="text-[11px]">Compare mode runs every model below at its default thinking and on each provider's default key.</span>}
               </div>
+              {keys.length > 1 && !compare && (
+                <Field label="API key" className="sm:col-span-2" hint={chosenKey?.note || undefined}>
+                  <select className="input" value={chosenKey?.id ?? ""} onChange={(e) => setKeyId(e.target.value)}>
+                    {keys.map((k, i) => (
+                      <option key={k.id} value={k.id}>
+                        {k.name}
+                        {i === 0 ? " (default)" : ""} · {k.hint ?? "no key"}
+                        {k.status ? ` · ${k.status.state === "credit" ? "out of credit" : k.status.state === "rejected" ? "rejected" : "rate limited"}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              {keys.length > 1 && (
+                <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                  <input type="checkbox" checked={failoverOn} onChange={(e) => setFailover(e.target.checked)} />
+                  <span>
+                    Key failover: switch to the next key if this one runs out or is rejected
+                    {!compare && failoverOrder.length > 0 && <span className="muted"> (then {failoverOrder.join(", then ")})</span>}. Off: the run pauses and tells you.
+                  </span>
+                </label>
+              )}
               <Field label="Machine size" hint={preset ? `${preset.cpu} CPU · ${preset.memoryGiB} GiB RAM · ${preset.diskGiB} GiB disk` : undefined}>
                 <select className="input" value={size} onChange={(e) => setSize(e.target.value)}>
                   {s && Object.keys(s.sizePresets).map((k) => <option key={k}>{k}</option>)}

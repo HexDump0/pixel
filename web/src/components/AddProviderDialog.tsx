@@ -154,7 +154,7 @@ function KeyForm({ provider, existing, onSaved, onBack, onClose }: { provider: C
         </Notice>
       )}
       <Field
-        label="API key"
+        label={existing && existing.keys.length > 1 ? `Default key (${existing.keys[0].name})` : "API key"}
         hint={
           <>
             Stored on the Pixel server and never shown again. Every agent gets it in opencode's <span className="mono">auth.json</span>
@@ -281,7 +281,7 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
         <Field label="Base URL" className="sm:col-span-2" hint={`${API_TYPES.find((t) => t.id === apiType)!.hint} Agents must be able to reach it from their machine.`}>
           <input className="input mono" placeholder={API_TYPES.find((t) => t.id === apiType)!.placeholder} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
         </Field>
-        <Field label="API key (optional)">
+        <Field label={existing && existing.keys.length > 1 ? `Default key (${existing.keys[0].name})` : "API key (optional)"}>
           <input className="input mono" type="password" autoComplete="off" placeholder={existing ? `unchanged (${existing.keyHint ?? "no key"})` : "none"} value={key} onChange={(e) => setKey(e.target.value)} />
         </Field>
         <Field label="Context window (tokens)" hint="Used for every model here; opencode compacts the session before it fills up.">

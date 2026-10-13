@@ -10,6 +10,7 @@ import { saveSettings } from "../src/settings.ts";
 import { config } from "../src/config.ts";
 import { createRun, startWatchdog, stopWatchdog, controls } from "../src/runs/index.ts";
 import { seedTemplates } from "../src/templates.ts";
+import { addKey, providerKeys, saveAccount } from "../src/providerAccounts.ts";
 
 let repo: string;
 
@@ -103,6 +104,29 @@ describe("run lifecycle", () => {
     expect(() => controls.setLabel("no-such-run", "x")).toThrow();
     void controls.stopRun(run.id);
   });
+
+  test("key failover: a key out of credit moves the run to the next key; with failover off it pauses", async () => {
+    await saveAccount({ id: "kp", baseURL: "http://127.0.0.1:9/v1", key: "dead-key-1", custom: { models: ["m"] } });
+    const live = addKey("kp", { name: "Live", key: "live-key-2", note: "spare" });
+    const [dead] = providerKeys("kp");
+    const auth = (id: string) => [...new Bun.Glob(`**/${id}/home/.local/share/opencode/auth.json`).scanSync({ cwd: config.dataDir, dot: true })].map((f) => readFileSync(join(config.dataDir, f), "utf8")).join("");
+
+    const run = createRun({ repo, templateId: "audit", name: "keys-on", model: "kp/m", promptOverride: "KEYCHECK" });
+    expect(getRun(run.id)!.key_failover).toBe(1);
+    await until("switched key", () => getRun(run.id)!.key_id === live.id && getRun(run.id)!.status === "running", 30_000);
+    const tl = db.query<{ message: string }, [string]>("SELECT message FROM timeline WHERE run_id = ? AND kind = 'key'").all(run.id).map((r) => r.message);
+    expect(tl[0]).toContain("Key Default is out of credit (HTTP 402: insufficient balance). Switched to key Live");
+    expect(providerKeys("kp").find((k) => k.id === dead.id)!.status).toMatchObject({ state: "credit" });
+    await until("new key pushed", () => auth(run.id).includes("live-key-2"));
+    await controls.stopRun(run.id);
+
+    // Both keys failing now (the dead one is marked), failover off: the run pauses and says why.
+    const off = createRun({ repo, templateId: "audit", name: "keys-off", model: "kp/m", keyId: dead.id, keyFailover: false, promptOverride: "KEYCHECK" });
+    await until("paused", () => getRun(off.id)!.status === "paused", 30_000);
+    expect(getRun(off.id)!.status_detail).toContain("failover is off for this run");
+    expect(getRun(off.id)!.key_id).toBe(dead.id);
+    await controls.stopRun(off.id);
+  }, 60_000);
 
   test("manual controls: pause stops autopilot, message reopens", async () => {
     const run = createRun({ repo, templateId: "audit", name: "manual", promptOverride: "HANG" });
