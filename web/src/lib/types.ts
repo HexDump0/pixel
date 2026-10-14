@@ -85,6 +85,21 @@ export interface Message {
   parts: Part[];
 }
 
+/** PROGRESS.md: the agent's status notes for the human, with every version Pixel saw. */
+export interface Progress {
+  content: string | null;
+  updated_at: number | null;
+  /** Newest first; added/removed lines vs the version before. */
+  versions: { ts: number; added: number; removed: number }[];
+}
+
+/** The whole file at `to`, each line prefixed "+", "-" or " " against `from`. */
+export interface ProgressDiff {
+  from: number | null;
+  to: number | null;
+  lines: string[];
+}
+
 export interface TimelineEntry {
   id: number;
   run_id: string;

@@ -16,6 +16,8 @@ import type {
   Message,
   RecentActivity,
   MetricRow,
+  Progress,
+  ProgressDiff,
   Run,
   RunDetail,
   SearchHit,
@@ -121,6 +123,9 @@ export const api = {
   metrics: (id: string) => request<MetricRow[]>("GET", `${r(id)}/metrics`),
   runCrossReads: (id: string) => request<{ other_run: string; tool: string; path: string | null; ts: number }[]>("GET", `${r(id)}/crossreads`),
   report: (id: string) => request<{ content: string | null }>("GET", `${r(id)}/report`),
+  progress: (id: string) => request<Progress>("GET", `${r(id)}/progress`),
+  /** `from` 0 = against nothing; omitted = against the version before `to`. */
+  progressDiff: (id: string, from?: number | null, to?: number | null) => request<ProgressDiff>("GET", `${r(id)}/progress/diff${q({ from: from ?? undefined, to: to ?? undefined })}`),
   vm: (id: string) => request<{ state: string; opencode: boolean }>("GET", `${r(id)}/vm`),
   snapshots: (id: string) => request<{ name: string; created: string }[]>("GET", `${r(id)}/snapshots`),
 

@@ -7,6 +7,7 @@ import type { Question, RunDetail, Todo } from "../../lib/types.ts";
 import { Button, Card, CopyText, Empty } from "../../components/ui.tsx";
 import { AgentTree, RunLanes } from "../../components/RunPanel.tsx";
 import { useFleet } from "../../lib/fleet.ts";
+import { ProgressNotes } from "../../components/ProgressNotes.tsx";
 
 const TODO_ICON: Record<string, string> = { completed: "✓", in_progress: "▸", cancelled: "✗", pending: "○" };
 
@@ -96,6 +97,9 @@ export function OverviewTab({ detail, onChange }: { detail: RunDetail; onChange:
           </div>
         </Card>
       )}
+      <section className="card min-w-0 lg:col-span-2">
+        <ProgressNotes key={r.id} run={r} />
+      </section>
       {fleet && (
         <section className="card sec" style={{ padding: 16 }}>
           <AgentTree run={r} fleet={fleet} />

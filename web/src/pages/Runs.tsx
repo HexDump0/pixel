@@ -12,6 +12,7 @@ import { openPalette } from "../components/CommandPalette.tsx";
 import { Icon } from "../components/icons.tsx";
 import { ErrorBox } from "../components/ui.tsx";
 import { RunName } from "../components/RunName.tsx";
+import { progressUnseen, useProgressSeen } from "../lib/progress.ts";
 
 const FILTERS: { id: string; label: string; match: (r: Run) => boolean }[] = [
   { id: "active", label: "Active", match: (r) => ACTIVE.includes(r.status) },
@@ -63,6 +64,7 @@ export function RunsPage() {
   useTick(10_000);
   const { runs, error } = useRuns();
   const snap = useFleet();
+  const seen = useProgressSeen();
   const { search } = useLocation();
   const selected = new URLSearchParams(search).get("run");
   const [filter, setFilter] = useState<string | null>(null);
@@ -197,6 +199,7 @@ export function RunsPage() {
                           <div style={{ minWidth: 0 }}>
                             <div className="name">
                               <RunName run={r} />
+                              {progressUnseen(r, seen) && <span className="progress-dot" title="PROGRESS.md changed since you last looked" />}
                               {(r.questions ?? 0) > 0 && (
                                 <span className="badge question" style={{ marginLeft: 6 }}>
                                   question

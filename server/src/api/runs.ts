@@ -7,6 +7,7 @@ import { clientFor, controls, createRun, isWatching, publicRun, syncTranscript, 
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
+import { progressDiff, progressOf, progressVersion } from "../progress.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
@@ -103,6 +104,22 @@ get("/runs/:id/report", ({ params: { id } }) => {
   mustRun(id);
   const p = reportPath(id);
   return { content: existsSync(p) ? readFileSync(p, "utf8") : null };
+});
+get("/runs/:id/progress", ({ params: { id } }) => {
+  mustRun(id);
+  return progressOf(id);
+});
+/** PROGRESS.md at `to` (default latest) with changes since `from` (default the version before; 0 = nothing) marked. */
+get("/runs/:id/progress/diff", ({ params: { id }, query }) => {
+  mustRun(id);
+  const num = (k: string) => (query.has(k) ? Number(query.get(k)) : undefined);
+  return progressDiff(id, num("from"), num("to")) ?? { from: null, to: null, lines: [] };
+});
+get("/runs/:id/progress/:ts", ({ params: { id, ts } }) => {
+  mustRun(id);
+  const v = progressVersion(id, Number(ts));
+  if (!v) throw new HttpError(404, "no such version");
+  return v;
 });
 get("/runs/:id/vm", async ({ params: { id } }) => {
   const run = mustRun(id);

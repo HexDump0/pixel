@@ -2229,3 +2229,56 @@ svg.i {
   & blockquote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--fg2); }
   & a { color: var(--accent); }
 }
+
+/* ---- PROGRESS.md (run panel, run overview, runs table) ---- */
+.progress-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sec .progress-bar {
+  margin-bottom: 0;
+}
+.progress-new {
+  all: unset;
+  cursor: pointer;
+  font: 12px var(--font-mono);
+  color: var(--accent);
+}
+.progress-new:hover {
+  text-decoration: underline;
+}
+.progress-pick {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.progress-notes .prose-pixel > :first-child {
+  margin-top: 0;
+}
+.progress-notes .prose-pixel > :last-child {
+  margin-bottom: 0;
+}
+.progress-notes.compact {
+  max-height: 320px;
+  overflow: auto;
+}
+.progress-notes.compact .prose-pixel {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.progress-notes.compact .prose-pixel :is(h1, h2, h3) {
+  margin: 10px 0 2px;
+  font-size: 12.5px;
+}
+.progress-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 2px;
+}

@@ -1,5 +1,5 @@
 /**
- * The run panel on the Runs page: who the agent is (profiler), its agents and subagents, a swimlane
+ * The run panel on the Runs page: who the agent is (profiler), its PROGRESS.md, its agents and subagents, a swimlane
  * timeline, workbase links, resources and recent activity. AgentTree and RunLanes are reused on the
  * run page.
  */
@@ -16,6 +16,7 @@ import { Icon } from "./icons.tsx";
 import { openPalette } from "./CommandPalette.tsx";
 import { toast } from "./Toast.tsx";
 import { RunName } from "./RunName.tsx";
+import { ProgressNotes } from "./ProgressNotes.tsx";
 
 const age = (ts: number | null | undefined) => (ts ? duration(Date.now() - ts).replace(/ \d+s$/, "") : "");
 
@@ -344,6 +345,9 @@ export function RunPanel({ run, onClose }: { run: Run; onClose: () => void }) {
             Terminal
           </button>
         </div>
+      </div>
+      <div className="sec">
+        <ProgressNotes run={run} compact />
       </div>
       {fleet && (
         <div className="sec">

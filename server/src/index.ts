@@ -13,6 +13,7 @@ import { writeIndex } from "./knowledge.ts";
 import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
+import { startProgressWatch, stopProgressWatch } from "./progress.ts";
 import dashboard from "../../web/index.html";
 import { liveShutdown } from "./liveTest.ts";
 
@@ -68,6 +69,7 @@ writeIndex();
 await reattach();
 startWatchdog();
 startFleet();
+startProgressWatch();
 startBackupSchedule();
 
 /** Full-text index of the workbases, for dashboard search. */
@@ -98,6 +100,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     stopWatchdog();
     stopFleet();
+    stopProgressWatch();
     server.stop();
     // Don't leave the live test's opencode running; give it a few seconds at most.
     void Promise.race([liveShutdown(), Bun.sleep(6000)]).finally(() => process.exit(0));

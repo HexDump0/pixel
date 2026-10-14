@@ -156,10 +156,20 @@ CREATE TABLE IF NOT EXISTS files_index (
   PRIMARY KEY (run_id, path)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, content, tokenize = 'porter unicode61');
+
+-- Every distinct version of a run's PROGRESS.md (the agent's status notes for the human).
+CREATE TABLE IF NOT EXISTS progress (
+  run_id  TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  ts      INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  added   INTEGER NOT NULL DEFAULT 0,             -- lines added / removed vs the previous version
+  removed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, ts)
+);
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "progress_at", "INTEGER"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -202,6 +212,8 @@ export interface RunRow {
   key_id: string | null;
   /** 1 = move to the provider's next key when this one runs out or is rejected. */
   key_failover: number;
+  /** When PROGRESS.md last changed (as Pixel noticed it), null = never written. */
+  progress_at: number | null;
   size: string;
   status: RunStatus;
   status_detail: string | null;
