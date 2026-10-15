@@ -8,6 +8,7 @@ import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseF
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
 import { progressDiff, progressOf, progressVersion } from "../progress.ts";
+import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } from "../findings.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
@@ -32,7 +33,8 @@ function attachCommand(run: RunRow) {
 get("/runs", () => {
   const questions = countBy("SELECT run_id, COUNT(*) AS n FROM questions WHERE status = 'pending' GROUP BY run_id");
   const reads = countBy("SELECT run_id, COUNT(*) AS n FROM cross_reads GROUP BY run_id");
-  return listRuns().map((r) => ({ ...publicRun(r), questions: questions.get(r.id) ?? 0, cross_reads: reads.get(r.id) ?? 0 }));
+  const findings = findingCounts();
+  return listRuns().map((r) => ({ ...publicRun(r), questions: questions.get(r.id) ?? 0, cross_reads: reads.get(r.id) ?? 0, findings: findings[r.id] ?? null }));
 });
 
 interface CreateBody extends Omit<NewRun, "compareGroup"> {
@@ -105,6 +107,26 @@ get("/runs/:id/report", ({ params: { id } }) => {
   const p = reportPath(id);
   return { content: existsSync(p) ? readFileSync(p, "utf8") : null };
 });
+// ---- findings (opencode-plugins/findings.ts → FINDINGS.json → findings table) ----
+
+get("/runs/:id/findings", ({ params: { id } }) => {
+  mustRun(id);
+  return listFindings({ run: id, includeRemoved: true });
+});
+get("/runs/:id/findings/events", ({ params: { id }, query }) => {
+  mustRun(id);
+  return findingEvents({ run: id, finding: query.get("finding") ?? undefined, since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 1000) });
+});
+post("/runs/:id/findings/:fid/verdict", async ({ req, params: { id, fid } }) => {
+  mustRun(id);
+  const b = await readJson<{ verdict?: Verdict | null; note?: string | null }>(req);
+  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null, controls.sendMessage);
+});
+get("/findings", ({ query }) =>
+  listFindings({ run: query.get("run") ?? undefined, untriaged: query.get("untriaged") === "1", severity: query.get("severity") ?? undefined }),
+);
+get("/findings/events", ({ query }) => findingEvents({ since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 200) }));
+
 get("/runs/:id/progress", ({ params: { id } }) => {
   mustRun(id);
   return progressOf(id);

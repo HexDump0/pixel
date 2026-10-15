@@ -152,7 +152,8 @@ export abstract class ProcessRuntime implements Runtime {
     const log = Bun.file(join(this.runDir(run), "opencode.log"));
     const proc = Bun.spawn(this.wrap(run, [config.opencodeBin, "serve", "--hostname", "127.0.0.1", "--port", String(launch.port)]), {
       cwd: this.paths(run).target,
-      env: { ...this.agentEnv(run), ...launch.env, OPENCODE_SERVER_PASSWORD: launch.password },
+      // PIXEL_WORKBASE: where the finding tools (opencode-plugins/findings.ts) keep FINDINGS.json.
+      env: { ...this.agentEnv(run), ...launch.env, PIXEL_WORKBASE: this.paths(run).workbase, OPENCODE_SERVER_PASSWORD: launch.password },
       stdout: log,
       stderr: log,
     });

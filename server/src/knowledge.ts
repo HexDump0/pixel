@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, renameSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { config } from "./config.ts";
-import { listRuns, getRun, type RunRow } from "./db.ts";
+import { db, listRuns, getRun, type RunRow } from "./db.ts";
 
 export const workbasePath = (runId: string) => join(config.workbasesDir, runId);
 
@@ -58,19 +58,22 @@ export function writeRunJson(run: RunRow) {
   writeAtomic(join(dir, "run.json"), JSON.stringify(info, null, 2) + "\n");
 }
 
-/** TRIAGE.md: the user's triage notes, so other agents know which findings held up. */
+/** TRIAGE.md: the user's triage notes and verdicts on findings, so other agents know which findings held up. */
 export function writeTriage(run: RunRow) {
-  if (!run.triage_notes && !run.triage_verdict) return;
-  const lines = [
-    `# Triage of ${run.id}`,
-    "",
-    "Written by the human who reviewed this run's REPORT.md.",
-    "",
-    `Overall verdict: ${run.triage_verdict || "not set"}`,
-    "",
-    run.triage_notes || "",
-    "",
-  ];
+  const verdicts = db
+    .query<{ id: string; title: string; verdict: string; verdict_note: string | null }, [string]>(
+      "SELECT id, title, verdict, verdict_note FROM findings WHERE run_id = ? AND verdict IS NOT NULL ORDER BY CAST(SUBSTR(id, 2) AS INTEGER)",
+    )
+    .all(run.id);
+  if (!run.triage_notes && !run.triage_verdict && !verdicts.length) return;
+  const word: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
+  const lines = [`# Triage of ${run.id}`, "", "Written by the human who reviewed this run's findings and REPORT.md.", ""];
+  if (run.triage_notes || run.triage_verdict) lines.push(`Overall verdict: ${run.triage_verdict || "not set"}`, "", run.triage_notes || "", "");
+  if (verdicts.length) {
+    lines.push("## Findings", "");
+    for (const v of verdicts) lines.push(`- ${v.id} ${v.title}: **${word[v.verdict] ?? v.verdict}**${v.verdict_note ? `. ${v.verdict_note}` : ""}`);
+    lines.push("");
+  }
   writeAtomic(join(workbasePath(run.id), "TRIAGE.md"), lines.join("\n"));
 }
 
@@ -104,7 +107,7 @@ export function writeIndex() {
   const body = [
     "# Workbases",
     "",
-    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report) and sometimes `TRIAGE.md` (a human's verdict on the report).",
+    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report) `FINDINGS.md` (what the agent found, by state) and sometimes `TRIAGE.md` (a human's verdicts on the findings and the report).",
     "",
     "| Run | Repository | Language | Status | Started | Model | Report | Triage |",
     "|---|---|---|---|---|---|---|---|",

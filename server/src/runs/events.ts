@@ -9,6 +9,7 @@ import * as keys from "./keys.ts";
 import { onMessage, onPartActivity, onRetry } from "../providers.ts";
 import { clientFor, notifyRun, setRun, timeline } from "./state.ts";
 import { onIdle } from "./lifecycle.ts";
+import { onToolPart } from "../findings.ts";
 
 export interface Watcher {
   abort: AbortController;
@@ -114,6 +115,7 @@ function storePart(runId: string, w: Watcher, part: any) {
   upsertPart.run(part.id, runId, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
   publish(runId, "part", part);
   onPart(runId, part);
+  onToolPart(runId, part);
   if (part.type !== "tool" || w.seenCalls.has(part.id)) return;
   const input = part.state?.input;
   if (!input || !Object.keys(input).length) return;

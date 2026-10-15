@@ -166,6 +166,45 @@ CREATE TABLE IF NOT EXISTS progress (
   removed INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (run_id, ts)
 );
+
+-- Findings recorded by the agent with the finding tools (opencode-plugins/findings.ts), synced from the
+-- workbase's FINDINGS.json. The verdict columns are the human's and never come from the file.
+CREATE TABLE IF NOT EXISTS findings (
+  run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  id             TEXT NOT NULL,                  -- F1, F2, … per run
+  state          TEXT NOT NULL,                  -- lead | suspected | confirmed | ruled_out
+  severity       TEXT,                           -- critical | high | medium | low | info
+  title          TEXT NOT NULL,
+  class          TEXT,
+  location       TEXT,
+  poc            TEXT,
+  summary        TEXT NOT NULL DEFAULT '',
+  created        INTEGER NOT NULL,
+  updated        INTEGER NOT NULL,
+  session_id     TEXT,                           -- last writer
+  removed_at     INTEGER,
+  removed_reason TEXT,
+  duplicate_of   TEXT,
+  verdict        TEXT,                           -- real | not_bug | duplicate | needs_work
+  verdict_note   TEXT,
+  verdict_at     INTEGER,
+  PRIMARY KEY (run_id, id)
+);
+CREATE INDEX IF NOT EXISTS findings_updated ON findings(updated);
+
+CREATE TABLE IF NOT EXISTS finding_events (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  finding_id TEXT NOT NULL,
+  at         INTEGER NOT NULL,
+  action     TEXT NOT NULL,                      -- add | update | remove | verdict
+  changes    TEXT,                               -- JSON {field: [old, new]}
+  note       TEXT,
+  session_id TEXT,
+  UNIQUE (run_id, finding_id, at, action)
+);
+CREATE INDEX IF NOT EXISTS finding_events_run ON finding_events(run_id, at);
+CREATE INDEX IF NOT EXISTS finding_events_at ON finding_events(at);
 `);
 
 // Columns added after the first release: add them to existing databases.
@@ -258,8 +297,7 @@ export function updateRun(id: string, fields: Partial<RunRow>) {
   db.query(sql).run(params);
 }
 
-export function addTimeline(runId: string, actor: "pixel" | "user" | "agent", kind: string, message: string, data?: unknown) {
-  const ts = Date.now();
+export function addTimeline(runId: string, actor: "pixel" | "user" | "agent", kind: string, message: string, data?: unknown, ts = Date.now()) {
   const res = db
     .query("INSERT INTO timeline (run_id, ts, actor, kind, message, data) VALUES (?, ?, ?, ?, ?, ?)")
     .run(runId, ts, actor, kind, message, data === undefined ? null : JSON.stringify(data));

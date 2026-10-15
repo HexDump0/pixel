@@ -12,8 +12,8 @@ import { notify, type NotifyKind } from "../notify.ts";
 
 export type Actor = "pixel" | "user" | "agent";
 
-export function timeline(runId: string, actor: Actor, kind: string, message: string, data?: unknown) {
-  const entry = addTimeline(runId, actor, kind, message, data);
+export function timeline(runId: string, actor: Actor, kind: string, message: string, data?: unknown, ts?: number) {
+  const entry = addTimeline(runId, actor, kind, message, data, ts);
   publish(runId, "timeline", entry);
   publish("*", "timeline", entry);
   return entry;

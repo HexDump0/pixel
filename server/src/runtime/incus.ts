@@ -1,4 +1,6 @@
 /** Production runtime: one Incus VM per run, driven through the Incus REST API on its unix socket. */
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { config } from "../config.ts";
 import type { RunRow } from "../db.ts";
 import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
@@ -183,7 +185,7 @@ export class IncusRuntime implements Runtime {
     if (ro.code === 0) throw new IncusError("Other workbases are writable from the VM: the /workbases share is not read-only");
 
     o.log("Injecting credentials");
-    await this.pushCredentials(name, o, o.opencodePassword);
+    await this.pushCredentials(name, o, o.opencodePassword, p.workbase);
 
     const cloned = await this.execByName(name, ["test", "-d", `${p.target}/.git`]);
     if (cloned.code !== 0) {
@@ -221,11 +223,15 @@ export class IncusRuntime implements Runtime {
     }
   }
 
-  private async pushCredentials(name: string, creds: Credentials, opencodePassword: string) {
-    const envFile = Object.entries({ ...creds.env, OPENCODE_SERVER_PASSWORD: opencodePassword })
+  private async pushCredentials(name: string, creds: Credentials, opencodePassword: string, workbase: string) {
+    // PIXEL_WORKBASE: where the finding tools keep FINDINGS.json.
+    const envFile = Object.entries({ ...creds.env, PIXEL_WORKBASE: workbase, OPENCODE_SERVER_PASSWORD: opencodePassword })
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join("\n");
     await this.pushFile(name, "/etc/pixel/opencode.env", envFile + "\n");
+    // Plugins are baked into the image too; pushing them here keeps older images current.
+    for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts")))
+      await this.pushFile(name, `/root/.config/opencode/plugin/${f}`, readFileSync(join(config.opencodePluginsDir, f), "utf8"), "0644");
     if (creds.authJson.trim()) {
       await this.mustExec(name, ["mkdir", "-p", "/root/.local/share/opencode"], "mkdir");
       await this.pushFile(name, "/root/.local/share/opencode/auth.json", creds.authJson);
@@ -239,7 +245,7 @@ export class IncusRuntime implements Runtime {
       await call("PUT", `/1.0/instances/${name}/state`, { action: "start" });
       await this.waitForAgent(name);
     }
-    if (creds) await this.pushCredentials(name, creds, run.opencode_password!);
+    if (creds) await this.pushCredentials(name, creds, run.opencode_password!, this.paths(run).workbase);
     await this.mustExec(name, ["sh", "-c", "systemctl reset-failed opencode 2>/dev/null; systemctl restart opencode"], "Restarting opencode");
   }
 
