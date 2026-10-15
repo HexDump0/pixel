@@ -90,3 +90,96 @@
 
 - **Progress for the human** (user: the template asks the main agent to keep `{{workbase}}/PROGRESS.md` short and current, for "human status checks, not for agent state"; "Add UI, build stuff for that"). The prompt text lives in the user's own templates; Pixel doesn't add it. Pixel stores every distinct version, shows it at the top of the run panel and as the first card on the run's Overview (with Text/Changes and a version picker), marks lines changed since you last looked, puts a dot on runs with unseen updates, and hints when a live run hasn't updated it for an hour. No notifications for it (would be noisy). Details in design.md.
 - **UI redesign rejected again** (user: "I dont like the UI direction revert it"). The uncommitted top-bar redesign was stashed (`git stash list`: "rejected UI redesign (2026-10-14)"); the committed UI stays.
+
+## 2026-10-14 (redesign, fifth round)
+
+- **Asked again for a complete UI/UX redesign** (user: "the UI is pretty horrible … looks like slopped together stuff … give me some mockups to choose from, use html js and css"). Built three clickable directions as plain HTML/CSS/JS in `ai/mockups/` (index.html, a-workbench, b-console, c-wall, shared.js with fake runs and a live tool-call simulation), published privately at https://claude.ai/artifact/QbpfazhBx5AfGXZ1RLVoGi. Waiting for the user to pick one.
+  - A Workbench: runs as the sidebar (grouped Needs you / Running / To triage / Done, live tool line per run), the selected run fills the page, message box docked at the bottom. Light, Geist.
+  - B Console: dark by default, IBM Plex, status bar of fleet readouts, runs table over a resizable detail pane, live tool-call ticker, keyboard-first.
+  - C Wall: a tile per live run streaming its last tool calls and latest finding, questions answered on the tile, stacked tokens/s band per run, run opens as a sheet. Schibsted Grotesk + Fragment Mono.
+  - Shared UX in all three: one run view instead of panel + page; the 12 control buttons become Pause, Stop and a ⋯ menu, model and key are clickable values; four chart tiles become one compact readout; PROGRESS.md first with changed lines highlighted; monospace only for data.
+
+## 2026-10-14 (redesign, sixth round)
+
+- **Feedback on round 5** (user): likes C Wall's look, "but it still mehh on usability … the ux now is pretty good ish, but the UI … could def improve"; asked for more mockups plus research into what the tool needs. Mid-round: coloured top borders on rounded cards are "a tell tale sign of slop"; wants **dark mode**, and "a tiny bit of ctOS, Watch Dogs, ASCII feel".
+- Built three directions on the Wall in `ai/mockups/r6/` (index.html = research notes; d-docked, e-findings, f-control; kit.css/kit.js shared, `shared.js` symlinked from round 5), published privately at https://claude.ai/artifact/XQxj32N4oUMadMAtJkTGyx. Waiting for the user to pick.
+  - D Docked wall: wall is home; opening a run docks it, the wall becomes a live rail on the left.
+  - E Wall + findings: "since you last looked" above the wall, reply box on each tile, run as a side panel that pushes the wall; a Findings page across runs with R/N/D/W verdict keys.
+  - F Control room: one screen, no scroll, big tiles (agents, PROGRESS lines, 30-min swimlanes, reply); Enter zooms in place.
+  - Shared: dark by default, no coloured borders or accent rails, colour only for abnormal state (ISA-101 idea), one line per agent with box-drawing tree and step age, health flags only when true, findings as objects with a verdict each (→ TRIAGE.md, "needs work" messages the live agent), stable tile order by start time, mono uppercase labels, block meters, braille spinners, decrypt-in run names.
+  - Building findings for real needs parsing PROGRESS.md/REPORT.md into rows; asked the user whether the template can use a fixed one-line finding format (`- [sev] title · file:line · poc`).
+
+## 2026-10-14 (redesign, seventh round)
+
+- **Feedback on round 6** (user): keep the Wall; wants "cool graphs … flashy animated" at the top; colours and spacing felt "mushy"; no Unicode glyph art, use Tabler icons (tabler.io/icons).
+- Built `ai/mockups/r7/` (index.html is the Wall itself, D's docked run view kept; published privately at https://claude.ai/artifact/4T1D8rMzymDiakBwuwnc6b):
+  - Four animated canvas charts on top (`hero.js`): output tokens/s stacked by run and scrolling live, tool calls per run per minute for 30 min (cells flash as calls land), spend per hour today with the rest of the day projected, memory as a ring split by run with the 90 % limit tick. Hover tooltips on all four.
+  - Crisper look: near-black surfaces with 1 px lines, no tinted panels, one spacing scale, status as icon + word chips (filled only when it needs you). Run colours are six categorical hues validated for colour-blind separation on the dark surface (dataviz validator).
+  - Icons: Tabler 3.19.0 outline, inlined as `icons.js` (only the ~65 used). The ASCII trees/meters/spinners from round 6 are gone (CSS lines, bars and spinning Tabler icons instead).
+  - `shared.js` and `kit.js` are forked into r7 so rounds 5 and 6 still work.
+
+## 2026-10-14 (redesign, eighth round)
+
+- **Round 7 rejected** (user): "too much colors and animation … not slop like this"; then, mid-round, "I dont want it too monochrom … not too many colors". Middle ground in `ai/mockups/r8/` (https://claude.ai/artifact/SqXi4gC7wxffFFsdFmudNg):
+  - Neutral dark greys, Geist + Geist Mono, sentence-case labels (no uppercase mono labels), status as dot + word.
+  - Exactly one accent (blue) for live data and highlights: chart line and fill, spend bars, tool-call heatmap, memory bars, running dots, selected tab and tile. Amber only for needs-you or recovering, red only for failed and high severity. No per-run colours.
+  - Motion only where data arrives (throughput scrolls, numbers update). No glow, pulses, intro sweeps or decrypt effect.
+  - The four charts sit in one bordered strip: output tokens/s (total; per-run split on hover), spend per hour with the rest of the day as outlines, tool calls per run per minute, memory per run.
+
+## 2026-10-14 (redesign, ninth round)
+
+- **Feedback on round 8** (user): better, but "too much text being thrown" and still a bit boring ("just orange and blue stuff everywhere"); "be a bit creative". Built `ai/mockups/r9/` (https://claude.ai/artifact/QdtLkibAbgTB4zHxEUUho4):
+  - **Fleet tape** replaces the four chart panels and the counts row: one track per run over the last 6 hours, drawn as a smooth mirrored waveform of tool calls (grey; the last 30 minutes of a live run brighter), with marks for findings (dot, red if high), questions (amber diamond), crashes and continues (amber tick), start and finish, and failure. Blue only for "now". Hover reads it, click opens the run. Three readouts on the right: tok/s with a tiny line, spend, memory as one block per GB.
+  - **Tiles show, not tell**: each agent is a lane of tool-call ticks over 15 minutes (tick height = kind, newest tick blue, command in the tooltip); todos as segments; context as a small ring; no model, flags or tool names as text. A running tile shows only a blue dot and elapsed time; words only for problems (waiting, recovering, failed). The top finding stays as text.
+  - "Need you" count moved to the Runs nav item.
+
+## 2026-10-14 (redesign, tenth round)
+
+- **Round 9 rejected** (user): wants "the cool graphs" back, and the colour scheme of the round-5 C Wall in dark mode (screenshot), "dont copy it too much". Built `ai/mockups/r10/` (https://claude.ai/artifact/Gx4SaAgoyhgA2wek7LqqK5):
+  - Round-5 dark palette: near-black surfaces, soft per-run colours (teal, blue, violet, pink, lime, orange), green for running, amber and red tinted panels for problems, rounded tiles, count pills.
+  - Round-7 charts back in one strip (tokens/s stacked by run, tool calls per run per minute, spend per hour stacked by run, memory ring by run), without the glow and pulsing; the load-in animation stays.
+  - Round-9 tiles kept: agent lanes of ticks (now in the run's colour), todo segments, context ring, words only for problems.
+
+## 2026-10-15 (redesign, eleventh round)
+
+- **Feedback on round 10** (user): "80% happy", but layout and colour scheme not quite there; "slightly sloppy with all the unwanted text (text stating the obvious)"; wants it more creative. Built `ai/mockups/r11/` (forked from r10, opened locally):
+  - **One hero chart**: output tokens/s per run over 30 minutes as a streamgraph, labelled at its right edge (no legend), with findings (dot by severity), questions (amber diamond) and crashes (amber tick) marked on the streams; hover isolates a stream, click opens the run. Spend per hour, tool calls per minute and memory become three small charts beside it.
+  - **Say things once**: no counts row (the need-you count is a badge on Runs, catch-up is an icon), no key hints, no repo line on tiles, running shows only a green dot and its age, problems say one word ("Waiting 12m", "Recovering 2/3", "Failed"), no "Asked 12 min ago" / "Recovering automatically" / "attempt 2 of 3" / "No PROGRESS.md yet" / "Report ready" / "to triage", severity as a coloured dot.
+  - **Layout**: tiles stretch to equal height per row; each tile ends in a full-width tok/s wave in the run's colour; problem tiles get a faint whole-tile tint instead of a nested coloured box. Finished runs as plain rows (severity dots, verdict, age, duration, cost, Triage).
+  - **Colour**: neutral zinc greys instead of blue-greys, borders at surface level, round-5 run colours kept; libxml2 no longer shares zlib's blue.
+  - Run view: facts as one row of icon chips (model, key, cost, context, autopilot, machine) instead of labelled columns; fewer counts in section headers; finished agents don't say "done".
+
+## 2026-10-15 (redesign, twelfth round)
+
+- **Feedback on round 11** (user): likes it, but the stream chart is too big for what it says ("could also have other stuff here … add more info"); the run view "is good ish but still not good enough"; and the wall lacks control: "filtering the running stuff, triage stuff and other such stuff". Built `ai/mockups/r12/` (forked from r11):
+  - **Compact fleet row** (220 px): the stream at about 40 % width, a **Latest** feed of the newest events across runs (findings by severity, questions, crashes, failures, finished runs, PROGRESS.md updates; click opens the finding or run), and four stats: spend today (+ projection), tool calls per minute, memory (90 % tick), **to triage** with a severity split (click filters). The live edge of the stream is smoothed.
+  - **Toolbar** (sticky): All / Running / Needs you / To triage / Finished with counts (keys 1-5), a text filter (`/`), model filter, sort (started, activity, cost, name), tiles or list. Filter, sort and layout are remembered. "To triage" also lists the open findings under the runs.
+  - **List view**: one row per run (status, live output wave, finding dots, model, tok/s, cost, runtime, hover actions) with checkboxes (`x`) and a floating bulk bar: Pause, Resume, Message (one message to many runs), Stop.
+  - **Run view**: a stats strip under the title (tok/s with its wave, cost and cost per hour, tokens and cache, context, agents with state dots, continues), model/key/machine as small pills by the repo line, pill-style tabs with icons, PROGRESS.md as a document card, findings as cards, **agents and their 60-minute tool-call lanes in one tree** (the separate "Tool calls" block is gone), todos with a progress bar, quick messages above the message box. The rail gets its own filter.
+
+## 2026-10-15 (redesign, thirteenth round)
+
+- **Feedback on round 12** (user): better, but the run view leaves "very little space in the middle where the text I want to read exists". Built `ai/mockups/r13/` (forked from r12), only the run view changed. PROGRESS.md now gets about 630 px of height instead of about 380 px at 1600×900:
+  - Header is one row: name, status, then the four live numbers as compact chips (tok/s with its wave, cost, context ring, agent dots), then Pause/Stop/⋯/×. The big stats strip and the repo/model/key line are gone from the top.
+  - Tabs row holds the focus toggle on the right.
+  - Text and side column scroll on their own; the text has no card around it, a sticky PROGRESS.md header, 15 px / 1.7 type and a 78ch reading width (the question card matches it).
+  - Repo, ref, template, model, key, tokens, cost per hour, continues, machine and start time moved to a "Run" list at the bottom of the side column (model and key still open their menus there).
+  - Message box is one line; the quick messages and the ⌘↵ hint appear only while it has focus.
+  - Focus mode (`.` or the corner button) hides the run list and the side column and centres the text; the run list collapses to colour chips with a dot for needs-you or failed (`[` or the sidebar button). Both are remembered.
+
+## 2026-10-15 (redesign, fourteenth round)
+
+- **Feedback on round 13** (user): the collapsed run list (colour squares) made no sense ("the heck is this"); on a wide window the run view "does not look good at all" (the text was pinned left at 78ch, leaving a big empty gap before the side column); wants token count and cache rate at the top again. Built `ai/mockups/r14/` (forked from r13):
+  - The colour-square rail is gone. `[` or the sidebar button hides the run list completely; a button by the run name brings it back.
+  - Reading column is centred in the space it has (max 760 px, like a document editor), so wide windows get even margins instead of a hole; the question card and PROGRESS.md share that width.
+  - Header numbers, right-aligned next to the actions and split by thin rules: tok/s with its wave (just a grey 0 when not generating, no flat line), total tokens, cache rate (cache reads ÷ (cache reads + input), from the run's real counts), cost and cost per hour, context ring, agents. Lower-priority ones drop out on narrower windows.
+  - Calmer side column: slightly darker background, findings as plain rows, lighter agent lanes, round todo checks (no strike-through), green half-filled for the one in progress.
+
+## 2026-10-15 (findings tool, Overview, Report tab, handoff)
+
+- **Findings come from a tool, not from prose** (user picked option 1 of: a tool the agent calls / a fixed line format in PROGRESS.md / parsing REPORT.md). An opencode plugin gives the agent `finding_add`, `finding_update`, `finding_remove`, `finding_list`; the user asked that the agent can check, change and remove findings, not only add them. The plugin writes `FINDINGS.json` (+ `FINDINGS.md`) in the workbase because agents can't reach Pixel's API; Pixel syncs it on file change and on `finding_*` tool parts in the event stream. Verdicts flow back through `.pixel/triage.json` and TRIAGE.md; "needs work" messages the live agent. Spec: `ai/redesign/findings-tool.md`.
+- **The findings list replaces PROGRESS.md** (user chose "findings list replaces it"): one list with states lead → suspected → confirmed, or ruled out (removed = mistake/duplicate, soft). "Trying now" comes from live agent activity. PROGRESS.md UI goes away for new runs; old runs keep it read-only in Files.
+- **Agents rarely ask questions** (user). Keep the question support but don't design around it.
+- **Overview must not repeat** the Findings tab and the side column (user, after round 14). Proposed instead: Now (live tail per agent), Story (notable events incl. finding changes), Charts over the run's life. To be mocked and confirmed before building.
+- **Report tab**: REPORT.md once the run is done (disabled before), with the run-level triage form under it.
+- **Handoff written** for the next session, which will build the redesign into the real app: `ai/redesign/` (README, taste, spec, findings-tool, data-map). Reference mockup: `ai/mockups/r14/`.

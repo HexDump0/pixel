@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pixel · E Wall and findings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="kit.css">
+<script src="shared.js"></script>
+<script src="kit.js"></script>
+<style>
+/* E: two homes. Live is the Wall with "since you last looked" on top and a reply box on every tile;
+   a run opens as a side panel that pushes the wall over instead of covering it. Findings is a triage
+   workspace across all runs: list on the left, evidence and verdict on the right, one key per verdict. */
+.shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+body.panel .shell { grid-template-columns: minmax(0, 1fr) minmax(460px, 46%); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 14px; }
+.livev { padding-bottom: 80px; min-width: 0; }
+.livev .cu { margin-top: 6px; }
+.side { display: none; position: sticky; top: calc(58px + env(safe-area-inset-top, 0px)); height: calc(100dvh - 70px - env(safe-area-inset-top, 0px)); }
+body.panel .side { display: block; }
+.side .detail { height: 100%; border-radius: 16px; box-shadow: var(--lift); overflow: hidden; }
+.side .ov { grid-template-columns: minmax(0, 1fr); }
+.side .dh, .side .tabs, .side .pad, .side .ov, .side .compose { padding-left: 20px; padding-right: 20px; }
+.side .dh-meta, .side .facts, .side .notice { margin-left: 0; padding-left: 0; }
+.side .tabs { padding-left: 20px; }
+.cu-toggle { border: 0; background: none; color: var(--ink-3); font-size: 12.5px; padding: 0; }
+.cu-toggle:hover { color: var(--ink); }
+
+.fv { display: none; padding-bottom: 80px; }
+body.fpage .livev, body.fpage .side { display: none; }
+body.fpage .fv { display: block; }
+body.fpage .shell { grid-template-columns: minmax(0, 1fr); }
+.fv-h { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 12px 0; }
+.fv-h h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.fv-h .sub { color: var(--ink-3); }
+.fv-h .right { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.filter { display: flex; gap: 4px; flex-wrap: wrap; }
+.filter button { border: 1px solid var(--line); background: var(--tile); border-radius: 999px; height: 28px; padding: 0 11px; font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; }
+.filter button[aria-pressed="true"] { background: var(--ink); color: var(--tile); border-color: var(--ink); }
+.fgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 16px; align-items: start; }
+.fgrid .frow { grid-template-columns: 74px minmax(0, 1fr) 64px 82px; }
+.fgrid .frow .fr { display: none; }
+.fgrid .frow .ft span::before { content: attr(data-run) " · "; }
+.fpane { position: sticky; top: calc(66px + env(safe-area-inset-top, 0px)); background: var(--tile); border-radius: 16px; box-shadow: var(--shadow); max-height: calc(100dvh - 80px); overflow-y: auto; }
+.fpane .fd { padding: 22px 24px 26px; }
+.fnext { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 24px; border-top: 1px solid var(--line-2); font-size: 12.5px; color: var(--ink-3); position: sticky; bottom: 0; background: var(--tile); }
+.pagev { display: none; padding-bottom: 80px; }
+body.page .livev, body.page .side, body.page .fv { display: none; }
+body.page .pagev { display: block; }
+.blank { padding: 48px 24px; text-align: center; color: var(--ink-3); background: var(--tile); border-radius: 16px; box-shadow: var(--shadow); margin-top: 16px; }
+@media (max-width: 1100px) {
+  body.panel .shell { grid-template-columns: minmax(0, 1fr); }
+  body.panel .livev { display: none; }
+  .side { position: static; height: calc(100dvh - 70px); }
+  .fgrid { grid-template-columns: minmax(0, 1fr); }
+  .fpane { position: static; max-height: none; }
+}
+@media (max-width: 720px) { .fgrid .frow { grid-template-columns: 70px minmax(0, 1fr) 84px; } .fgrid .frow .fa { display: none; } }
+</style>
+</head>
+<body>
+<header class="top gut">
+  <div class="brand" id="brand"></div>
+  <nav class="nav" id="nav" aria-label="Pages"></nav>
+  <div class="right">
+    <button class="search" id="search" aria-label="Search and commands"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Jump to a run…</span><kbd>⌘K</kbd></button>
+    <button class="btn primary" id="newrun"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New run</button>
+  </div>
+</header>
+<div class="shell gut">
+  <main class="livev" id="livev">
+    <div id="cu"></div>
+    <section class="strip" id="strip" aria-label="Fleet"></section>
+    <div class="sec-t"><h2>Live</h2><span id="live-n"></span><div class="right keys"><span><kbd>←</kbd><kbd>→</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>m</kbd> reply</span><span><kbd>1</kbd>–<kbd>3</kbd> answer</span></div></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="sec-t"><h2>Finished</h2><span id="fin-n"></span></div>
+    <div class="list" id="finished"></div>
+  </main>
+  <aside class="side" id="side" aria-label="Run"><section class="detail" id="detail"></section></aside>
+  <main class="fv" id="fv"></main>
+  <main class="pagev" id="pagev"></main>
+</div>
+<script>
+(function () {
+  "use strict";
+  const { runs, find, name, isLive, on } = PX;
+  const st = { view: "Live", run: null, tab: "overview", mode: "text", file: null, sel: null, finding: null, filter: "open", runFilter: null, cuOpen: true };
+  const PAGES = ["Live", "Findings", "Activity", "Models", "Stats", "Knowledge", "Templates", "Settings"];
+  const $ = (s) => document.querySelector(s);
+  $("#brand").innerHTML = K.brand + "Pixel";
+  const order = (list) => list.slice().sort((a, b) => a.started - b.started);
+  const wallRuns = () => order(runs.filter((r) => isLive(r) || ["failed", "stopped", "paused"].includes(r.status)));
+  const finRuns = () => runs.filter((r) => ["done", "triaged"].includes(r.status)).sort((a, b) => (b.finished || 0) - (a.finished || 0));
+
+  function nav() {
+    const n = K.untriaged().length;
+    const needs = runs.filter((r) => r.question || ["failed", "stopped"].includes(r.status)).length;
+    $("#nav").innerHTML = PAGES.map((p) => `<button type="button" data-page="${p}" ${p === st.view ? 'aria-current="page"' : ""}>${p}${p === "Findings" && n ? `<span class="n warn">${n}</span>` : ""}${p === "Live" && needs ? `<span class="n warn">${needs}</span>` : ""}</button>`).join("");
+  }
+  function keep(fn) {
+    const vals = {};
+    document.querySelectorAll(".shell input[id], .shell textarea[id]").forEach((el) => (vals[el.id] = el.value));
+    const ae = document.activeElement;
+    const focus = ae?.id || (ae?.classList?.contains("tile") ? "tile:" + ae.dataset.run : ae?.classList?.contains("frow") ? "frow:" + ae.dataset.finding : null);
+    const db = $("#detail .db"), top = db ? db.scrollTop : 0, fp = $(".fpane"), ftop = fp ? fp.scrollTop : 0;
+    fn();
+    for (const [id, v] of Object.entries(vals)) { const el = document.getElementById(id); if (el) el.value = v; }
+    const nb = $("#detail .db"); if (nb && db) nb.scrollTop = top;
+    const nf = $(".fpane"); if (nf && fp) nf.scrollTop = ftop;
+    if (focus?.startsWith("tile:")) document.querySelector(`.tile[data-run="${focus.slice(5)}"]`)?.focus({ preventScroll: true });
+    else if (focus?.startsWith("frow:")) document.querySelector(`.frow[data-finding="${focus.slice(5)}"]`)?.focus({ preventScroll: true });
+    else if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
+  }
+
+  const visibleFindings = () => {
+    let list = K.findings.slice();
+    if (st.filter === "open") list = list.filter((f) => !f.verdict);
+    if (st.filter === "done") list = list.filter((f) => f.verdict);
+    if (st.runFilter) list = list.filter((f) => f.run === st.runFilter);
+    return list.sort((a, b) => !!a.verdict - !!b.verdict || K.sevRank(a) - K.sevRank(b) || b.at - a.at);
+  };
+  function findingsView() {
+    const list = visibleFindings();
+    if (!st.finding || !list.some((f) => f.id === st.finding)) st.finding = list[0]?.id || null;
+    const f = st.finding && K.fById(st.finding);
+    const runsWith = [...new Set(K.findings.map((x) => x.run))].map(find).filter(Boolean);
+    const row = (x) => { const r = find(x.run); return `<div class="frow" data-finding="${x.id}" tabindex="0" aria-selected="${x.id === st.finding}"><span class="sev" data-sev="${x.sev}">${x.sev}</span><span class="ft"><b>${PX.fmt.esc(x.title)}</b><span data-run="${PX.fmt.esc(r ? name(r) : x.run)}">${PX.fmt.esc(x.where)}</span></span><span class="fa">${K.age(x.at)}</span><span class="verdict" data-v="${x.verdict || "new"}">${x.verdict || (x.agent === "suspected" ? "suspected" : "to triage")}</span></div>`; };
+    const idx = list.findIndex((x) => x.id === st.finding);
+    return `<div class="fv-h"><h1>Findings</h1><span class="sub">${K.untriaged().length} to triage · verdicts go to each run's TRIAGE.md</span>
+      <div class="right"><div class="filter" role="group" aria-label="Show">${[["open", "To triage"], ["done", "Triaged"], ["all", "All"]].map(([k, l]) => `<button type="button" data-filter="${k}" aria-pressed="${st.filter === k}">${l}</button>`).join("")}</div>
+      <div class="filter" role="group" aria-label="Run"><button type="button" data-runf="" aria-pressed="${!st.runFilter}">All runs</button>${runsWith.map((r) => `<button type="button" data-runf="${r.id}" aria-pressed="${st.runFilter === r.id}">${K.chip(r)}${PX.fmt.esc(name(r))}</button>`).join("")}</div></div></div>
+      <div class="fgrid"><div class="ftable" role="listbox" aria-label="Findings">${list.length ? list.map(row).join("") : `<div class="blank" style="margin:0;box-shadow:none">Nothing to triage. New findings show up here as agents list them in PROGRESS.md.</div>`}</div>
+      <div class="fpane">${f ? K.findingCard(f) + `<div class="fnext"><span><kbd>J</kbd><kbd>K</kbd> next / previous · <kbd>R</kbd><kbd>N</kbd><kbd>D</kbd><kbd>W</kbd> verdict, then on to the next</span><span>${idx + 1} of ${list.length}</span></div>` : ""}</div></div>`;
+  }
+
+  function render() {
+    keep(() => {
+      const live = st.view === "Live";
+      document.body.classList.toggle("panel", live && !!st.run);
+      document.body.classList.toggle("fpage", st.view === "Findings");
+      document.body.classList.toggle("page", !["Live", "Findings"].includes(st.view));
+      nav();
+      if (live) {
+        const cu = K.catchup();
+        $("#cu").innerHTML = cu.runs.length ? (st.cuOpen ? K.catchupHTML() : `<div class="sec-t" style="margin:8px 0 0"><button type="button" class="cu-toggle" data-cu="open">Show what changed in the last ${PX.fmt.dur(Date.now() - cu.since)} ▾</button></div>`) : "";
+        $("#strip").innerHTML = K.strip();
+        const w = wallRuns();
+        $("#live-n").textContent = w.length;
+        $("#tiles").innerHTML = w.map((r) => K.tile(r, { sel: st.run === r.id || st.sel === r.id, reply: true })).join("");
+        const f = finRuns();
+        $("#fin-n").textContent = f.length;
+        $("#finished").innerHTML = f.map((r) => K.lrow(r, st.run === r.id)).join("");
+        const r = st.run && find(st.run);
+        $("#detail").innerHTML = r ? K.detail(r, st, { close: true }) : "";
+      } else if (st.view === "Findings") {
+        $("#fv").innerHTML = findingsView();
+      } else {
+        $("#pagev").innerHTML = `<div class="fv-h"><h1>${st.view}</h1></div><div class="blank">${st.view} isn't part of this mockup. It keeps the layout of today's page in the new style.</div>`;
+      }
+    });
+  }
+
+  function openRun(id, o = {}) {
+    const fresh = st.run !== id;
+    if (st.view !== "Live") st.view = "Live";
+    st.tab = o.tab || (st.run === id ? st.tab : "overview");
+    st.run = st.sel = id;
+    st.file = o.file || null;
+    const r = find(id);
+    if (r && r.unseen && st.tab === "overview") setTimeout(() => PX.act(id, "seen"), 4000);
+    render();
+    if (fresh) K.decrypt($("#detail h1"));
+    $("#detail .db") && ($("#detail .db").scrollTop = 0);
+  }
+  function close() { const id = st.run; st.run = null; render(); document.querySelector(`.tile[data-run="${id}"]`)?.focus(); }
+  function openPage(p) { st.view = p; if (p !== "Live") st.run = null; render(); window.scrollTo(0, 0); }
+  function newRun(pre = {}) {
+    const d = K.dialog(`<h2>New run</h2>${PX.newRunForm(pre)}`, "New run");
+    PX.bindNewRun(d.el.querySelector("form"), (id) => { d.close(); openRun(id); }, d.close);
+    d.el.querySelector("#nr-repo").focus();
+  }
+  function openFinding(id) { const f = K.fById(id); st.view = "Findings"; st.finding = id; if (f.verdict) st.filter = "all"; render(); document.querySelector(`.frow[data-finding="${id}"]`)?.focus({ preventScroll: true }); }
+  function message(id) { const el = document.getElementById("reply-" + id); if (el && st.view === "Live") { el.focus(); el.scrollIntoView({ block: "nearest" }); } else { openRun(id); document.getElementById("compose-" + id)?.focus(); } }
+
+  PX.ui = {
+    openRun, newRun, close, openPage, openFinding, message,
+    current: () => st.run || st.sel,
+    setTab: (t) => { st.tab = t; render(); $("#detail .db").scrollTop = 0; },
+    setMode: (m) => { st.mode = m; render(); },
+    openFile: (p) => { st.file = p; render(); },
+    rename: (id) => { if (st.run !== id) openRun(id); K.rename(id, $("#detail h1")); },
+  };
+
+  document.addEventListener("click", (e) => {
+    const p = e.target.closest("[data-page]"); if (p) return openPage(p.dataset.page);
+    const fl = e.target.closest("[data-filter]"); if (fl) { st.filter = fl.dataset.filter; st.finding = null; return render(); }
+    const rf = e.target.closest("[data-runf]"); if (rf) { st.runFilter = rf.dataset.runf || null; st.finding = null; return render(); }
+    const cu = e.target.closest("[data-cu]"); if (cu) { st.cuOpen = true; return render(); }
+    if (e.target.closest("button, a, input, textarea, select, form, .x-menu")) return;
+    const t = e.target.closest(".tile, .lrow");
+    if (t) openRun(t.dataset.run);
+  }, true);
+  $("#search").addEventListener("click", PX.palette);
+  $("#newrun").addEventListener("click", () => newRun());
+
+  const cols = () => { const ts = [...document.querySelectorAll("#tiles .tile")]; if (ts.length < 2) return 1; const y = ts[0].offsetTop; return ts.filter((t) => t.offsetTop === y).length; };
+  function nextOpen(fromId, dir = 1) {
+    const list = visibleFindings();
+    const i = list.findIndex((x) => x.id === fromId);
+    return list[Math.max(0, Math.min(list.length - 1, i + dir))]?.id;
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && st.run && !document.querySelector(".x-pal, .scrim-c, .x-menu, .x-dialog-scrim") && !e.target.closest("input, textarea")) { e.preventDefault(); return close(); }
+    if (!K.plainKey(e) || document.querySelector(".scrim-c")) return;
+    if (st.view === "Findings") {
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") { e.preventDefault(); st.finding = nextOpen(st.finding, 1); render(); return document.querySelector(`.frow[data-finding="${st.finding}"]`)?.focus({ preventScroll: false }); }
+      if (k === "k" || e.key === "ArrowUp") { e.preventDefault(); st.finding = nextOpen(st.finding, -1); render(); return document.querySelector(`.frow[data-finding="${st.finding}"]`)?.focus(); }
+      const v = K.VERDICTS.find((x) => x.key === k);
+      if (v && st.finding) {
+        e.preventDefault();
+        const cur = st.finding, nxt = nextOpen(cur, 1);
+        K.setVerdict(cur, v.v);
+        if (st.filter === "open") st.finding = visibleFindings().find((x) => x.id === nxt)?.id || visibleFindings()[0]?.id || null;
+        render();
+        document.querySelector(`.frow[data-finding="${st.finding}"]`)?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (st.view !== "Live") return;
+    const list = [...document.querySelectorAll("#tiles .tile, #finished .lrow")];
+    const ids = list.map((x) => x.dataset.run);
+    let i = ids.indexOf(st.sel);
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols(), ArrowUp: -cols(), j: 1, k: -1 }[e.key];
+    if (step) {
+      e.preventDefault();
+      i = Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + step));
+      st.sel = ids[i];
+      if (st.run) return openRun(st.sel, { tab: st.tab });
+      list.forEach((t) => t.setAttribute("aria-selected", t.dataset.run === st.sel));
+      return list[i].focus();
+    }
+    if (e.key === "Enter" && st.sel && !st.run) { e.preventDefault(); return openRun(st.sel); }
+    if (e.key === "m" && (st.run || st.sel)) { e.preventDefault(); return message(st.run || st.sel); }
+    if (e.key === "n") { e.preventDefault(); return newRun(); }
+    if (e.key === "f") { e.preventDefault(); return openPage("Findings"); }
+  });
+  document.addEventListener("focusin", (e) => { const fr = e.target.closest?.(".frow"); if (fr && fr.dataset.finding !== st.finding) { st.finding = fr.dataset.finding; render(); } });
+
+  on("tick", (ev) => {
+    if (st.view !== "Live") return;
+    const el = document.querySelector(`#tiles .tile[data-run="${ev.run}"]`);
+    if (el) { K.patchTile(el, find(ev.run)); el.querySelector(`.now li[data-agent="${ev.agent}"]`)?.classList.add("flash"); }
+    const ag = document.querySelector('#detail [data-slot="agents"]');
+    if (ag && ev.run === st.run) ag.innerHTML = K.agentsCard(find(st.run));
+  });
+  on("rates", () => {
+    if (st.view !== "Live") return;
+    $("#strip").innerHTML = K.strip();
+    document.querySelectorAll("#tiles .tile").forEach((el) => K.patchTile(el, find(el.dataset.run)));
+  });
+  on("change", (e) => { if (e.action === "seen-all") st.cuOpen = false; render(); });
+  on("minute", render);
+  on("theme", render);
+
+  const h = location.hash.slice(1);
+  if (h === "findings") st.view = "Findings";
+  else if (h && find(h)) st.run = st.sel = h;
+  addEventListener("hashchange", () => { const x = location.hash.slice(1); if (x === "findings") openPage("Findings"); else if (find(x)) openRun(x); });
+  render();
+  K.switcher("e");
+  PX.start();
+})();
+</script>
+</body>
+</html>

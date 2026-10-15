@@ -1,0 +1,119 @@
+<title>Pixel UI Directions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400&display=swap">
+<style>
+/* Layout: a short intro, three directions side by side, each with a drawn layout schematic, then the changes all three share. */
+:root {
+  --bg: #f3f4f6; --card: #ffffff; --line: #e1e4e9; --ink: #13161b; --ink-2: #4b5260; --ink-3: #7c8390;
+  --wf: #e7e9ee; --wf-2: #d3d7de; --wf-hi: #0d7a70; --wf-ok: #188a4c; --wf-warn: #c27a00;
+  --dk: #0e0f12; --dk-2: #1d2026; --dk-3: #2c2f36;
+  --sans: "Geist", ui-sans-serif, system-ui, sans-serif; --mono: "Geist Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0e1013; --card: #15181c; --line: #262a31; --ink: #e7e9ec; --ink-2: #a6acb6; --ink-3: #6f7682; --wf: #20242a; --wf-2: #2e333b; --wf-hi: #3cc6b4; --wf-ok: #4cc287; --wf-warn: #e3a447; --dk: #08090b; --dk-2: #17191d; --dk-3: #24272d; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0e1013; --card: #15181c; --line: #262a31; --ink: #e7e9ec; --ink-2: #a6acb6; --ink-3: #6f7682; --wf: #20242a; --wf-2: #2e333b; --wf-hi: #3cc6b4; --wf-ok: #4cc287; --wf-warn: #e3a447; --dk: #08090b; --dk-2: #17191d; --dk-3: #24272d; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 48px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { margin: 0; font-size: 30px; letter-spacing: -.02em; font-weight: 600; text-wrap: balance; }
+.lede { margin: 10px 0 0; max-width: 68ch; color: var(--ink-2); }
+.dirs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 32px; }
+.dir { display: flex; flex-direction: column; background: var(--card); border-radius: 16px; border: 1px solid var(--line); overflow: hidden; color: inherit; text-decoration: none; transition: border-color .15s, transform .15s; }
+.dir:hover { border-color: var(--ink-3); }
+.dir:focus-visible { outline: 2px solid var(--wf-hi); outline-offset: 2px; }
+.dir .txt { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.dir h2 { margin: 0; font-size: 19px; font-weight: 600; display: flex; align-items: baseline; gap: 10px; }
+.dir h2 span { font: 13px var(--mono); color: var(--ink-3); font-weight: 400; }
+.dir p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.dir ul { margin: 2px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+.dir li { margin: 2px 0; }
+.dir .go { margin-top: auto; padding-top: 10px; font-weight: 500; font-size: 14px; }
+.dir .go::after { content: " →"; }
+
+/* schematics */
+.sch { aspect-ratio: 16 / 10; max-width: 100%; padding: 14px; background: var(--wf); border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
+.sch div { border-radius: 3px; background: var(--card); min-width: 0; }
+.sch .b { background: var(--wf-2); }
+.sch.a { grid-template-columns: 26% 1fr; }
+.sch.a .side { display: flex; flex-direction: column; gap: 3px; padding: 5px; background: var(--card); }
+.sch.a .side i { display: block; height: 9px; border-radius: 2px; background: var(--wf); }
+.sch.a .side i.sel { background: var(--wf-2); }
+.sch.a .side i.ok { box-shadow: inset 3px 0 0 var(--wf-ok); }
+.sch.a .side i.warn { box-shadow: inset 3px 0 0 var(--wf-warn); }
+.sch.a .main { display: grid; grid-template-rows: 18% 6% 1fr 12%; gap: 4px; padding: 5px; }
+.sch.a .main .row2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 4px; background: none; }
+.sch.a .main .row2 div:first-child { background: var(--wf); }
+.sch.a .main .row2 div:last-child { background: var(--wf-2); }
+.sch.b { background: var(--dk); grid-template-rows: 7% 6% 36% 2% 1fr 6%; border-bottom-color: var(--dk-3); }
+.sch.b div { background: var(--dk-2); }
+.sch.b .rows { display: flex; flex-direction: column; gap: 3px; padding: 4px; background: var(--dk-2); }
+.sch.b .rows i { display: block; flex: 1; background: var(--dk-3); border-radius: 1px; }
+.sch.b .rows i.sel { box-shadow: inset 2px 0 0 #ebebe7; background: #2a2e35; }
+.sch.b .split { background: none; }
+.sch.b .cols { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 3px; background: none; }
+.sch.b .tick { background: var(--dk-2); box-shadow: inset 24px 0 0 -20px #5fd08f; }
+.sch.c { grid-template-rows: 6% 14% 1fr 1fr 12%; }
+.sch.c .band { background: linear-gradient(to top, color-mix(in srgb, var(--wf-hi) 55%, transparent) 0 35%, transparent 35%), var(--card); }
+.sch.c .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: none; }
+.sch.c .tiles div { border-radius: 5px; display: grid; grid-template-rows: 22% 1fr 22%; padding: 3px; gap: 2px; }
+.sch.c .tiles div i { display: block; border-radius: 2px; background: var(--wf); }
+.sch.c .tiles div.warn i:nth-child(2) { background: color-mix(in srgb, var(--wf-warn) 30%, var(--card)); }
+
+h3 { margin: 44px 0 10px; font-size: 17px; font-weight: 600; }
+.shared { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 32px; margin: 0; padding: 0; list-style: none; }
+.shared li { padding: 12px 0; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 14.5px; }
+.shared b { color: var(--ink); font-weight: 600; display: block; }
+.note { margin-top: 28px; color: var(--ink-3); font-size: 13.5px; max-width: 80ch; }
+.note code { font: 12.5px var(--mono); }
+@media (max-width: 900px) { .dirs { grid-template-columns: minmax(0, 1fr); } .shared { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<div class="wrap">
+  <h1>Pixel, three directions</h1>
+  <p class="lede">Each one is clickable and uses the same fake runs with simulated tool calls streaming in, so you can compare them on the same data. Use the switcher at the bottom of each page to flip between them, or to try light and dark.</p>
+
+  <div class="dirs">
+    <a class="dir" href="a-workbench.html">
+      <div class="sch a" aria-hidden="true"><div class="side"><i class="sel ok"></i><i class="ok"></i><i class="warn"></i><i></i><i class="ok"></i><i></i><i></i></div><div class="main"><div class="b"></div><div></div><div class="row2"><div></div><div></div></div><div class="b"></div></div></div>
+      <div class="txt">
+        <h2>Workbench <span>A</span></h2>
+        <p>Runs are the sidebar, grouped by what they need from you, each with its live tool call. The selected run fills the page.</p>
+        <ul><li>PROGRESS.md first, agents and activity beside it</li><li>Message box docked at the bottom, like a chat with the run</li><li>Light, calm, closest to the current Pixel</li></ul>
+        <span class="go">Open Workbench</span>
+      </div>
+    </a>
+    <a class="dir" href="b-console.html">
+      <div class="sch b" aria-hidden="true"><div></div><div></div><div class="rows"><i></i><i></i><i class="sel"></i><i></i><i></i><i></i></div><div class="split"></div><div class="cols"><div></div><div></div><div></div></div><div class="tick"></div></div>
+      <div class="txt">
+        <h2>Console <span>B</span></h2>
+        <p>Dark and dense, built for the keyboard. The runs table on top, the selected run in a resizable pane below, every tool call in a live line at the bottom.</p>
+        <ul><li>Fleet numbers as one status bar instead of four chart tiles</li><li>j/k, / to filter, m to message, a for activity, [ ] for tabs</li><li>The ctOS touch lives in the data: readouts, the run name resolving in</li></ul>
+        <span class="go">Open Console</span>
+      </div>
+    </a>
+    <a class="dir" href="c-wall.html">
+      <div class="sch c" aria-hidden="true"><div></div><div class="band"></div><div class="tiles"><div class="warn"><i></i><i></i><i></i></div><div><i></i><i></i><i></i></div><div><i></i><i></i><i></i></div></div><div class="tiles"><div><i></i><i></i><i></i></div><div class="warn"><i></i><i></i><i></i></div><div style="background:none"></div></div><div></div></div>
+      <div class="txt">
+        <h2>Wall <span>C</span></h2>
+        <p>Every live run is a tile with its last tool calls scrolling by and its latest finding. Throughput is one stacked band across the top.</p>
+        <ul><li>Answer an agent's question right on its tile</li><li>A run opens as a sheet over the wall; Esc closes it</li><li>Each run keeps its own colour, from the band to its tile</li></ul>
+        <span class="go">Open Wall</span>
+      </div>
+    </a>
+  </div>
+
+  <h3>What changes in all three</h3>
+  <ul class="shared">
+    <li><b>One place per run</b>The side panel and the separate run page showed the same things twice. Now there is one run view with tabs.</li>
+    <li><b>Controls you can scan</b>The row of twelve buttons becomes Pause, Stop and a ⋯ menu. Model and API key are values you click to change.</li>
+    <li><b>Fleet numbers stay small</b>Tokens/s, spend, tokens today and memory shrink to one compact readout. The full charts stay on Stats.</li>
+    <li><b>What needs you comes first</b>Questions, failures and recoveries are sorted to the top and say what happened. You answer questions in place, with 1–3 on the keyboard.</li>
+    <li><b>PROGRESS.md leads</b>It's the first thing in a run, with lines added since you last looked highlighted and a Changes view.</li>
+    <li><b>Monospace only for data</b>Commands, paths and numbers stay monospace. Labels and headings go back to normal type, without the spaced-out capitals.</li>
+  </ul>
+  <p class="note">Working in all three: runs, run detail with every tab, ⌘K, the actions menu, model and key menus, answering questions, messaging, renaming (double-click the name), New run and Activity. Models, Stats, Knowledge, Templates and Settings are not mocked. Files are in <code>ai/mockups/</code>.</p>
+</div>
+<script>try { const t = localStorage.getItem("pixel-mock-theme"); if (t && t !== "system") document.documentElement.setAttribute("data-theme", t); } catch {}</script>

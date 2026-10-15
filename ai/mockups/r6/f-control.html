@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pixel · F Control room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="kit.css">
+<script src="shared.js"></script>
+<script src="kit.js"></script>
+<style>
+/* F: one screen, no page scroll, made to stay open on a second monitor. Every live run gets a big tile that
+   fills the screen: what each agent runs now, the latest PROGRESS.md lines, 30 minutes of swimlanes and a
+   reply box. Grey by default; colour only where something needs you. Enter zooms a run in place; the other
+   runs keep streaming in a column on the right. Finished runs sit in a tray at the bottom. */
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 18px; height: 50px; flex: none; border-bottom: 1px solid var(--line); background: var(--tile); }
+.bar .brand { font-size: 16px; }
+.bar .counts { display: flex; gap: 6px; }
+.bar .cnt { height: 28px; font-size: 13px; box-shadow: none; background: var(--tile-2); }
+.bar .cnt.warn { background: var(--warn-bg); } .bar .cnt.info { background: var(--info-bg); }
+.bar .readouts { gap: 18px; }
+.bar .clock { font: 500 14px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.bar .right { margin-left: 0; display: flex; gap: 6px; align-items: center; }
+.bar .search { width: 36px; padding: 0; justify-content: center; height: 32px; }
+.bar .search span, .bar .search kbd { display: none; }
+.bar .btn { height: 32px; }
+.stage { flex: 1; min-height: 0; padding-block: 12px; display: grid; gap: 12px; }
+.stage { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); }
+.stage.zoom { grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); }
+.zoomed { min-height: 0; border-radius: 16px; box-shadow: var(--lift); overflow: hidden; }
+.side-col { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; padding: 2px; }
+
+.ct { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.ct .t-h { padding-top: 12px; }
+.ct .now, .ct .t-body { margin-top: 10px; flex: none; }
+.ct .t-body .q { -webkit-line-clamp: 4; }
+.ct .mid { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 10px; padding: 10px 16px 0; }
+.pex { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.45; }
+.pex li { display: grid; grid-template-columns: 5.6em minmax(0, 1fr); gap: 8px; padding: 1px 4px; border-radius: 5px; }
+.pex li.new { background: var(--accent-bg); }
+.pex .sec { font-size: 11.5px; color: var(--ink-3); padding-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pex .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pex code { font-size: 11.5px; background: var(--tile-2); padding: 0 4px; border-radius: 4px; }
+.ct .lanes-w .x-lane { grid-template-columns: 84px minmax(0, 1fr); }
+.ct .lanes-w .x-lane-n { font-size: 11.5px; color: var(--ink-3); }
+.ct .t-find { min-height: 0; padding-top: 8px; }
+.ct .t-f { padding-bottom: 8px; }
+.ghost { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed var(--line); border-radius: 16px; color: var(--ink-3); background: none; font-size: 13.5px; }
+.ghost:hover { border-color: var(--ink-3); color: var(--ink); }
+.ghost b { font-size: 15px; color: var(--ink-2); }
+.tray { display: flex; align-items: center; gap: 8px; height: 50px; flex: none; border-top: 1px solid var(--line); background: var(--tile); overflow-x: auto; scrollbar-width: none; }
+.tray .lab { font-size: 12.5px; font-weight: 600; color: var(--ink-3); flex: none; }
+.tray .tr { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 6px 0 10px; border-radius: 10px; background: var(--tile-2); flex: none; font-size: 13px; border: 0; }
+.tray .tr:hover { background: var(--hover); }
+.tray .tr .st { color: var(--ink-3); font-size: 12.5px; }
+.tray .keys { margin-left: auto; flex: none; }
+.blank { padding: 40px 24px; text-align: center; color: var(--ink-3); }
+@media (max-width: 900px) {
+  body { overflow: auto; display: block; height: auto; }
+  .bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; flex-wrap: wrap; height: auto; padding-block: 8px; }
+  .bar .readouts { display: none; }
+  .stage, .stage.zoom { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .ct { min-height: 460px; }
+  .side-col { display: none; }
+  .zoomed { height: calc(100dvh - 120px); }
+  .tray { position: sticky; bottom: 0; }
+  .tray .keys { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="bar gut" id="bar"></header>
+<main class="stage gut" id="stage" aria-label="Live runs"></main>
+<footer class="tray gut" id="tray" aria-label="Finished runs"></footer>
+<script>
+(function () {
+  "use strict";
+  const { runs, find, name, isLive, on, fmt, r: R } = PX;
+  const { esc, money, tok } = fmt;
+  const st = { zoom: null, tab: "overview", mode: "text", file: null, sel: null };
+  const $ = (s) => document.querySelector(s);
+  const order = (list) => list.slice().sort((a, b) => a.started - b.started);
+  const wallRuns = () => order(runs.filter((r) => isLive(r) || ["failed", "stopped", "paused"].includes(r.status)));
+  const finRuns = () => runs.filter((r) => ["done", "triaged"].includes(r.status)).sort((a, b) => (b.finished || 0) - (a.finished || 0));
+  const time = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+  function bar() {
+    const fl = PX.fleet();
+    const live = runs.filter(isLive).length;
+    const needs = runs.filter((r) => r.question || ["failed", "stopped"].includes(r.status)).length;
+    const tri = K.untriaged().length;
+    const hist = Array.from({ length: 90 }, (_, i) => runs.reduce((a, r) => a + (r.tpsHist[i] || 0), 0));
+    $("#bar").innerHTML = `<div class="brand">${K.brand}Pixel</div>
+      <div class="counts"><span class="cnt"><span class="x-dot" data-s="running"></span><b>${live}</b> live</span>${needs ? `<span class="cnt warn"><b>${needs}</b> need you</span>` : ""}${tri ? `<button type="button" class="cnt info" data-act="findings"><b>${tri}</b> to triage</button>` : ""}</div>
+      <div class="readouts"><span class="ro">${R.spark(hist, 90, 20)}<b>${Math.round(fl.tps)}</b> tok/s</span><span class="ro"><b>${tok(fl.tokensToday)}</b> today</span><span class="ro"><b>${money(fl.spend)}</b> → ${money(fl.projected)}</span><span class="ro"><b>${fl.memUsed.toFixed(1)}</b>/ ${fl.memTotal} GB</span><span class="clock" id="clock">${time()}</span></div>
+      <div class="right"><button type="button" class="btn sm" id="pages" aria-haspopup="menu">Pages</button><button class="search" id="search" aria-label="Search and commands" title="⌘K"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span></span><kbd></kbd></button><button class="btn sm primary" id="newrun"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New run</button></div>`;
+  }
+  function lanes(r) { return isLive(r) && r.agents.length ? `<div class="lanes-w">${R.lanes(r, 30).replace(/60 min ago/, "30 min ago").replace(/>30</, ">15<")}</div>` : ""; }
+  function bigTile(r) {
+    const h = K.health(r);
+    const normal = r.status === "running" && !r.question;
+    return `<article class="tile ct" data-run="${r.id}" data-tone="${h.frame}" tabindex="0" aria-selected="${st.sel === r.id}" aria-label="${esc(name(r))}, ${esc(h.st)}">
+      <div class="t-h">${K.chip(r)}<div class="t-name"><span>${esc(name(r))}</span>${r.unseen ? '<i class="unseen"></i>' : ""}</div><div class="t-acts" style="opacity:1">${K.tileActs(r)}<button type="button" class="btn xs icon ghost" data-act="expand" data-run="${r.id}" title="Zoom (Enter)" aria-label="Zoom">${K.icon.expand}</button></div>
+        <div class="t-sub"><span class="st" data-tone="${h.tone}">${esc(h.st)}</span><span class="meta">· ${esc(PX.repoShort(r))} · ${esc(fmt.shortModel(r.model))} · ${fmt.dur(Date.now() - r.started)}</span></div></div>
+      ${K.tileBody(r, h)}
+      <div class="mid">${normal ? K.progressExcerpt(r, 4, { skipFound: true }) : ""}${lanes(r)}</div>
+      <div class="t-find" data-slot="find">${K.tileFind(r, h, { headline: !normal })}</div>
+      <div class="t-f" data-slot="foot">${K.tileFoot(r)}</div>
+      <form class="t-reply" data-reply="${r.id}"><input id="reply-${r.id}" name="msg" placeholder="Message ${esc(name(r))}" autocomplete="off" aria-label="Message ${esc(name(r))}"></form>
+    </article>`;
+  }
+  function tray() {
+    const f = finRuns();
+    $("#tray").innerHTML = `<span class="lab">Finished</span>${f.map((r) => { const n = K.findingsOf(r.id).filter((x) => !x.verdict).length; return `<button type="button" class="tr" data-act="${r.status === "done" ? "triage" : "open"}" data-run="${r.id}">${K.chip(r)}${esc(name(r))}<span class="st">${r.status === "done" ? "report ready" : "triaged · " + esc(r.verdict)}</span>${n ? `<span class="sev" data-sev="${K.findingsOf(r.id)[0].sev}">${n} to triage</span>` : ""}</button>`; }).join("")}
+      <span class="keys"><span><kbd>←</kbd><kbd>→</kbd> move</span><span><kbd>↵</kbd> zoom</span><span><kbd>m</kbd> message</span><span><kbd>1</kbd>–<kbd>3</kbd> answer</span><span><kbd>f</kbd> findings</span></span>`;
+  }
+  function keep(fn) {
+    const vals = {};
+    document.querySelectorAll("#stage input[id], #stage textarea[id]").forEach((el) => (vals[el.id] = el.value));
+    const ae = document.activeElement;
+    const focus = ae?.id || (ae?.classList?.contains("tile") ? "tile:" + ae.dataset.run : null);
+    const db = $("#stage .db"), top = db ? db.scrollTop : 0;
+    fn();
+    for (const [id, v] of Object.entries(vals)) { const el = document.getElementById(id); if (el) el.value = v; }
+    const nb = $("#stage .db"); if (nb && db) nb.scrollTop = top;
+    if (focus?.startsWith("tile:")) document.querySelector(`.tile[data-run="${focus.slice(5)}"]`)?.focus({ preventScroll: true });
+    else if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
+  }
+  function render() {
+    keep(() => {
+      bar(); tray();
+      const w = wallRuns();
+      const stage = $("#stage");
+      if (st.zoom && find(st.zoom)) {
+        const r = find(st.zoom);
+        stage.className = "stage gut zoom";
+        stage.innerHTML = `<section class="detail zoomed" aria-label="${esc(name(r))}">${K.detail(r, st, { expand: "collapse" })}</section><aside class="side-col" aria-label="Other runs">${[...w, ...finRuns()].map((x) => K.mini(x, x.id === r.id)).join("")}</aside>`;
+      } else {
+        st.zoom = null;
+        const n = w.length + 1;
+        const cols = n <= 2 ? n : n <= 4 ? 2 : n <= 6 ? 3 : 4;
+        stage.className = "stage gut";
+        stage.style.setProperty("--cols", cols);
+        stage.style.setProperty("--rows", Math.ceil(n / cols));
+        stage.innerHTML = w.map(bigTile).join("") + `<button type="button" class="ghost" id="ghost"><b>+ New run</b><span>Room for ${Math.max(0, 6 - w.length)} more at this size</span></button>`;
+      }
+    });
+  }
+  function zoom(id, o = {}) { const fresh = st.zoom !== id; st.zoom = id; st.sel = id; st.tab = o.tab || "overview"; st.file = o.file || null; const r = find(id); if (r?.unseen) setTimeout(() => PX.act(id, "seen"), 4000); render(); if (fresh) K.decrypt($("#stage h1")); }
+  function unzoom() { const id = st.zoom; st.zoom = null; render(); document.querySelector(`.tile[data-run="${id}"]`)?.focus(); }
+  function newRun(pre = {}) {
+    const d = K.dialog(`<h2>New run</h2>${PX.newRunForm(pre)}`, "New run");
+    PX.bindNewRun(d.el.querySelector("form"), (id) => { d.close(); render(); }, d.close);
+    d.el.querySelector("#nr-repo").focus();
+  }
+  function findingsDialog() {
+    const d = K.dialog(`<h2>Findings <span style="font-weight:400;color:var(--ink-3);font-size:14px">${K.untriaged().length} to triage</span></h2>${K.findingsTable(null)}`, "Findings");
+  }
+  function openFinding(id) {
+    document.querySelector(".scrim-c")?.remove();
+    const f = K.fById(id);
+    const d = K.dialog(`<div style="margin:-20px -24px">${K.findingCard(f)}</div>`, f.title);
+    on("change", (e) => { if (e.finding === id && document.body.contains(d.el)) d.el.querySelector(".card-dlg").innerHTML = `<div style="margin:-20px -24px">${K.findingCard(f)}</div>`; });
+  }
+  PX.ui = {
+    openRun: (id, o) => zoom(id, o), newRun, close: unzoom, expand: (id) => zoom(id), collapse: unzoom, openFinding,
+    openPage: (p) => { if (p === "Findings") findingsDialog(); else PX.toast(`${p} isn't part of this mockup`); },
+    message: (id) => { if (st.zoom) document.getElementById("compose-" + id)?.focus() || (st.zoom !== id && zoom(id)); else document.getElementById("reply-" + id)?.focus(); },
+    current: () => st.zoom || st.sel,
+    setTab: (t) => { st.tab = t; render(); $("#stage .db").scrollTop = 0; },
+    setMode: (m) => { st.mode = m; render(); },
+    openFile: (p) => { st.file = p; render(); },
+    rename: (id) => { if (st.zoom !== id) zoom(id); K.rename(id, $("#stage h1")); },
+  };
+
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#search")) return PX.palette();
+    if (e.target.closest("#newrun, #ghost")) return newRun();
+    const pg = e.target.closest("#pages");
+    if (pg) return PX.menu(pg, ["Findings", "Activity", "Models", "Stats", "Knowledge", "Templates", "Settings", "System"].map((p) => ({ label: p, on: () => PX.ui.openPage(p) })));
+    if (e.target.closest("button, a, input, textarea, select, form, .x-menu")) return;
+    const t = e.target.closest(".tile");
+    if (t) zoom(t.dataset.run, { tab: st.zoom ? st.tab : "overview" });
+  });
+  const cols = () => +getComputedStyle($("#stage")).getPropertyValue("--cols") || 1;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && st.zoom && !document.querySelector(".x-pal, .scrim-c, .x-menu, .x-dialog-scrim") && !e.target.closest("input, textarea")) { e.preventDefault(); return unzoom(); }
+    if (!K.plainKey(e) || document.querySelector(".scrim-c")) return;
+    const list = [...document.querySelectorAll("#stage .tile")];
+    const ids = list.map((x) => x.dataset.run);
+    let i = ids.indexOf(st.zoom || st.sel);
+    const step = st.zoom ? { ArrowDown: 1, ArrowUp: -1, j: 1, k: -1 }[e.key] : { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols(), ArrowUp: -cols(), j: 1, k: -1 }[e.key];
+    if (step) {
+      e.preventDefault();
+      i = Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + step));
+      if (st.zoom) return zoom(ids[i], { tab: st.tab });
+      st.sel = ids[i];
+      list.forEach((t) => t.setAttribute("aria-selected", t.dataset.run === st.sel));
+      return list[i].focus();
+    }
+    if (e.key === "Enter" && st.sel && !st.zoom) { e.preventDefault(); return zoom(st.sel); }
+    if (e.key === "m" || e.key === "/") { const id = st.zoom || st.sel; if (id) { e.preventDefault(); PX.ui.message(id); } return; }
+    if (e.key === "n") { e.preventDefault(); return newRun(); }
+    if (e.key === "f") { e.preventDefault(); return findingsDialog(); }
+  });
+
+  on("tick", (ev) => {
+    if (st.zoom) {
+      const m = document.querySelector(`.side-col .tile[data-run="${ev.run}"]`);
+      if (m) m.outerHTML = K.mini(find(ev.run), ev.run === st.zoom);
+      const ag = document.querySelector('#stage [data-slot="agents"]');
+      if (ag && ev.run === st.zoom) ag.innerHTML = K.agentsCard(find(ev.run));
+      return;
+    }
+    const el = document.querySelector(`#stage .tile[data-run="${ev.run}"]`);
+    if (!el) return;
+    K.patchTile(el, find(ev.run));
+    el.querySelector(`.now li[data-agent="${ev.agent}"]`)?.classList.add("flash");
+    const lw = el.querySelector(".lanes-w");
+    if (lw) lw.outerHTML = lanes(find(ev.run));
+  });
+  on("rates", () => {
+    keep(bar);
+    if (!st.zoom) document.querySelectorAll("#stage .tile").forEach((el) => K.patchTile(el, find(el.dataset.run)));
+  });
+  setInterval(() => { const c = $("#clock"); if (c) c.textContent = time(); }, 1000);
+  on("change", render);
+  on("minute", render);
+  on("theme", render);
+
+  const h = location.hash.slice(1);
+  if (h && find(h)) st.zoom = st.sel = h;
+  render();
+  K.switcher("f");
+  PX.start();
+})();
+</script>
+</body>
+</html>

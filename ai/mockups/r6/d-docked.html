@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pixel · D Docked wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="kit.css">
+<script src="shared.js"></script>
+<script src="kit.js"></script>
+<style>
+/* D: the Wall stays the home page. Opening a run docks it: the wall shrinks into a live rail on the left
+   and the run fills the rest, so you never lose sight of the other runs. Esc goes back to the full wall. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 370px), 1fr)); gap: 14px; }
+.wallv { padding-bottom: 80px; }
+.dock { display: none; }
+body.docked .wallv { display: none; }
+body.docked .dock { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; height: calc(100dvh - 58px - env(safe-area-inset-top, 0px)); padding-bottom: 12px; }
+.rail { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 70px 2px; scrollbar-width: thin; }
+.rail h3 { margin: 10px 2px 2px; font-size: 12.5px; font-weight: 600; color: var(--ink-3); display: flex; gap: 8px; }
+.rail h3:first-child { margin-top: 2px; }
+.dock .detail { border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+.pagev { display: none; padding-bottom: 80px; }
+body.page .wallv, body.page .dock { display: none; }
+body.page .pagev { display: block; }
+.ph { display: flex; align-items: baseline; gap: 12px; margin: 14px 0 12px; }
+.ph h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.ph span { color: var(--ink-3); }
+.blank { padding: 48px 24px; text-align: center; color: var(--ink-3); background: var(--tile); border-radius: 16px; box-shadow: var(--shadow); }
+.back { display: none; }
+@media (max-width: 900px) {
+  body.docked .dock { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+  .back { display: inline-flex; }
+}
+</style>
+</head>
+<body>
+<header class="top gut">
+  <div class="brand" id="brand"></div>
+  <nav class="nav" id="nav" aria-label="Pages"></nav>
+  <div class="right">
+    <button class="search" id="search" aria-label="Search and commands"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Jump to a run…</span><kbd>⌘K</kbd></button>
+    <button class="btn primary" id="newrun"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New run</button>
+  </div>
+</header>
+<main class="wallv gut" id="wallv">
+  <section class="strip" id="strip" aria-label="Fleet"></section>
+  <div class="sec-t"><h2>Live</h2><span id="live-n"></span><div class="right keys"><span><kbd>←</kbd><kbd>→</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>m</kbd> message</span><span><kbd>1</kbd>–<kbd>3</kbd> answer</span></div></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="sec-t"><h2>Finished</h2><span id="fin-n"></span></div>
+  <div class="list" id="finished"></div>
+</main>
+<main class="dock gut" id="dock">
+  <aside class="rail" id="rail" aria-label="Runs"></aside>
+  <section class="detail" id="detail" aria-label="Run"></section>
+</main>
+<main class="pagev gut" id="pagev"></main>
+<script>
+(function () {
+  "use strict";
+  const { runs, find, name, isLive, fmt, on } = PX;
+  const st = { view: "wall", run: null, tab: "overview", mode: "text", file: null, sel: null, finding: null };
+  const PAGES = ["Runs", "Findings", "Activity", "Models", "Stats", "Knowledge", "Templates", "Settings"];
+  const $ = (s) => document.querySelector(s);
+  $("#brand").innerHTML = K.brand + "Pixel";
+
+  const order = (list) => list.slice().sort((a, b) => a.started - b.started); // stable positions: a tile never jumps
+  const wallRuns = () => order(runs.filter((r) => isLive(r) || ["failed", "stopped", "paused"].includes(r.status)));
+  const finRuns = () => runs.filter((r) => ["done", "triaged"].includes(r.status)).sort((a, b) => (b.finished || 0) - (a.finished || 0));
+
+  function nav() {
+    const cur = st.view === "wall" || st.view === "run" ? "Runs" : st.view;
+    const n = K.untriaged().length;
+    $("#nav").innerHTML = PAGES.map((p) => `<button type="button" data-page="${p}" ${p === cur ? 'aria-current="page"' : ""}>${p}${p === "Findings" && n ? `<span class="n warn">${n}</span>` : ""}</button>`).join("");
+  }
+
+  // keep typed text, focus and scroll across re-renders
+  function keep(fn) {
+    const vals = {};
+    document.querySelectorAll("main input[id], main textarea[id]").forEach((el) => (vals[el.id] = el.value));
+    const focus = document.activeElement?.id || (document.activeElement?.dataset?.run && document.activeElement.classList.contains("tile") ? "tile:" + document.activeElement.dataset.run : null);
+    const db = $("#detail .db"), top = db ? db.scrollTop : 0, rail = $("#rail").scrollTop;
+    fn();
+    for (const [id, v] of Object.entries(vals)) { const el = document.getElementById(id); if (el) el.value = v; }
+    const nb = $("#detail .db"); if (nb && db) nb.scrollTop = top;
+    $("#rail").scrollTop = rail;
+    if (focus?.startsWith("tile:")) document.querySelector(`.tile[data-run="${focus.slice(5)}"]`)?.focus({ preventScroll: true });
+    else if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
+  }
+
+  function render() {
+    keep(() => {
+      document.body.classList.toggle("docked", st.view === "run");
+      document.body.classList.toggle("page", !["wall", "run"].includes(st.view));
+      nav();
+      if (st.view === "wall") {
+        $("#strip").innerHTML = K.strip({ catchupBtn: true });
+        const w = wallRuns();
+        $("#live-n").textContent = w.length;
+        $("#tiles").innerHTML = w.map((r) => K.tile(r, { sel: st.sel === r.id })).join("");
+        const f = finRuns();
+        $("#fin-n").textContent = f.length;
+        $("#finished").innerHTML = f.map((r) => K.lrow(r, false)).join("");
+      } else if (st.view === "run") {
+        const r = find(st.run);
+        if (!r) { st.view = "wall"; return render(); }
+        const w = wallRuns(), f = finRuns();
+        $("#rail").innerHTML = `<h3>Live <span>${w.length}</span></h3>${w.map((x) => K.mini(x, x.id === r.id)).join("")}<h3>Finished <span>${f.length}</span></h3>${f.map((x) => K.mini(x, x.id === r.id)).join("")}`;
+        $("#detail").innerHTML = K.detail(r, st, { close: true });
+        $("#detail .dh-top").insertAdjacentHTML("afterbegin", `<button type="button" class="btn sm icon back" data-act="close" aria-label="Back to the wall">←</button>`);
+      } else if (st.view === "Findings") {
+        $("#pagev").innerHTML = `<div class="ph"><h1>Findings</h1><span>${K.untriaged().length} to triage across ${new Set(K.untriaged().map((f) => f.run)).size} runs</span></div>${K.findingsTable(null)}`;
+      } else {
+        $("#pagev").innerHTML = `<div class="ph"><h1>${st.view}</h1></div><div class="blank">${st.view} isn't part of this mockup. It keeps the layout of today's page in the new style.</div>`;
+      }
+    });
+  }
+
+  function openRun(id, o = {}) {
+    const fresh = st.run !== id || st.view !== "run";
+    st.view = "run"; st.run = id; st.sel = id;
+    st.tab = o.tab || (st.run === id && st.view === "run" ? st.tab : "overview");
+    st.file = o.file || null;
+    if (o.tab) st.tab = o.tab;
+    const r = find(id);
+    if (r && r.unseen && st.tab === "overview") setTimeout(() => PX.act(id, "seen"), 4000);
+    render();
+    if (fresh) K.decrypt($("#detail h1"));
+    try { history.replaceState(null, "", "#" + id); } catch {}
+    window.scrollTo(0, 0);
+  }
+  function close() { const id = st.run; st.view = "wall"; st.run = null; render(); try { history.replaceState(null, "", location.pathname); } catch {} document.querySelector(`.tile[data-run="${id}"]`)?.focus(); }
+  function openPage(p) { if (p === "Runs") return close(); st.view = p; st.run = null; render(); window.scrollTo(0, 0); }
+  function newRun(pre = {}) {
+    const d = K.dialog(`<h2>New run</h2>${PX.newRunForm(pre)}`, "New run");
+    PX.bindNewRun(d.el.querySelector("form"), (id) => { d.close(); openRun(id); }, d.close);
+    d.el.querySelector("#nr-repo").focus();
+  }
+  function openFinding(id) {
+    const f = K.fById(id);
+    const d = K.dialog(`<div style="margin:-20px -24px">${K.findingCard(f)}</div>`, f.title);
+    const off = on("change", (e) => { if (e.finding === id && document.body.contains(d.el)) d.el.querySelector(".card-dlg").innerHTML = `<div style="margin:-20px -24px">${K.findingCard(f)}</div>`; });
+  }
+  function message(id) {
+    if (st.view !== "run" || st.run !== id) openRun(id);
+    document.getElementById("compose-" + id)?.focus();
+  }
+
+  PX.ui = {
+    openRun, newRun, close, openPage, openFinding, message,
+    current: () => st.run || st.sel,
+    setTab: (t) => { st.tab = t; render(); $("#detail .db").scrollTop = 0; },
+    setMode: (m) => { st.mode = m; render(); },
+    openFile: (p) => { st.file = p; render(); },
+    rename: (id) => { if (st.view !== "run" || st.run !== id) openRun(id); K.rename(id, $("#detail h1")); },
+    modelMenu: (id) => PX.modelMenu($('#detail [data-act="model"]'), id),
+    catchup: () => K.dialog(K.catchupHTML(), "Since you last looked"),
+  };
+
+  /* clicks on tiles and rows open the run; buttons inside them do their own thing */
+  document.addEventListener("click", (e) => {
+    const p = e.target.closest("[data-page]");
+    if (p) return openPage(p.dataset.page);
+    if (e.target.closest("button, a, input, textarea, select, form.t-body, .x-menu")) return;
+    const t = e.target.closest(".tile, .lrow");
+    if (t) openRun(t.dataset.run);
+  });
+  $("#search").addEventListener("click", PX.palette);
+  $("#newrun").addEventListener("click", () => newRun());
+
+  /* keyboard */
+  const cols = () => { const ts = [...document.querySelectorAll("#tiles .tile")]; if (ts.length < 2) return 1; const y = ts[0].offsetTop; return ts.filter((t) => t.offsetTop === y).length; };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && st.view === "run" && !document.querySelector(".x-pal, .scrim-c, .x-menu, .x-dialog-scrim") && !e.target.closest("input, textarea")) { e.preventDefault(); return close(); }
+    if (!K.plainKey(e) || document.querySelector(".scrim-c")) return;
+    const list = st.view === "run" ? [...document.querySelectorAll("#rail .tile")] : [...document.querySelectorAll("#tiles .tile, #finished .lrow")];
+    const ids = list.map((x) => x.dataset.run);
+    let i = ids.indexOf(st.view === "run" ? st.run : st.sel ?? document.activeElement?.dataset?.run);
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: st.view === "run" ? 1 : cols(), ArrowUp: st.view === "run" ? -1 : -cols(), j: 1, k: -1 }[e.key];
+    if (step) {
+      e.preventDefault();
+      i = Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + step));
+      if (st.view === "run") openRun(ids[i], { tab: st.tab });
+      else { st.sel = ids[i]; document.querySelectorAll("#tiles .tile, #finished .lrow").forEach((t) => t.setAttribute("aria-selected", t.dataset.run === st.sel)); list[i].focus(); }
+      return;
+    }
+    if (e.key === "Enter" && st.view === "wall" && st.sel) { e.preventDefault(); return openRun(st.sel); }
+    if (e.key === "m") { const id = st.run || st.sel; if (id) { e.preventDefault(); message(id); } return; }
+    if (e.key === "n") { e.preventDefault(); return newRun(); }
+    if (e.key === "f") { e.preventDefault(); return openPage("Findings"); }
+  });
+
+  /* live updates */
+  on("tick", (ev) => {
+    if (st.view === "wall") {
+      const el = document.querySelector(`#tiles .tile[data-run="${ev.run}"]`);
+      if (el) { K.patchTile(el, find(ev.run)); el.querySelector(`.now li[data-agent="${ev.agent}"]`)?.classList.add("flash"); }
+    } else if (st.view === "run") {
+      const m = document.querySelector(`#rail .tile[data-run="${ev.run}"]`);
+      if (m) m.outerHTML = K.mini(find(ev.run), ev.run === st.run);
+      const ag = document.querySelector('#detail [data-slot="agents"]');
+      if (ag && ev.run === st.run) ag.innerHTML = K.agentsCard(find(st.run));
+    }
+  });
+  on("rates", () => {
+    if (st.view !== "wall") return;
+    $("#strip").innerHTML = K.strip({ catchupBtn: true });
+    document.querySelectorAll("#tiles .tile").forEach((el) => K.patchTile(el, find(el.dataset.run)));
+  });
+  on("change", (e) => { if (!e.quiet || e.action === "message") render(); else render(); });
+  on("minute", render);
+  on("theme", render);
+
+  const h = location.hash.slice(1);
+  if (h === "findings") st.view = "Findings";
+  else if (h && find(h)) { st.view = "run"; st.run = st.sel = h; }
+  addEventListener("hashchange", () => { const x = location.hash.slice(1); if (x && find(x)) openRun(x); else if (x === "findings") openPage("Findings"); });
+  render();
+  K.switcher("d");
+  PX.start();
+})();
+</script>
+</body>
+</html>

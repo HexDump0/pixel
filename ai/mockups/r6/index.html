@@ -1,0 +1,182 @@
+<title>Pixel UI round 6</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="kit.css">
+<style>
+/* Notes page: one reading column, mockup cards up top, then the research behind them. Same tokens as the mockups. */
+body { background: var(--wall); color: var(--ink); }
+.page { max-width: 1120px; margin: 0 auto; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); padding-block: 36px 96px; }
+.hd { display: flex; flex-direction: column; gap: 12px; margin-bottom: 30px; }
+.hd .brand { font-size: 13px; color: var(--ink-2); }
+.hd h1 { margin: 0; font-size: clamp(28px, 4vw, 40px); font-weight: 600; letter-spacing: -.025em; line-height: 1.1; text-wrap: balance; }
+.hd p { margin: 0; max-width: 64ch; color: var(--ink-2); font-size: 15.5px; line-height: 1.6; }
+.hd .meta { font: 12px var(--mono); color: var(--ink-3); letter-spacing: .04em; }
+h2.s { display: flex; align-items: center; gap: 12px; margin: 52px 0 18px; font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: .14em; color: var(--ink-2); }
+h2.s::before { content: attr(data-n); color: var(--ink-3); }
+h2.s::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.card { display: flex; flex-direction: column; background: var(--tile); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; min-width: 0; }
+.card .shot { display: block; aspect-ratio: 16 / 10; overflow: hidden; border-bottom: 1px solid var(--line); background: var(--tile-2); }
+.card .shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+.card .body { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 18px; flex: 1; }
+.card .k { font: 600 11px var(--mono); letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; }
+.card h3 { margin: 0; font-size: 20px; letter-spacing: -.015em; }
+.card p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+.card .best { font-size: 13px; color: var(--ink-3); }
+.card .best b { color: var(--ink-2); font-weight: 500; }
+.card .go { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; padding-top: 6px; }
+.card .go a { text-decoration: none; }
+.more-shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.more-shots figure { margin: 0; background: var(--tile); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.more-shots img { display: block; width: 100%; height: auto; }
+.more-shots figcaption { padding: 10px 14px; font-size: 13px; color: var(--ink-2); border-top: 1px solid var(--line); }
+.jobs { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tw { overflow-x: auto; background: var(--tile); border: 1px solid var(--line); border-radius: 6px; }
+.jobs th, .jobs td { text-align: left; vertical-align: top; padding: 11px 14px; border-top: 1px solid var(--line-2); }
+.jobs thead th { border-top: 0; font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); background: var(--tile-2); white-space: nowrap; }
+.jobs td:first-child { font-weight: 600; white-space: nowrap; }
+.jobs td.often { font: 12.5px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.jobs td { color: var(--ink-2); line-height: 1.5; }
+.jobs td:first-child { color: var(--ink); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.box { background: var(--tile); border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px; min-width: 0; }
+.box h3 { margin: 0 0 10px; font: 600 11.5px var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-2); }
+ul.l { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+ul.l li { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); font-size: 14.5px; line-height: 1.55; color: var(--ink-2); }
+ul.l li::before { content: "─"; font-family: var(--mono); color: var(--ink-3); }
+ul.l li b { color: var(--ink); font-weight: 600; }
+ul.l.fix li::before { content: "→"; color: var(--ok); }
+ul.l.bad li::before { content: "×"; color: var(--warn); }
+.res { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--tile); }
+.res article { display: grid; grid-template-columns: 2.6em minmax(0, 1fr) minmax(0, 1fr); gap: 4px 20px; padding: 16px 20px; border-top: 1px solid var(--line-2); }
+.res article:first-child { border-top: 0; }
+.res .n { font: 600 12px var(--mono); color: var(--ink-3); padding-top: 3px; }
+.res h3 { margin: 0 0 4px; font-size: 15.5px; letter-spacing: -.005em; }
+.res p { margin: 0; font-size: 14px; color: var(--ink-2); line-height: 1.55; }
+.res .src { font: 12px var(--mono); color: var(--ink-3); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.res .src a { color: var(--ink-2); text-underline-offset: 3px; text-decoration-style: dotted; }
+.res .so { font-size: 14px; color: var(--ink); line-height: 1.55; }
+.res .so::before { content: "IN THE MOCKUPS  "; font: 600 10.5px var(--mono); letter-spacing: .12em; color: var(--ok); display: block; margin-bottom: 4px; }
+pre.fmt { margin: 10px 0 0; padding: 12px 14px; background: var(--term-bg); color: var(--term-ink); border-radius: 4px; font: 12.5px/1.6 var(--mono); overflow-x: auto; }
+.ask { background: var(--tile); border: 1px solid var(--ink-3); border-radius: 6px; padding: 18px 20px; font-size: 15px; line-height: 1.6; }
+.ask p { margin: 0 0 8px; } .ask p:last-child { margin: 0; }
+code { font: .88em var(--mono); background: var(--tile-2); padding: 1px 5px; border-radius: 3px; }
+a { color: var(--ink); }
+@media (max-width: 980px) { .cards { grid-template-columns: minmax(0, 1fr); } .two, .more-shots { grid-template-columns: minmax(0, 1fr); } .res article { grid-template-columns: 2em minmax(0, 1fr); } .res .so { grid-column: 2; } }
+@media (max-width: 600px) { .page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); } }
+</style>
+
+<div class="page">
+  <header class="hd">
+    <div class="brand"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><rect x="0" y="0" width="9" height="9" rx="0.5" style="fill:var(--r0)"/><rect x="11" y="0" width="9" height="9" rx="0.5" style="fill:var(--r1)"/><rect x="0" y="11" width="9" height="9" rx="0.5" style="fill:var(--r3)"/><rect x="11" y="11" width="9" height="9" rx="0.5" style="fill:var(--ink)"/></svg>&nbsp; PIXEL // UI ROUND 6</div>
+    <h1>Three dark takes on the Wall, built to be used</h1>
+    <p>All three keep the Wall you liked and fix what made it hard to use. They share the same fake runs with tool calls streaming in, and everything in them is clickable: answering, messaging, pausing, renaming, triage, ⌘K and the keyboard.</p>
+    <div class="meta">2026-10-14 · plain HTML/CSS/JS in ai/mockups/r6/ · dark by default, light from the switcher at the bottom</div>
+  </header>
+
+  <h2 class="s" data-n="01">Pick one</h2>
+  <div class="cards">
+    <article class="card">
+      <a class="shot" href="d-docked.html" aria-label="Open D"><img src="shots/d-wall.png" alt="D: wall of run tiles, dark" loading="lazy"></a>
+      <div class="body"><span class="k">D · Docked wall</span><h3>The Wall, and a run docks beside it</h3>
+        <p>The wall is home. Open a run and the wall shrinks into a live rail on the left while the run takes the rest of the screen, so you never lose sight of the others. Esc goes back.</p>
+        <p class="best"><b>Best if</b> you mostly watch and dig into one run at a time. Closest to what you liked.</p>
+        <div class="go"><a class="btn sm primary" href="d-docked.html">Open D</a><a class="btn sm" href="d-docked.html#libpng-2026-10-14">Open with a run docked</a></div></div>
+    </article>
+    <article class="card">
+      <a class="shot" href="e-findings.html" aria-label="Open E"><img src="shots/e-wall.png" alt="E: since-you-last-looked list above the wall" loading="lazy"></a>
+      <div class="body"><span class="k">E · Wall + findings</span><h3>Catch up, then triage</h3>
+        <p>The same wall, with what changed since you last looked on top and a reply box on every tile. A run opens as a side panel that pushes the wall over. Findings gets its own page: every finding from every run, one key per verdict.</p>
+        <p class="best"><b>Best if</b> you check in a few times a day and the findings are what you care about.</p>
+        <div class="go"><a class="btn sm primary" href="e-findings.html">Open E</a><a class="btn sm" href="e-findings.html#findings">Open the findings page</a></div></div>
+    </article>
+    <article class="card">
+      <a class="shot" href="f-control.html" aria-label="Open F"><img src="shots/f-room.png" alt="F: full-screen grid of big run tiles" loading="lazy"></a>
+      <div class="body"><span class="k">F · Control room</span><h3>One screen, nothing to scroll</h3>
+        <p>Made to stay open on a second monitor. Each live run is a big tile with what every agent runs now, the latest PROGRESS.md lines, 30 minutes of swimlanes and a reply box. Enter zooms a run in place; the rest keep streaming at the side.</p>
+        <p class="best"><b>Best if</b> Pixel lives on its own screen. Could also be a "room" mode inside D or E.</p>
+        <div class="go"><a class="btn sm primary" href="f-control.html">Open F</a><a class="btn sm" href="f-control.html#libpng-2026-10-14">Open zoomed in</a></div></div>
+    </article>
+  </div>
+  <div class="more-shots">
+    <figure><img src="shots/d-run.png" alt="D with the libpng run docked next to the rail" loading="lazy"><figcaption>D with a run open: the rail keeps every run live, the run gets the rest.</figcaption></figure>
+    <figure><img src="shots/e-findings.png" alt="E findings page with list and evidence pane" loading="lazy"><figcaption>E's findings page: severity, evidence, PoC and repro, then R / N / D / W and on to the next.</figcaption></figure>
+  </div>
+
+  <h2 class="s" data-n="02">What Pixel is used for</h2>
+  <div class="tw"><table class="jobs">
+    <thead><tr><th>Job</th><th>How often</th><th>What it needs</th><th>Where it is now</th></tr></thead>
+    <tbody>
+      <tr><td>Glance</td><td class="often">many times a day · 2 s</td><td>Calm when things are fine, obvious when they aren't.</td><td>Status word and flags on each tile; colour only for waiting, recovering and failed.</td></tr>
+      <tr><td>Catch up</td><td class="often">once or twice a day · 30 s</td><td>What changed per run while you were away, findings first.</td><td>E: list on top of the wall. D: "since you looked" button. All: dots on runs whose PROGRESS.md changed.</td></tr>
+      <tr><td>Step in</td><td class="often">a few times a day · 10 s</td><td>Answer, message, retry or resume without leaving the overview.</td><td>Answers and Retry on the tile, <kbd>1</kbd>–<kbd>3</kbd> to answer, <kbd>m</kbd> to message, reply box on tiles in E and F.</td></tr>
+      <tr><td>Dig in</td><td class="often">daily · minutes</td><td>Transcript, files, terminal for one run while the others stay visible.</td><td>D dock, E side panel, F zoom. Same run view in all three.</td></tr>
+      <tr><td>Triage</td><td class="often">after each run</td><td>Go through findings one by one with the evidence in front of you. This is the output of the whole tool.</td><td>Findings tab in every run; E adds a page across all runs.</td></tr>
+      <tr><td>Start a run</td><td class="often">rare</td><td>The form, with sensible defaults.</td><td>Unchanged (New run, <kbd>n</kbd>, ⌘K).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 class="s" data-n="03">What made the Wall hard to use</h2>
+  <div class="two">
+    <div class="box"><h3>Problems</h3><ul class="l bad">
+      <li><span>The run opened as a sheet <b>over</b> the wall, so reading one run hid all the others.</span></li>
+      <li><span>The tile log mixed every agent, faded older lines and cut names to "differ…". You couldn't tell what each agent was doing.</span></li>
+      <li><span>Nothing told you a run was going wrong: PROGRESS.md gone quiet, context filling up, continues used up.</span></li>
+      <li><span>Findings only existed as text in PROGRESS.md and REPORT.md, and triage was one verdict for a whole run.</span></li>
+      <li><span>The throughput band took the best spot on the page, and you can't act on it.</span></li>
+      <li><span>Coloured top borders on rounded cards, light grey everywhere.</span></li>
+    </ul></div>
+    <div class="box"><h3>Fixes, in all three</h3><ul class="l fix">
+      <li><span>Runs open <b>beside</b> the wall (dock, panel or zoom) and the other runs keep updating.</span></li>
+      <li><span>One line per agent: <code>├─ Fuzz iCCP  bash ./fuzz/run.sh …  9s</code>, with how long the step has run.</span></li>
+      <li><span>Flags appear only when true: quiet PROGRESS.md, context over 55 %, 2 of 3 continues, OOM restarts.</span></li>
+      <li><span>Findings are their own items with severity, file:line, evidence, PoC, repro and a verdict each.</span></li>
+      <li><span>Fleet numbers in one line with a text sparkline.</span></li>
+      <li><span>No coloured borders. State shows in the status word and in the tinted panel for a question, a recovery or a failure. Tiles keep their place (by start time) so you learn where each run is.</span></li>
+    </ul></div>
+  </div>
+
+  <h2 class="s" data-n="04">Research, and what came of it</h2>
+  <div class="res">
+    <article><span class="n">R1</span><div><h3>"Waiting on you" is the state that matters</h3><p>Claude Code's agent view puts every session in one table, surfaces the ones waiting for input, and lets you peek and reply without opening a session (space to peek, a number key to answer a multiple-choice question).</p><div class="src"><a href="https://blog.buildfastwithai.com/claude-code-agent-view-guide">Claude Code Agent View guide</a></div></div><p class="so">Questions are answered on the tile with 1–3 or a typed reply; m messages the selected run from anywhere.</p></article>
+    <article><span class="n">R2</span><div><h3>Background agents want an inbox, not a chat</h3><p>Lead with the outcome, push completion to the person instead of making them poll, and show retries as one run with attempts rather than new runs.</p><div class="src"><a href="https://tianpan.co/blog/2026/04/23/async-agents-inbox-not-chat">Async agents: inbox, not chat</a></div></div><p class="so">"Since you last looked" grouped by run, "report ready · 2 to triage" on finished runs, recovery shown as attempt 2 of 3 on the same tile.</p></article>
+    <article><span class="n">R3</span><div><h3>With many agents, checking the work is the bottleneck</h3><p>"The bottleneck is no longer generation. It's verification." Don't run more agents than you can review, and check in on a cadence instead of hovering.</p><div class="src"><a href="https://addyosmani.com/blog/code-agent-orchestra/">Addy Osmani, The Code Agent Orchestra</a></div></div><p class="so">Findings and their triage are a first-class part of the UI; catch-up supports checking in a few times a day.</p></article>
+    <article><span class="n">R4</span><div><h3>Control rooms go grey and keep colour for trouble</h3><p>The ISA-101 high-performance HMI approach uses grey for normal operation and saves bright colour for abnormal conditions, because colour on normal things trains operators to ignore it.</p><div class="src"><a href="https://blog.isa.org/the-high-performance-hmi">ISA: The high-performance HMI</a><a href="https://control.com/technical-articles/going-gray/">Going gray</a></div></div><p class="so">Working runs stay quiet. Amber and red appear only for waiting, recovering and failed. Run colours are small chips for telling runs apart.</p></article>
+    <article><span class="n">R5</span><div><h3>Traces need a timeline and a tree</h3><p>Langfuse shows the same trace as a timeline (where the time went, what ran in parallel) and as a tree or graph (what called what).</p><div class="src"><a href="https://langfuse.com/changelog/2025-03-19-new-trace-view.md">Langfuse trace view</a><a href="https://langfuse.com/docs/observability/features/agent-graphs.md">Agent graphs</a></div></div><p class="so">Swimlanes per agent for time, a box-drawing agent tree for structure, on tiles and in the run view.</p></article>
+    <article><span class="n">R6</span><div><h3>Triage keeps the verdict, duplicates and grouping apart</h3><p>Security triage tools record a verdict per finding, link duplicates separately, and group related findings for review in one pass.</p><div class="src"><a href="https://docs.defectdojo.com/triage_findings/">DefectDojo: triage findings</a></div></div><p class="so">A verdict per finding: real, not a bug, duplicate, needs work. Pixel points out likely duplicates (same file and frame). "Needs work" goes back to the agent if the run is still live.</p></article>
+    <article><span class="n">R7</span><div><h3>Keep the list in view when you watch several things</h3><p>List-detail layouts keep the list visible beside the selected item so people can scan and compare; modal sheets are for focused, self-contained tasks.</p><div class="src"><a href="https://www.sap.com/design-system/fiori-design-ios/v26-4/foundations/adaptive-layout/usage-patterns">SAP Fiori adaptive layout</a></div></div><p class="so">The round-5 sheet is gone. D docks, E pushes, F zooms in place; the selected run stays marked in the list.</p></article>
+    <article><span class="n">R8</span><div><h3>Agent tools are converging on "agents are the main surface"</h3><p>Cursor 3 added an Agents window for runs across machines, Warp lists every agent with its status in one panel, and Conductor shows parallel agents with review built in.</p><div class="src"><a href="https://codepick.dev/en/guides/cursor-3-new-features/">Cursor 3 overview</a><a href="https://docs.warp.dev/guides/agent-workflows/how-to-run-multiple-ai-coding-agents/">Warp: multiple agents</a></div></div><p class="so">The wall stays the home page, and it's where you act, not only where you look.</p></article>
+  </div>
+
+  <h2 class="s" data-n="05">The ctOS part, kept small</h2>
+  <div class="two">
+    <div class="box"><h3>In</h3><ul class="l fix">
+      <li><span>Mono uppercase labels and status words: <code>RECOVERING</code>, <code>WAITING FOR YOU · 12M</code></span></li>
+      <li><span>Box-drawing agent trees <code>├─ └─</code>, block meters <code>ctx ████░░ 59%</code>, text sparkline <code>▁▂▅▇</code>, attempts <code>[■■□]</code></span></li>
+      <li><span>Braille spinners for working agents, <code>&gt;_</code> on the message box, run names that decrypt in when you open them</span></li>
+      <li><span>Near-black, square corners, 1 px lines instead of shadows</span></li>
+    </ul></div>
+    <div class="box"><h3>Out</h3><ul class="l bad">
+      <li><span>Glow, scanlines, corner brackets, clipped buttons, all-cyan</span></li>
+      <li><span>Coloured borders and accent rails on cards</span></li>
+      <li><span>Effects on hover or anywhere that isn't data</span></li>
+    </ul></div>
+  </div>
+
+  <h2 class="s" data-n="06">What it would take</h2>
+  <div class="box"><ul class="l">
+    <li><span><b>Findings as rows.</b> Pixel reads the bullets under "Found / confirmed" (confirmed) and "Promising" (suspected) in PROGRESS.md and the numbered sections of REPORT.md, and keeps a stable id per finding. Severity and file:line are easiest if your template asks for one line per finding in a fixed shape:<pre class="fmt">- [high] Heap overflow in iCCP decompression · pngrutil.c:1184 · poc/iccp-0041.png</pre></span></li>
+    <li><span><b>A verdict per finding.</b> A new table; TRIAGE.md is written from it; optionally the verdict and your note go to the live agent.</span></li>
+    <li><span><b>Since you last looked.</b> Per browser, like the PROGRESS.md "seen" marker today, or per login if you want it to follow you to your phone.</span></li>
+    <li><span><b>Health flags.</b> Everything is already in the database: progress_at, context, continues, OOM restarts.</span></li>
+    <li><span><b>The rest is frontend.</b> Same data and API as today.</span></li>
+  </ul></div>
+
+  <h2 class="s" data-n="07">Your call</h2>
+  <div class="ask">
+    <p>Pick <b>D</b>, <b>E</b> or <b>F</b>, or mix them. Mixes that fit together well: D's dock with E's findings page and catch-up, or D/E in the browser with F as a full-screen "room" mode.</p>
+    <p>Also: is a fixed one-line finding format in your template OK? It's what makes severity and file:line reliable.</p>
+  </div>
+</div>

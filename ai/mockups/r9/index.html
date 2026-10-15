@@ -1,0 +1,207 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pixel Wall</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="kit.css">
+<script src="icons.js"></script>
+<script src="shared.js"></script>
+<script src="kit.js"></script>
+<style>
+/* The Wall: a fleet tape on top (one track per run, 6 hours), a tile per live run, finished runs below.
+   Tiles show what each agent is doing as lanes of ticks; the words are in the tooltips and the run view. */
+.wallv { padding-bottom: 64px; padding-top: 24px; }
+.dock { display: none; }
+body.docked .wallv { display: none; }
+body.docked .dock { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; height: calc(100dvh - 56px - env(safe-area-inset-top, 0px)); padding-block: 16px; }
+.rail { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 1px 4px 40px 1px; scrollbar-width: thin; }
+.rail h3 { margin: 12px 2px 2px; font: 500 12.5px var(--sans); color: var(--ink-3); display: flex; gap: 8px; }
+.rail h3:first-child { margin-top: 0; }
+.dock .detail { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.pagev { display: none; padding-bottom: 64px; }
+body.page .wallv, body.page .dock { display: none; }
+body.page .pagev { display: block; }
+.back { display: none; }
+@media (max-width: 900px) { body.docked .dock { grid-template-columns: minmax(0, 1fr); } .rail { display: none; } .back { display: inline-flex; } .ro { margin-left: 0; } }
+</style>
+
+<header class="top gut">
+  <div class="brand" id="brand"></div>
+  <nav class="nav" id="nav" aria-label="Pages"></nav>
+  <div class="right">
+    <button class="search" id="search" aria-label="Search and commands"></button>
+    <button class="btn icon" id="theme" data-act="theme" aria-label="Switch light or dark" title="Light or dark"></button>
+    <button class="btn primary" id="newrun"></button>
+  </div>
+</header>
+<main class="wallv gut" id="wallv">
+  <section class="tape" id="tape" aria-label="Fleet, last 6 hours"></section>
+  <div class="sec-t"><h2>Live</h2><span id="live-n"></span><div class="right keys" id="keys"></div></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="sec-t"><h2>Finished</h2><span id="fin-n"></span></div>
+  <div class="list" id="finished"></div>
+</main>
+<main class="dock gut" id="dock">
+  <aside class="rail" id="rail" aria-label="Runs"></aside>
+  <section class="detail" id="detail" aria-label="Run"></section>
+</main>
+<main class="pagev gut" id="pagev"></main>
+<script src="tape.js"></script>
+<script>
+(function () {
+  "use strict";
+  const { runs, find, isLive, on } = PX;
+  const TI = K.TI;
+  const st = { view: "wall", run: null, tab: "overview", mode: "text", file: null, sel: null };
+  const PAGES = ["Runs", "Findings", "Activity", "Models", "Stats", "Knowledge", "Templates", "Settings"];
+  const $ = (s) => document.querySelector(s);
+  $("#brand").innerHTML = K.brand + "Pixel";
+  $("#search").innerHTML = `${TI("search", "sm")}<span>Jump to a run</span><kbd>${TI("command")}</kbd><kbd>K</kbd>`;
+  $("#newrun").innerHTML = `${TI("plus", "sm")}New run`;
+  $("#keys").innerHTML = `<span><kbd>${TI("arrow-left")}</kbd><kbd>${TI("arrow-right")}</kbd> move</span><span><kbd>${TI("corner-down-left")}</kbd> open</span><span><kbd>M</kbd> message</span>`;
+  const themeIcon = () => ($("#theme").innerHTML = TI(document.documentElement.getAttribute("data-theme") === "light" ? "moon" : "sun", "sm"));
+  themeIcon();
+
+  const order = (list) => list.slice().sort((a, b) => a.started - b.started); // tiles keep their place
+  const wallRuns = () => order(runs.filter((r) => isLive(r) || ["failed", "stopped", "paused"].includes(r.status)));
+  const finRuns = () => runs.filter((r) => ["done", "triaged"].includes(r.status)).sort((a, b) => (b.finished || 0) - (a.finished || 0));
+
+  function nav() {
+    const cur = st.view === "wall" || st.view === "run" ? "Runs" : st.view;
+    const n = K.untriaged().length;
+    const needs = runs.filter((r) => r.question || ["failed", "stopped"].includes(r.status)).length;
+    $("#nav").innerHTML = PAGES.map((p) => `<button type="button" data-page="${p}" ${p === cur ? 'aria-current="page"' : ""}>${p}${p === "Runs" && needs ? `<span class="n warn" title="${needs} need you">${needs}</span>` : ""}${p === "Findings" && n ? `<span class="n">${n}</span>` : ""}</button>`).join("");
+  }
+  function keep(fn) {
+    const vals = {};
+    document.querySelectorAll("main input[id], main textarea[id]").forEach((el) => (vals[el.id] = el.value));
+    const ae = document.activeElement;
+    const focus = ae?.id || (ae?.classList?.contains("tile") ? "tile:" + ae.dataset.run : null);
+    const db = $("#detail .db"), top = db ? db.scrollTop : 0, rail = $("#rail").scrollTop;
+    fn();
+    for (const [id, v] of Object.entries(vals)) { const el = document.getElementById(id); if (el) el.value = v; }
+    const nb = $("#detail .db"); if (nb && db) nb.scrollTop = top;
+    $("#rail").scrollTop = rail;
+    if (focus?.startsWith("tile:")) document.querySelector(`.tile[data-run="${focus.slice(5)}"]`)?.focus({ preventScroll: true });
+    else if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
+  }
+  const clock = () => { const c = $("#clock"); if (c) c.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); };
+
+  function render() {
+    keep(() => {
+      document.body.classList.toggle("docked", st.view === "run");
+      document.body.classList.toggle("page", !["wall", "run"].includes(st.view));
+      nav();
+      if (st.view === "wall") {
+        const w = wallRuns();
+        $("#live-n").textContent = w.length;
+        $("#tiles").innerHTML = w.map((r) => K.tile(r, { sel: st.sel === r.id })).join("");
+        const f = finRuns();
+        $("#fin-n").textContent = f.length;
+        $("#finished").innerHTML = f.map((r) => K.lrow(r, false)).join("");
+      } else if (st.view === "run") {
+        const r = find(st.run);
+        if (!r) { st.view = "wall"; return render(); }
+        const w = wallRuns(), f = finRuns();
+        $("#rail").innerHTML = `<h3>Live <span>${w.length}</span></h3>${w.map((x) => K.mini(x, x.id === r.id)).join("")}<h3>Finished <span>${f.length}</span></h3>${f.map((x) => K.mini(x, x.id === r.id)).join("")}`;
+        $("#detail").innerHTML = K.detail(r, st, { close: true });
+        $("#detail .dh-top").insertAdjacentHTML("afterbegin", `<button type="button" class="btn sm icon back" data-act="close" aria-label="Back to the wall">${TI("arrow-left", "sm")}</button>`);
+      } else if (st.view === "Findings") {
+        $("#pagev").innerHTML = `<div class="ph"><h1>Findings</h1><span>${K.untriaged().length} to triage across ${new Set(K.untriaged().map((f) => f.run)).size} runs</span></div>${K.findingsTable(null)}`;
+      } else {
+        $("#pagev").innerHTML = `<div class="ph"><h1>${st.view}</h1></div><div class="blank">${st.view} isn't part of this mockup.</div>`;
+      }
+    });
+  }
+
+  function openRun(id, o = {}) {
+    const fresh = st.run !== id || st.view !== "run";
+    st.tab = o.tab || (fresh ? "overview" : st.tab);
+    st.view = "run"; st.run = st.sel = id; st.file = o.file || null;
+    const r = find(id);
+    if (r && r.unseen && st.tab === "overview") setTimeout(() => PX.act(id, "seen"), 4000);
+    render();
+    try { history.replaceState(null, "", "#" + id); } catch {}
+    window.scrollTo(0, 0);
+  }
+  function close() { const id = st.run; st.view = "wall"; st.run = null; render(); try { history.replaceState(null, "", location.pathname); } catch {} document.querySelector(`.tile[data-run="${id}"]`)?.focus({ preventScroll: true }); }
+  function openPage(p) { if (p === "Runs") return close(); st.view = p; st.run = null; render(); window.scrollTo(0, 0); }
+  function newRun(pre = {}) {
+    const d = K.dialog(`<h2>New run</h2>${PX.newRunForm(pre)}`, "New run");
+    PX.bindNewRun(d.el.querySelector("form"), (id) => { d.close(); openRun(id); }, d.close);
+    d.el.querySelector("#nr-repo").focus();
+  }
+  function openFinding(id) {
+    const f = K.fById(id);
+    const d = K.dialog(`<div style="margin:-22px -24px">${K.findingCard(f)}</div>`, f.title);
+    on("change", (e) => { if (e.finding === id && document.body.contains(d.el)) d.el.querySelector(".card-dlg").innerHTML = `<div style="margin:-22px -24px">${K.findingCard(f)}</div>`; });
+  }
+  function message(id) { if (st.view !== "run" || st.run !== id) openRun(id); document.getElementById("compose-" + id)?.focus(); }
+
+  PX.ui = {
+    openRun, newRun, close, openPage, openFinding, message,
+    current: () => st.run || st.sel,
+    setTab: (t) => { st.tab = t; render(); $("#detail .db").scrollTop = 0; },
+    setMode: (m) => { st.mode = m; render(); },
+    openFile: (p) => { st.file = p; render(); },
+    rename: (id) => { if (st.view !== "run" || st.run !== id) openRun(id); K.rename(id, $("#detail h1")); },
+    catchup: () => K.dialog(K.catchupHTML(), "Since you last looked"),
+  };
+
+  document.addEventListener("click", (e) => {
+    const p = e.target.closest("[data-page]");
+    if (p) return openPage(p.dataset.page);
+    if (e.target.closest("button, a, input, textarea, select, form.t-body, .x-menu")) return;
+    const t = e.target.closest(".tile, .lrow");
+    if (t) openRun(t.dataset.run);
+  });
+  $("#search").addEventListener("click", PX.palette);
+  $("#newrun").addEventListener("click", () => newRun());
+
+  const cols = () => { const ts = [...document.querySelectorAll("#tiles .tile")]; if (ts.length < 2) return 1; const y = ts[0].offsetTop; return ts.filter((t) => t.offsetTop === y).length; };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && st.view === "run" && !document.querySelector(".x-pal, .scrim-c, .x-menu, .x-dialog-scrim") && !e.target.closest("input, textarea")) { e.preventDefault(); return close(); }
+    if (!K.plainKey(e) || document.querySelector(".scrim-c")) return;
+    const list = st.view === "run" ? [...document.querySelectorAll("#rail .tile")] : [...document.querySelectorAll("#tiles .tile, #finished .lrow")];
+    const ids = list.map((x) => x.dataset.run);
+    let i = ids.indexOf(st.view === "run" ? st.run : st.sel ?? document.activeElement?.dataset?.run);
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: st.view === "run" ? 1 : cols(), ArrowUp: st.view === "run" ? -1 : -cols(), j: 1, k: -1 }[e.key];
+    if (step && ["wall", "run"].includes(st.view)) {
+      e.preventDefault();
+      i = Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + step));
+      if (st.view === "run") openRun(ids[i], { tab: st.tab });
+      else { st.sel = ids[i]; list.forEach((t) => t.setAttribute("aria-selected", t.dataset.run === st.sel)); list[i].focus(); }
+      return;
+    }
+    if (e.key === "Enter" && st.view === "wall" && st.sel) { e.preventDefault(); return openRun(st.sel); }
+    if (e.key === "m") { const id = st.run || st.sel; if (id) { e.preventDefault(); message(id); } return; }
+    if (e.key === "n") { e.preventDefault(); return newRun(); }
+    if (e.key === "f") { e.preventDefault(); return openPage("Findings"); }
+  });
+
+  on("tick", (ev) => {
+    if (st.view === "wall") {
+      const el = document.querySelector(`#tiles .tile[data-run="${ev.run}"]`);
+      if (el) { K.patchTile(el, find(ev.run)); el.querySelector(`.now li[data-agent="${ev.agent}"]`)?.classList.add("flash"); }
+    } else if (st.view === "run") {
+      const m = document.querySelector(`#rail .tile[data-run="${ev.run}"]`);
+      if (m) m.outerHTML = K.mini(find(ev.run), ev.run === st.run);
+      const ag = document.querySelector('#detail [data-slot="agents"]');
+      if (ag && ev.run === st.run) ag.innerHTML = K.agentsCard(find(st.run));
+    }
+  });
+  on("rates", () => { if (st.view === "wall") document.querySelectorAll("#tiles .tile").forEach((el) => K.patchTile(el, find(el.dataset.run))); });
+  on("change", render);
+  on("minute", render);
+  on("theme", () => { themeIcon(); render(); });
+
+  addEventListener("hashchange", () => { const x = location.hash.slice(1); if (x && find(x)) openRun(x); else if (x === "findings") openPage("Findings"); });
+  const h = location.hash.slice(1);
+  if (h === "findings") st.view = "Findings";
+  else if (h && find(h)) { st.view = "run"; st.run = st.sel = h; }
+  render();
+  PX.start();
+})();
+</script>
