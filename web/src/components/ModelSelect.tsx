@@ -3,7 +3,7 @@
  * a searchable model list grouped by provider, the model's thinking levels (opencode variants)
  * as a segmented control, and an editor for your own levels.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, type OfferedModel } from "../lib/api.ts";
 import { tokens } from "../lib/format.ts";
 import { ProviderMark } from "./ProviderList.tsx";

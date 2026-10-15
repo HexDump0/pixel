@@ -95,6 +95,8 @@ export interface Activity {
   text: string;
   status: string;
   ts: number;
+  /** When the call finished, if it has. */
+  end?: number | null;
 }
 
 const lastStatus = new Map<string, string>();
@@ -126,6 +128,7 @@ export function onPart(runId: string, part: any) {
     text: describeCall(getRun(runId) ?? undefined, part.tool, part.state),
     status,
     ts: part.state.time?.start ?? Date.now(),
+    end: part.state.time?.end ?? null,
   };
   publish("*", "activity", a);
 }
@@ -472,7 +475,7 @@ function outputSeries(runIds: Set<string>, now: number) {
     const perMs = tokens / Math.max(1000, m.done - m.created);
     for (let t = a; t < b; ) {
       const i = Math.floor((t - from) / SERIES_STEP);
-      const end = Math.min(b, from + (i + 1) * SERIES_STEP);
+      const end = Math.min(b, Math.max(t + 1, from + (i + 1) * SERIES_STEP));
       if (i >= 0 && i < SERIES_N) list[i] += (perMs * (end - t)) / (SERIES_STEP / 1000);
       t = end;
     }
@@ -605,6 +608,7 @@ export function recentActivity(limit: number, runId?: string) {
       text: describeCall(runs.get(p.run_id), part.tool, part.state),
       status: part.state?.status ?? "completed",
       ts: part.state?.time?.start ?? p.updated_at,
+      end: part.state?.time?.end ?? null,
     };
   });
   const events = db
@@ -667,7 +671,8 @@ export function runSeries(runId: string, buckets = 120) {
       const perMs = out / Math.max(1000, end - m.created);
       for (let t = a; t < b; ) {
         const i = at(t);
-        const e = Math.min(b, from + (i + 1) * step);
+        // always move forward, even when float rounding puts the bucket edge at or before t
+        const e = Math.min(b, Math.max(t + 1, from + (i + 1) * step));
         tps[i] += (perMs * (e - t)) / (step / 1000);
         t = e;
       }

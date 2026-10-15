@@ -34,7 +34,20 @@ get("/runs", () => {
   const questions = countBy("SELECT run_id, COUNT(*) AS n FROM questions WHERE status = 'pending' GROUP BY run_id");
   const reads = countBy("SELECT run_id, COUNT(*) AS n FROM cross_reads GROUP BY run_id");
   const findings = findingCounts();
-  return listRuns().map((r) => ({ ...publicRun(r), questions: questions.get(r.id) ?? 0, cross_reads: reads.get(r.id) ?? 0, findings: findings[r.id] ?? null }));
+  // The oldest pending question per run, so the Wall can show it and take an answer on the tile.
+  const asking = new Map<string, { id: string; created_at: number; questions: unknown[] }>();
+  for (const q of db.query<{ run_id: string; data: string; created_at: number }, []>("SELECT run_id, data, created_at FROM questions WHERE status = 'pending' ORDER BY created_at").all())
+    if (!asking.has(q.run_id)) {
+      const d = JSON.parse(q.data);
+      asking.set(q.run_id, { id: d.id, created_at: q.created_at, questions: d.questions ?? [] });
+    }
+  return listRuns().map((r) => ({
+    ...publicRun(r),
+    questions: questions.get(r.id) ?? 0,
+    question: asking.get(r.id) ?? null,
+    cross_reads: reads.get(r.id) ?? 0,
+    findings: findings[r.id] ?? null,
+  }));
 });
 
 interface CreateBody extends Omit<NewRun, "compareGroup"> {

@@ -2,13 +2,16 @@
 import type { PublicRun } from "../../../server/src/runs/state.ts";
 import type { Settings } from "../../../server/src/settings.ts";
 import type { AgentPaths } from "../../../server/src/runtime/types.ts";
-import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity } from "../../../server/src/fleet.ts";
+import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries } from "../../../server/src/fleet.ts";
+import type { FindingEvent, FindingRow, Verdict } from "../../../server/src/findings.ts";
 import type { Leaderboard, ProviderHealth } from "../../../server/src/providers.ts";
 import type { Stats } from "../../../server/src/stats.ts";
 import type { CatalogList, CatalogModel, CatalogProvider } from "../../../server/src/catalog.ts";
 import type { ConnectedProvider, PublicKey } from "../../../server/src/providerAccounts.ts";
 
-export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, Leaderboard, ProviderHealth, Stats };
+export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries, Leaderboard, ProviderHealth, Stats };
+export type Finding = FindingRow;
+export type { FindingEvent, Verdict };
 export type { CatalogList, CatalogModel, CatalogProvider, ConnectedProvider, PublicKey };
 
 export interface SpeedTestRow {
@@ -25,7 +28,33 @@ export interface SpeedTestRow {
   error: string | null;
 }
 
-export type Run = PublicRun & { questions?: number; cross_reads?: number };
+/** Per run: findings that aren't leads, how many still need a verdict, by severity. */
+export interface FindingCounts {
+  total: number;
+  untriaged: number;
+  confirmed: number;
+  bySeverity: Record<string, number>;
+  untriagedBySeverity: Record<string, number>;
+}
+
+export type Run = PublicRun & {
+  questions?: number;
+  /** The oldest pending question, if the agent is asking. */
+  question?: { id: string; created_at: number; questions: Question["questions"] } | null;
+  cross_reads?: number;
+  findings?: FindingCounts | null;
+};
+
+/** One line of the fleet's Latest feed (a notable timeline entry). */
+export interface FeedEntry {
+  id: number;
+  run_id: string;
+  ts: number;
+  actor: string;
+  kind: string;
+  message: string;
+  data: any;
+}
 export type RunStatus = Run["status"];
 
 export interface Todo {
@@ -63,6 +92,8 @@ export interface RunDetail {
   shell: string | null;
   watching: boolean;
   report: boolean;
+  /** Prompt tokens over every model call, for the cache rate. */
+  cache: { input: number; read: number; write: number } | null;
   compare: string[];
   followUps: string[];
 }
@@ -83,21 +114,6 @@ export interface Part {
 export interface Message {
   info: { id: string; sessionID: string; role: "user" | "assistant"; time: { created: number; completed?: number }; modelID?: string; providerID?: string; agent?: string; cost?: number; tokens?: any; error?: { name: string; data?: any } };
   parts: Part[];
-}
-
-/** PROGRESS.md: the agent's status notes for the human, with every version Pixel saw. */
-export interface Progress {
-  content: string | null;
-  updated_at: number | null;
-  /** Newest first; added/removed lines vs the version before. */
-  versions: { ts: number; added: number; removed: number }[];
-}
-
-/** The whole file at `to`, each line prefixed "+", "-" or " " against `from`. */
-export interface ProgressDiff {
-  from: number | null;
-  to: number | null;
-  lines: string[];
 }
 
 export interface TimelineEntry {

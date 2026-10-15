@@ -1,5 +1,6 @@
 /** Fire-and-forget toasts: call `toast("Saved")` from anywhere, render <Toasts/> once. */
 import { useEffect, useState } from "react";
+import { cn } from "../lib/cn.ts";
 
 interface ToastItem {
   id: number;
@@ -26,12 +27,11 @@ export function Toasts() {
     return () => void listeners.delete(add);
   }, []);
   return (
-    <div className="fixed right-4 bottom-4 z-50 flex max-w-sm flex-col gap-2">
+    <div role="status" className="fixed right-4 bottom-6 z-[900] flex max-w-[min(420px,calc(100vw-32px))] flex-col items-end gap-1.5">
       {items.map((t) => (
         <div
           key={t.id}
-          className="card px-3 py-2 text-sm shadow-lg"
-          style={t.kind === "error" ? { borderColor: "var(--bad)", color: "var(--bad)" } : { borderColor: "var(--line)" }}
+          className={cn("cursor-pointer rounded-xl px-4 py-2.5 text-[13.5px] font-medium shadow-pop", t.kind === "error" ? "bg-critical text-white" : "bg-ink text-bg")}
           onClick={() => setItems((xs) => xs.filter((x) => x.id !== t.id))}
         >
           {t.text}

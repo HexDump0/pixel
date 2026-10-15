@@ -67,8 +67,11 @@ const server = Bun.serve<SocketData>({
 
 seedTemplates();
 writeIndex();
-await reattach();
-startWatchdog();
+if (config.detached) console.warn("PIXEL_DETACHED=1: runs are not reattached, watched or recovered");
+else {
+  await reattach();
+  startWatchdog();
+}
 startFleet();
 startProgressWatch();
 startFindingsWatch();

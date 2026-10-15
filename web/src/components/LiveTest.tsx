@@ -3,7 +3,7 @@
  * tokens and cost as they happen. Runs in a throwaway opencode with no files where every tool call
  * is refused, so it checks the key, the endpoint and the model's speed, not its agent skills.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { money, tokens as fmtTokens } from "../lib/format.ts";

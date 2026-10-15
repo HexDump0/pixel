@@ -85,9 +85,9 @@ function FileView({ runId, path, onSaved }: { runId: string; path: string; onSav
   );
 }
 
-function FilesPane({ runId }: { runId: string }) {
-  const [dir, setDir] = useState("");
-  const [file, setFile] = useState<string | null>(null);
+function FilesPane({ runId, initialPath }: { runId: string; initialPath?: string }) {
+  const [dir, setDir] = useState(initialPath?.includes("/") ? initialPath.slice(0, initialPath.lastIndexOf("/")) : "");
+  const [file, setFile] = useState<string | null>(initialPath ?? null);
   const list = useAsync(() => api.files(runId, dir), [runId, dir]);
   const crumbs = dir ? dir.split("/") : [];
 
@@ -168,7 +168,8 @@ function HistoryPane({ runId }: { runId: string }) {
   );
 }
 
-export function WorkbaseBrowser({ runId }: { runId: string }) {
+/** The run's workbase: browse and edit files, and the history snapshots. `path` opens that file. */
+export function WorkbaseBrowser({ runId, path }: { runId: string; path?: string }) {
   const [tab, setTab] = useState<"files" | "history">("files");
   const [key, setKey] = useState(0);
   // Remount the file pane when the run finishes or files change notably, so listings refresh.
@@ -177,7 +178,7 @@ export function WorkbaseBrowser({ runId }: { runId: string }) {
   });
   return (
     <div>
-      <Tabs
+      <Tabs<"files" | "history">
         value={tab}
         onChange={setTab}
         tabs={[
@@ -185,7 +186,7 @@ export function WorkbaseBrowser({ runId }: { runId: string }) {
           { id: "history", label: "History" },
         ]}
       />
-      {tab === "files" ? <FilesPane key={key} runId={runId} /> : <HistoryPane runId={runId} />}
+      {tab === "files" ? <FilesPane key={`${key}:${path ?? ""}`} runId={runId} initialPath={path} /> : <HistoryPane runId={runId} />}
     </div>
   );
 }

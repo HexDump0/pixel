@@ -1,74 +1,78 @@
-/** REPORT.md and the triage form (→ TRIAGE.md in the workbase). */
-import { useEffect, useState } from "react";
+/** REPORT.md once the run has written it (finding ids link to the findings), and the run's triage verdict and notes (→ TRIAGE.md). */
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api.ts";
-import { useAsync } from "../../lib/hooks.ts";
+import { keys } from "../../lib/query.ts";
 import { dateTime } from "../../lib/format.ts";
-import type { RunDetail } from "../../lib/types.ts";
+import { reloadRuns } from "../../lib/runs.ts";
+import type { Run } from "../../lib/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
-import { Button, Card, Empty, Field } from "../../components/ui.tsx";
+import { Button } from "../../components/ui.tsx";
 
 const VERDICTS = ["real findings", "partly real", "false positives", "duplicate", "nothing found", "inconclusive"];
 
-const NOTES_TEMPLATE = `## Findings
-
-- Finding 1: real / false positive / duplicate / unclear. Notes…
-`;
-
-export function ReportTab({ detail, onChange }: { detail: RunDetail; onChange: () => void }) {
-  const r = detail.run;
-  const report = useAsync(() => api.report(r.id), [r.id, r.report_ready]);
-  const [verdict, setVerdict] = useState(r.triage_verdict ?? "");
-  const [notes, setNotes] = useState(r.triage_notes ?? "");
+export function ReportTab({ run, onOpenFinding }: { run: Run; onOpenFinding: (id: string) => void }) {
+  const report = useQuery({ queryKey: [...keys.runReport(run.id), run.report_ready], queryFn: () => api.report(run.id) });
+  const [verdict, setVerdict] = useState(run.triage_verdict ?? "");
+  const [notes, setNotes] = useState(run.triage_notes ?? "");
   const [keepVm, setKeepVm] = useState(false);
   useEffect(() => {
-    setVerdict(r.triage_verdict ?? "");
-    setNotes(r.triage_notes ?? "");
-  }, [r.id]);
-
+    setVerdict(run.triage_verdict ?? "");
+    setNotes(run.triage_notes ?? "");
+  }, [run.id]);
+  // F3 in the report → a link to that finding
+  const text = useMemo(
+    () =>
+      (report.data?.content ?? "")
+        .split(/(```[\s\S]*?```|`[^`\n]*`)/)
+        .map((part, i) => (i % 2 ? part : part.replace(/(?<![\w/[])F(\d+)\b(?!\]\()/g, "[F$1](#finding-F$1)")))
+        .join(""),
+    [report.data],
+  );
   const save = (markTriaged: boolean) => async () => {
-    await api.triage(r.id, { verdict: verdict || null, notes: notes || null, markTriaged, keepVm });
-    onChange();
+    await api.triage(run.id, { verdict: verdict || null, notes: notes || null, markTriaged, keepVm });
+    void reloadRuns();
   };
-
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
-      <Card title="REPORT.md">{report.data?.content ? <Markdown text={report.data.content} /> : <Empty>No report yet.</Empty>}</Card>
-      <Card title="Triage">
-        <div className="flex flex-col gap-3">
-          <div className="text-xs muted">
-            Saved to <code>TRIAGE.md</code> in the workbase, so other agents can see which findings held up.
-            {r.triaged_at && ` Triaged ${dateTime(r.triaged_at)}.`}
-          </div>
-          <Field label="Overall verdict">
-            <input className="input" list="verdicts" value={verdict} onChange={(e) => setVerdict(e.target.value)} />
-            <datalist id="verdicts">
-              {VERDICTS.map((v) => (
-                <option key={v} value={v} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Notes per finding (markdown)">
-            <textarea className="input h-72 font-mono text-xs" value={notes} placeholder={NOTES_TEMPLATE} onChange={(e) => setNotes(e.target.value)} />
-          </Field>
-          {!notes && (
-            <button className="self-start text-xs text-accent hover:underline" onClick={() => setNotes(NOTES_TEMPLATE)}>
-              Start from a template
-            </button>
-          )}
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={keepVm} onChange={(e) => setKeepVm(e.target.checked)} />
-            Keep the machine when marking triaged
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            <Button onClick={save(false)} done="Triage notes saved">
-              Save notes
-            </Button>
-            <Button variant="primary" onClick={save(true)} disabled={r.status === "triaged"} confirm={keepVm ? undefined : "Mark triaged? The run's machine will be deleted (the workbase is kept)."} done="Marked triaged">
-              Save & mark triaged
-            </Button>
-          </div>
+    <div className="mx-auto flex max-w-[760px] flex-col gap-10 px-10 pt-6 pb-12 max-md:px-4">
+      <article
+        className="text-[15px] leading-[1.7] [&_.prose-pixel_h1]:mt-0 [&_.prose-pixel_h1]:text-[22px] [&_.prose-pixel_h1]:font-medium [&_.prose-pixel_h2]:mt-6 [&_.prose-pixel_h2]:text-[17px] [&_.prose-pixel_h2]:font-medium [&_.prose-pixel_pre]:border [&_.prose-pixel_pre]:border-line-2 [&_.prose-pixel_pre]:bg-term-bg [&_.prose-pixel_pre]:text-term-ink"
+        onClick={(e) => {
+          const a = (e.target as HTMLElement).closest("a");
+          const m = a?.getAttribute("href")?.match(/^#finding-(F\d+)$/);
+          if (m) {
+            e.preventDefault();
+            onOpenFinding(m[1]);
+          }
+        }}
+      >
+        {report.data?.content ? <Markdown text={text} /> : <p className="text-ink-3">REPORT.md is empty.</p>}
+      </article>
+      <section className="flex flex-col gap-3 border-t border-line-2 pt-6">
+        <div className="flex items-baseline gap-2.5">
+          <h2 className="m-0 text-[13.5px] font-medium">Run verdict</h2>
+          <span className="text-[12.5px] text-ink-3">saved to TRIAGE.md{run.triaged_at ? ` · triaged ${dateTime(run.triaged_at)}` : ""}</span>
         </div>
-      </Card>
+        <input list="run-verdicts" value={verdict} onChange={(e) => setVerdict(e.target.value)} placeholder="Overall verdict" aria-label="Overall verdict" className="h-9 rounded-lg border border-line bg-s2 px-2.5 text-ink outline-none focus:border-ink-3" />
+        <datalist id="run-verdicts">
+          {VERDICTS.map((v) => (
+            <option key={v} value={v} />
+          ))}
+        </datalist>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} placeholder="Notes (markdown)" aria-label="Notes" className="resize-y rounded-lg border border-line bg-s2 px-2.5 py-2 font-mono text-[12.5px] text-ink outline-none focus:border-ink-3" />
+        <label className="flex items-center gap-2 text-[13px] text-ink-2">
+          <input type="checkbox" checked={keepVm} onChange={(e) => setKeepVm(e.target.checked)} />
+          Keep the machine when marking triaged
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          <Button onClick={save(false)} done="Saved">
+            Save
+          </Button>
+          <Button variant="primary" onClick={save(true)} disabled={run.status === "triaged"} confirm={keepVm ? undefined : "Mark triaged? The run's machine will be deleted (the workbase is kept)."} done="Marked triaged">
+            Save and mark triaged
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }

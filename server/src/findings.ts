@@ -160,7 +160,7 @@ export function syncFindings(run: RunRow, text: string, mtime = Date.now()) {
 }
 
 function announce(runId: string, event: FindingEvent, finding: FindingRow) {
-  timeline(runId, event.action === "verdict" ? "user" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq }, event.at);
+  timeline(runId, event.action === "verdict" ? "user" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq, title: finding.title, severity: finding.severity, state: finding.state, note: event.note, changes: event.changes }, event.at);
   publish(runId, "finding", { event, finding });
   publish("*", "finding", { event, finding });
 }

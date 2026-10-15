@@ -62,6 +62,8 @@ export const config = {
   /** How often the watchdog checks each active run. */
   watchdogMs: Number(env("PIXEL_WATCHDOG_MS", "15000")),
   dev: env("NODE_ENV") !== "production",
+  /** Leave runs alone: no reattach, no watchdog, no event streams. For looking at a copy of a database (or seeded demo data). */
+  detached: env("PIXEL_DETACHED") === "1",
 };
 
 for (const d of [config.dataDir, config.workbasesDir, config.historyDir, config.machinesDir, config.transcriptsDir]) {
