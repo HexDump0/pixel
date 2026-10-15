@@ -47,7 +47,7 @@ Last updated 2026-10-11 (after the first build session). The plan of record is [
 
 ## Code layout
 
-See the root README for the tree. Rules of thumb: one concern per module; `runs/state.ts` is the only place that writes a run and fans out updates (dashboard, run.json/INDEX.md); API handlers stay thin and call `runs/controls.ts`; dashboard types reuse server types via `import type`.
+See the root README for the tree. Dashboard (2026-10-15 redesign): React 19 + Tailwind 4 utilities over the design tokens (`web/src/index.css`, exposed as theme colours: `bg-s1`, `text-ink-3`, `bg-r0`…), Tabler icons (`@tabler/icons-react`), Radix primitives for menus/dialogs/tooltips (`components/ui/overlay.tsx`), `cmdk` for the palette, `d3-shape` for chart geometry (SVG components in `components/charts/`), TanStack Query for server data with the websocket writing into the cache (`lib/query.ts` `onLive` handlers in `lib/runs.ts`, `lib/fleet.ts`, `lib/findings.ts`, `lib/feed.ts`). Pages: `pages/wall/` (the Wall), `pages/run/` (docked run view), `pages/findings/`. Older pages still use `useAsync` and some classes from index.css; move them to the same pattern when they are redesigned. Rules of thumb: one concern per module; `runs/state.ts` is the only place that writes a run and fans out updates (dashboard, run.json/INDEX.md); API handlers stay thin and call `runs/controls.ts`; dashboard types reuse server types via `import type`.
 
 ## opencode API notes (1.19.0, same as 1.18.23)
 
@@ -97,6 +97,8 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 
 - `bun test`: unit tests plus lifecycle tests using `server/test/fake-opencode.ts` (scripted by prompt text: `REPORT <path>`, `HANG`; the synchronous message endpoint used by the speed test is scripted by model id: `fake/fast`, `fake/broken`, `fake/tool`). `providers.test.ts` covers capture, health, leaderboard and the speed test; `fleet.test.ts` covers the snapshot, swimlanes, activity and the stream-based tokens/s sampler and its correction on a seeded run.
 - Manual e2e: `PIXEL_RUNTIME=local OPENCODE_BIN=<opencode> bun server/src/index.ts` with a tiny local git repo and the free `opencode/big-pickle` model.
+- Fake opencode also takes `FINDING {"tool":"finding_add","args":{…}}` lines (one per line) and runs the real finding tool. `findings.test.ts` covers the plugin, the sync, verdicts and a run end to end.
+- Looking at the UI without agents: `PIXEL_DATA=/tmp/pixel-demo bun server/test/seed-demo.ts`, then `PIXEL_DATA=/tmp/pixel-demo PIXEL_DETACHED=1 PIXEL_RUNTIME=local bun --hot server/src/index.ts` (detached = no reattach, watchdog or event streams, so seeded live runs stay as seeded). Re-seed when the data gets old: everything is relative to the seed time. Screenshots: `chromium --headless=new --force-prefers-reduced-motion --virtual-time-budget=6000 --screenshot=…`.
 
 ## Stats page (stats.ts)
 
@@ -113,7 +115,17 @@ See the root README for the tree. Rules of thumb: one concern per module; `runs/
 - `runs/keys.ts`: classifies errors from `message.updated` errors, `session.error` and `session.status` retries. A failing key is marked on the account; the switch runs in the run's serial queue, so the idle event from the failed call can't send a second continue (`onIdle` also ignores idle events when opencode says the session is busy). Errors in the 30 s after a switch are ignored.
 - Routes: `/providers/:id/keys` (POST add), `/providers/:id/keys/:key` (PUT edit, DELETE remove; runs on it fall back to the default), `/providers/:id/keys-order`, `/providers/:id/keys/:key/test`, `/providers/:id/keys/usage`; `/runs/:id/keys` (GET current key, next failover key, cost per key), `/runs/:id/key`, `/runs/:id/failover`.
 
-## PROGRESS.md (progress.ts)
+## Findings (findings.ts, opencode-plugins/findings.ts) — added 2026-10-15
+
+- Replaces PROGRESS.md. The agent calls `finding_add / finding_update / finding_remove / finding_list` (opencode plugin). The plugin writes `{{workbase}}/FINDINGS.json` (source of truth; atomic writes, serialised in-process because subagents share the opencode process) and regenerates `FINDINGS.md`. The workbase path comes from `PIXEL_WORKBASE`, which every runtime sets for opencode (process runtimes in `spawnOpencode`, Incus in `/etc/pixel/opencode.env`; Incus also gets the plugin files pushed with the credentials, so old images pick up new plugins).
+- The plugin imports `@opencode-ai/plugin`; opencode itself installs that package into each config dir at startup (checked on 1.18.32: it writes `package.json` and installs, waiting when `node_modules` is missing). That needs network once per fresh config dir; agents have internet. Tool names are used as-is; subagents get the tools too.
+- Pixel syncs the file like PROGRESS.md (poll 5 s for active and just-finished runs, one stat) plus right after a `finding_*` tool part completes. Rows go to `findings`; every history entry becomes a `finding_events` row (deduped on run, finding, time, action), a timeline entry (`finding`, data has title/severity/state/note) and a live `finding` message. Findings deleted from the file by hand are kept, marked removed.
+- Verdicts (`real | not_bug | duplicate | needs_work`) are Pixel's own columns, never touched by the sync; each writes `.pixel/triage.json` (shown by `finding_list`) and the findings section of `TRIAGE.md`; `needs_work` messages the agent when the run is running or recovering.
+- "To triage" = suspected or confirmed, not removed, no verdict. Leads are ideas, not counted.
+
+## PROGRESS.md (progress.ts) — replaced by findings on 2026-10-15
+
+- Kept read-only for older runs: the table, the poll and `/runs/:id/progress*` still work, but the dashboard no longer shows it (the file is still in the Files tab). Remove once no run needs it.
 
 - The main agent's status notes for the human, asked for by the user's own template text (not in the seeded `audit.md`). Pixel only reads it; it never drives the lifecycle (unlike REPORT.md).
 - Polled every 5 s for active runs and runs finished in the last 10 min: one `stat` per run, the file is read only when mtime/size change, and a version is stored only when the content differs (`progress` table, capped at 64 KB per version and 300 versions per run). Each new version sets `runs.progress_at`, adds a timeline entry (`agent`/`progress`, with +/− line counts) and publishes `progress` on the run's feed. `GET /runs/:id/progress` also checks the file first, so it never lags the poll.

@@ -183,3 +183,13 @@
 - **Overview must not repeat** the Findings tab and the side column (user, after round 14). Proposed instead: Now (live tail per agent), Story (notable events incl. finding changes), Charts over the run's life. To be mocked and confirmed before building.
 - **Report tab**: REPORT.md once the run is done (disabled before), with the run-level triage form under it.
 - **Handoff written** for the next session, which will build the redesign into the real app: `ai/redesign/` (README, taste, spec, findings-tool, data-map). Reference mockup: `ai/mockups/r14/`.
+
+## 2026-10-15 (redesign built into the app)
+
+- **Findings tool built** as specified in `ai/redesign/findings-tool.md` (plugin, sync, verdicts, API, tests). Verdict ids are `real | not_bug | duplicate | needs_work`. The seeded `templates/audit.md` asks for the tools; the user's own templates in the DB still mention PROGRESS.md and need the same text (see findings-tool.md § Template text).
+- **Stack** (user, mid-build: "use just react tailwind and other stuff and make the project actually maintainable"): Tailwind utilities on the design tokens and standard libraries (Tabler icons, Radix, cmdk, d3-shape, TanStack Query) instead of a hand-written stylesheet and hand-rolled menus, palette, icons and fetching. No new big CSS files.
+- **Run colours** are stored on the run (`runs.hue`, picked at creation so live runs differ; older runs backfilled by replaying the rule).
+- **Overview** built straight from the spec proposal (Now / Story / Charts) in the real app rather than as an r15 mockup first, so the user can react to it on real data. Open for feedback.
+- Server additions: `/api/feed` (notable timeline entries), `/runs/:id/series` (a run's whole life), 30-minute tok/s from finished model calls in the fleet snapshot, per-agent ticks and todo states, cache totals in run detail, the pending question in `/runs`.
+- `PIXEL_DETACHED=1` and `server/test/seed-demo.ts` for looking at the UI without agents.
+- Fixed while building: a float-rounding infinite loop in the run series bucketing that hung the server.

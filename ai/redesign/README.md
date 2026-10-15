@@ -13,7 +13,11 @@ Written 2026-10-15 at the end of the mockup session (rounds 5–14). The next se
 
 Background if needed: `ai/decisions.md` (dated log, rounds 5–14 at the end), `ai/design.md` (technical notes; its PROGRESS.md section describes what is being replaced).
 
-## Status
+## Status (2026-10-15, end of the build session)
+
+Built and committed: findings tool (plugin + server + UI), the Wall, the docked run view (Overview as Now/Story/Charts, Findings, Report), Findings page, catch-up, palette, new chrome on every page. Left: the user's reaction to the Overview and to the whole thing on real data; a proper redesign of the older pages (Activity, Models, Stats, Knowledge, Templates, Settings, System, New run), which still use parts of the old index.css; the user's own templates still ask for PROGRESS.md.
+
+## Status at handoff
 
 - The **look and the Wall/run-view layout are agreed**: the user said "okay okay I'm start to like it" about round 14 after "def better" on round 12. Not everything is final; expect another round of feedback once it runs on real data.
 - **Two changes asked for after round 14, not in any mockup yet:**
