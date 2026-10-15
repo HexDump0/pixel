@@ -235,6 +235,16 @@ interface ToolRow {
 const toolParts = (runId: string, since: number) =>
   db.query<ToolRow, [string, number]>("SELECT session_id, data, updated_at FROM parts WHERE run_id = ? AND type = 'tool' AND updated_at >= ? ORDER BY updated_at").all(runId, since);
 
+/** Tool calls of the last 15 minutes, for the tiles' agent lanes. */
+function recentTicks(runId: string, now: number): [string, number, Kind][] {
+  const from = now - 15 * 60_000;
+  return toolParts(runId, from).flatMap((p) => {
+    const part = JSON.parse(p.data);
+    const ts = part.state?.time?.start ?? p.updated_at;
+    return ts >= from ? [[p.session_id, ts, kindOf(part.tool)] as [string, number, Kind]] : [];
+  });
+}
+
 /** 60 buckets of 30 s: how many tool calls started and which kind dominated; "alert" where Pixel had to recover. */
 function activityHistory(runId: string, now: number) {
   const from = now - HISTORY_MS;
@@ -435,10 +445,53 @@ function computeToday(now: number) {
   };
 }
 
+/** Output tokens/s per run over the last 30 minutes in 10-second buckets, rebuilt from finished model calls. */
+const SERIES_MS = 30 * 60_000;
+const SERIES_STEP = 10_000;
+const SERIES_N = SERIES_MS / SERIES_STEP;
+
+function outputSeries(runIds: Set<string>, now: number) {
+  const from = now - SERIES_MS;
+  const out = new Map<string, number[]>();
+  const rows = db
+    .query<{ run: string; created: number; done: number | null; o: number; r: number }, [number]>(
+      `SELECT run_id AS run, created_at AS created, json_extract(data, '$.time.completed') AS done,
+         COALESCE(json_extract(data, '$.tokens.output'), 0) AS o, COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r
+       FROM messages WHERE role = 'assistant' AND created_at >= ?`,
+    )
+    .all(from - 3_600_000);
+  for (const m of rows) {
+    if (!runIds.has(m.run) || !m.done || m.done < from) continue;
+    const tokens = m.o + m.r;
+    if (!tokens) continue;
+    let list = out.get(m.run);
+    if (!list) out.set(m.run, (list = Array(SERIES_N).fill(0)));
+    // Spread the call's output evenly over the time it took.
+    const a = Math.max(m.created, from);
+    const b = Math.max(a + 1, Math.min(m.done, now));
+    const perMs = tokens / Math.max(1000, m.done - m.created);
+    for (let t = a; t < b; ) {
+      const i = Math.floor((t - from) / SERIES_STEP);
+      const end = Math.min(b, from + (i + 1) * SERIES_STEP);
+      if (i >= 0 && i < SERIES_N) list[i] += (perMs * (end - t)) / (SERIES_STEP / 1000);
+      t = end;
+    }
+  }
+  for (const list of out.values()) for (let i = 0; i < list.length; i++) list[i] = Math.round(list[i] * 10) / 10;
+  return out;
+}
+
 export interface FleetRun {
   id: string;
   label: string | null;
+  hue: number | null;
   tps: number[];
+  /** Output tokens/s over the last 30 minutes, 10-second buckets, oldest first (finished model calls only). */
+  tps30: number[];
+  /** Tool calls in the last 15 minutes: [session id, start, kind]. */
+  ticks: [string, number, Kind][];
+  /** The main agent's todo states, in order. */
+  todos: string[];
   now: SubAgent["now"];
   agents: { main: string; subs: SubAgent[] };
   activity: { n: number; k: string | null; alert: boolean }[];
@@ -455,6 +508,7 @@ export async function fleetSnapshot() {
   const runs = listRuns();
   const shown = runs.filter((r) => r.status !== "triaged" || now - (r.triaged_at ?? 0) < 86_400_000);
   const out: FleetRun[] = [];
+  const series = outputSeries(new Set(shown.map((r) => r.id)), now);
   for (const r of shown) {
     const calls = latestCalls(r);
     const subs = subAgents(r, calls);
@@ -464,10 +518,15 @@ export async function fleetSnapshot() {
       r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
     const m = latestMetrics(r.id);
     const size = JSON.parse(r.size);
+    const todos = r.session_id ? db.query<{ data: string }, [string]>("SELECT data FROM todos WHERE session_id = ?").get(r.session_id) : null;
     out.push({
       id: r.id,
       label: r.label,
+      hue: r.hue,
       tps: rates.get(r.id)?.samples.map(Math.round) ?? [],
+      tps30: series.get(r.id) ?? [],
+      ticks: recentTicks(r.id, now),
+      todos: todos ? (JSON.parse(todos.data) as { status: string }[]).map((t) => t.status) : [],
       now: rootNow,
       agents: { main, subs },
       activity: activityHistory(r.id, now),
@@ -559,3 +618,78 @@ export function recentActivity(limit: number, runId?: string) {
 export type FleetSnapshot = Awaited<ReturnType<typeof fleetSnapshot>>;
 export type Lanes = NonNullable<ReturnType<typeof lanes>>;
 export type RecentActivity = ReturnType<typeof recentActivity>;
+
+// ---- the Latest feed ----
+
+/** Timeline kinds worth a line in the fleet's Latest feed (and the catch-up): findings, questions and problems. */
+export const FEED_KINDS = ["finding", "question", "failed", "stopped", "recover", "limit", "done", "idle", "key", "created"];
+
+export function feed(limit: number, since = 0) {
+  const kinds = FEED_KINDS.map(() => "?").join(", ");
+  return db
+    .query<{ id: number; run_id: string; ts: number; actor: string; kind: string; message: string; data: string | null }, any[]>(
+      `SELECT id, run_id, ts, actor, kind, message, data FROM timeline WHERE kind IN (${kinds}) AND ts > ? ORDER BY ts DESC, id DESC LIMIT ?`,
+    )
+    .all(...FEED_KINDS, since, Math.min(Math.max(limit, 1), 1000))
+    .map((t) => ({ ...t, data: t.data ? JSON.parse(t.data) : null }));
+}
+
+// ---- one run over its whole life (Overview charts) ----
+
+/** Tokens/s, cost, context use and tool calls per kind over the run's life, in equal buckets, plus the events worth marking. */
+export function runSeries(runId: string, buckets = 120) {
+  const run = getRun(runId);
+  if (!run) return null;
+  const from = run.started_at ?? run.created_at;
+  const to = Math.max(from + 60_000, run.finished_at ?? Date.now());
+  const step = (to - from) / buckets;
+  const at = (t: number) => Math.min(buckets - 1, Math.max(0, Math.floor((t - from) / step)));
+  const tps = Array(buckets).fill(0);
+  const cost = Array(buckets).fill(0);
+  const context: (number | null)[] = Array(buckets).fill(null);
+  const msgs = db
+    .query<{ session: string; created: number; done: number | null; o: number; r: number; i: number; cr: number; cw: number; cost: number }, [string]>(
+      `SELECT session_id AS session, created_at AS created, json_extract(data, '$.time.completed') AS done,
+         COALESCE(json_extract(data, '$.tokens.output'), 0) AS o, COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r,
+         COALESCE(json_extract(data, '$.tokens.input'), 0) AS i, COALESCE(json_extract(data, '$.tokens.cache.read'), 0) AS cr,
+         COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cw, COALESCE(json_extract(data, '$.cost'), 0) AS cost
+       FROM messages WHERE run_id = ? AND role = 'assistant' ORDER BY created_at`,
+    )
+    .all(runId);
+  for (const m of msgs) {
+    const end = m.done ?? m.created;
+    cost[at(end)] += m.cost;
+    const out = m.o + m.r;
+    if (out) {
+      // spread over the call's duration, as tokens per second of wall time
+      const a = Math.max(m.created, from);
+      const b = Math.max(a + 1, Math.min(end, to));
+      const perMs = out / Math.max(1000, end - m.created);
+      for (let t = a; t < b; ) {
+        const i = at(t);
+        const e = Math.min(b, from + (i + 1) * step);
+        tps[i] += (perMs * (e - t)) / (step / 1000);
+        t = e;
+      }
+    }
+    if (m.session === run.session_id) {
+      const used = m.i + m.o + m.r + m.cr + m.cw;
+      if (used) context[at(end)] = used;
+    }
+  }
+  let sum = 0;
+  const costCum = cost.map((c) => (sum += c));
+  const kinds: Record<string, number[]> = {};
+  for (const p of db.query<{ data: string; updated_at: number }, [string]>("SELECT data, updated_at FROM parts WHERE run_id = ? AND type = 'tool'").all(runId)) {
+    const part = JSON.parse(p.data);
+    const k = kindOf(part.tool);
+    (kinds[k] ??= Array(buckets).fill(0))[at(part.state?.time?.start ?? p.updated_at)]++;
+  }
+  const marks = db
+    .query<{ ts: number; kind: string; message: string }, [string]>(
+      "SELECT ts, kind, message FROM timeline WHERE run_id = ? AND kind IN ('continue', 'recover', 'restart', 'key', 'limit', 'finding', 'question', 'message') ORDER BY ts",
+    )
+    .all(runId);
+  return { from, to, step, tps: tps.map((v) => Math.round(v * 10) / 10), cost: costCum, context, kinds, marks };
+}
+export type RunSeries = NonNullable<ReturnType<typeof runSeries>>;

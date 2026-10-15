@@ -208,7 +208,7 @@ CREATE INDEX IF NOT EXISTS finding_events_at ON finding_events(at);
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "progress_at", "INTEGER"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "progress_at", "INTEGER"], ["runs", "hue", "INTEGER"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -253,6 +253,8 @@ export interface RunRow {
   key_failover: number;
   /** When PROGRESS.md last changed (as Pixel noticed it), null = never written. */
   progress_at: number | null;
+  /** Colour of the run on every chart and tile (0–5), picked at creation so runs live at the same time differ. */
+  hue: number | null;
   size: string;
   status: RunStatus;
   status_detail: string | null;
@@ -281,6 +283,36 @@ export interface RunRow {
   triage_notes: string | null;
   triage_verdict: string | null;
 }
+
+const HUES = 6;
+
+/** A colour for a run created now: the next one in turn, skipping colours that live runs already have. */
+export function pickHue() {
+  const all = db.query<{ hue: number | null; status: RunStatus }, []>("SELECT hue, status FROM runs").all();
+  const used = new Set(all.filter((r) => ACTIVE_STATUSES.includes(r.status) && r.hue != null).map((r) => r.hue));
+  const start = all.length % HUES;
+  for (let k = 0; k < HUES; k++) if (!used.has((start + k) % HUES)) return (start + k) % HUES;
+  return start;
+}
+
+/** Runs from before colours were stored: the same rule, replayed in creation order against the runs alive at the time. */
+function backfillHues() {
+  const all = db.query<{ id: string; hue: number | null; created_at: number; finished_at: number | null }, []>("SELECT id, hue, created_at, finished_at FROM runs ORDER BY created_at").all();
+  if (!all.some((r) => r.hue == null)) return;
+  all.forEach((r, i) => {
+    if (r.hue != null) return;
+    const used = new Set(all.slice(0, i).filter((o) => o.hue != null && (o.finished_at == null || o.finished_at > r.created_at)).map((o) => o.hue));
+    const start = i % HUES;
+    let hue = start;
+    for (let k = 0; k < HUES; k++) if (!used.has((start + k) % HUES)) {
+      hue = (start + k) % HUES;
+      break;
+    }
+    r.hue = hue;
+    db.query("UPDATE runs SET hue = ? WHERE id = ?").run(hue, r.id);
+  });
+}
+backfillHues();
 
 export const getRun = (id: string) =>
   db.query<RunRow, [string]>("SELECT * FROM runs WHERE id = ?").get(id);

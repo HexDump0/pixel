@@ -8,7 +8,7 @@ import { defaultSettings, getSettings, saveSettings, type Settings } from "../se
 import { runtime } from "../runtime/index.ts";
 import { search } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
-import { fleetSnapshot, lanes, recentActivity } from "../fleet.ts";
+import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
 import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
@@ -52,6 +52,8 @@ get("/workbases/index", () => {
 
 get("/fleet", () => fleetSnapshot());
 get("/activity", ({ query }) => recentActivity(Math.min(500, Number(query.get("limit") ?? 200)), query.get("run") ?? undefined));
+get("/feed", ({ query }) => feed(Number(query.get("limit") ?? 50), Number(query.get("since") ?? 0)));
+get("/runs/:id/series", ({ params: { id } }) => runSeries(id) ?? { from: 0, to: 0, step: 1, tps: [], cost: [], context: [], kinds: {}, marks: [] });
 get("/runs/:id/lanes", ({ params: { id }, query }) => lanes(id, Math.min(240, Number(query.get("minutes") ?? 20))) ?? { from: 0, to: 0, lanes: [] });
 
 // ---- settings ----

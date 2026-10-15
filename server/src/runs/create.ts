@@ -1,6 +1,6 @@
 /** Creating runs and bringing them from 'preparing' to a running opencode session. */
 import { existsSync } from "node:fs";
-import { db, getRun, type RunRow, type RunSize } from "../db.ts";
+import { db, getRun, pickHue, type RunRow, type RunSize } from "../db.ts";
 import { getSettings } from "../settings.ts";
 import { agentCredentials, keyFor, providerKeys } from "../providerAccounts.ts";
 import { publish } from "../bus.ts";
@@ -89,7 +89,7 @@ export function createRun(o: NewRun): RunRow {
   );
   const variant = o.variant?.trim();
   if (variant) db.query("UPDATE runs SET variant = ? WHERE id = ?").run(variant, id);
-  db.query("UPDATE runs SET key_id = ?, key_failover = ? WHERE id = ?").run(key?.id ?? null, (o.keyFailover ?? s.keyFailover) ? 1 : 0, id);
+  db.query("UPDATE runs SET key_id = ?, key_failover = ?, hue = ? WHERE id = ?").run(key?.id ?? null, (o.keyFailover ?? s.keyFailover) ? 1 : 0, pickHue(), id);
   ensureWorkbase(id);
   refreshRunFiles(id);
   const keyNote = providerKeys(model.split("/")[0]).length > 1 ? `, key ${(key ?? keyFor(null, model.split("/")[0]))!.name}${(o.keyFailover ?? s.keyFailover) ? " (failover on)" : ""}` : "";

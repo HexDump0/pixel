@@ -87,6 +87,13 @@ get("/runs/:id", ({ params: { id } }) => {
     shell: run.vm_name ? runtime.shellCommand(run) : null,
     watching: isWatching(id),
     report: existsSync(reportPath(id)),
+    // Prompt tokens of every model call: cache rate = read / (input + read + write), as on the Stats page.
+    cache: db
+      .query<{ input: number; read: number; write: number }, [string]>(
+        `SELECT COALESCE(SUM(json_extract(data, '$.tokens.input')), 0) AS input, COALESCE(SUM(json_extract(data, '$.tokens.cache.read')), 0) AS read,
+           COALESCE(SUM(json_extract(data, '$.tokens.cache.write')), 0) AS write FROM messages WHERE run_id = ? AND role = 'assistant'`,
+      )
+      .get(id),
     compare: run.compare_group ? all.filter((r) => r.compare_group === run.compare_group).map((r) => r.id) : [],
     followUps: all.filter((r) => r.parent_run === id).map((r) => r.id),
   };
