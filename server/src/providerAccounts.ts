@@ -14,6 +14,7 @@ import { db } from "./db.ts";
 import { getSettings, saveSettings, type Settings } from "./settings.ts";
 import { cachedCatalog, catalogProvider } from "./catalog.ts";
 import { githubForAgents } from "./github.ts";
+import { opencodeModel, opencodeProviderOptions } from "./modelOverrides.ts";
 
 export type KeyState = "rejected" | "credit" | "ratelimit";
 
@@ -334,7 +335,9 @@ function credentials(s: Settings, run?: { key_id: string | null } | null): { env
   const levels: [string, Record<string, Record<string, unknown>>][] = [];
   for (const a of accounts) if (PROVIDER_LEVELS[a.id]) for (const m of s.models.filter((m) => m.startsWith(`${a.id}/`))) levels.push([m, PROVIDER_LEVELS[a.id]]);
   levels.push(...Object.entries(s.thinkingLevels ?? {}).filter(([, v]) => Object.keys(v).length));
-  if (!accounts.length && !github.mcp && !levels.length) return { env, authJson: s.agentAuthJson };
+  const modelOverrides = Object.entries(s.modelOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
+  const providerOverrides = Object.entries(s.providerOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
+  if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length) return { env, authJson: s.agentAuthJson };
 
   const auth = parseAuth(s.agentAuthJson);
   if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
@@ -357,6 +360,18 @@ function credentials(s: Settings, run?: { key_id: string | null } | null): { env
         ),
       };
     else if (Object.keys(options).length) provider[a.id] = { options };
+  }
+  // Settings changed by hand on the Models page, over the catalogue and the custom endpoint's own.
+  for (const [id, o] of providerOverrides) {
+    const p = (provider[id] ??= {});
+    p.options = { ...p.options, ...opencodeProviderOptions(o) };
+  }
+  for (const [full, o] of modelOverrides) {
+    const [pid, ...rest] = full.split("/");
+    const mid = rest.join("/");
+    const p = (provider[pid] ??= {});
+    p.models ??= {};
+    p.models[mid] = opencodeModel(full, o, p.models[mid]);
   }
   // Custom thinking levels become extra variants on the model, next to opencode's own.
   for (const [full, vs] of levels) {

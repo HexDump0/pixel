@@ -1,7 +1,7 @@
 /** Every provider agents can use, as a list beside the chosen one: how it's connected, its keys and its models. */
 import { Fragment, useEffect } from "react";
 import { queryClient, keys } from "../../lib/query.ts";
-import { IconAlertTriangle, IconArrowRight, IconDots, IconKey, IconPencil, IconPlus, IconSettings, IconUnlink } from "@tabler/icons-react";
+import { IconAdjustments, IconAlertTriangle, IconArrowRight, IconDots, IconKey, IconPencil, IconPlus, IconSettings, IconUnlink } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import { cn } from "../../lib/cn.ts";
@@ -44,6 +44,8 @@ export function Providers({
   onAdd,
   onChanged,
   onTest,
+  onAdvanced,
+  onAdvancedProvider,
 }: {
   providers: ConnectedProvider[];
   settings: Settings;
@@ -55,6 +57,8 @@ export function Providers({
   onAdd: () => void;
   onChanged: () => void;
   onTest: (model: string) => void;
+  onAdvanced: (model: string) => void;
+  onAdvancedProvider: (id: string) => void;
 }) {
   const p = providers.find((x) => x.id === selected) ?? providers[0];
   // Fetch every connected provider's catalogue up front so switching between them is instant.
@@ -112,6 +116,11 @@ export function Providers({
               </div>
             </div>
             <div className="ml-auto flex items-center gap-1.5">
+              <Button size="sm" variant="ghost" onClick={() => onAdvancedProvider(p.id)} title={settings.providerOverrides?.[p.id] ? "Timeouts, options or headers set by hand" : "Timeouts, options and headers for all its models"}>
+                <IconAdjustments {...IC_SM} />
+                Advanced
+                {settings.providerOverrides?.[p.id] && <i className="size-1.5 rounded-full bg-accent" aria-label="changed" />}
+              </Button>
               {p.via.includes("pixel") ? (
                 <>
                   <Button size="sm" onClick={() => onEdit(p)}>
@@ -178,7 +187,7 @@ export function Providers({
             </p>
           )}
 
-          <Catalogue key={p.id} provider={p} settings={settings} onSettings={onSettings} onTest={onTest} />
+          <Catalogue key={p.id} provider={p} settings={settings} onSettings={onSettings} onTest={onTest} onAdvanced={onAdvanced} />
         </div>
       )}
 

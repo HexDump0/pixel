@@ -3,6 +3,7 @@ import { health, leaderboard, speedTests, speedTestStatus, startSpeedTest } from
 import { catalogProvider, catalogProviders } from "../catalog.ts";
 import { liveAbort, livePrompt, liveStatus, modelVariants } from "../liveTest.ts";
 import { cachedCatalog } from "../catalog.ts";
+import { effective } from "../modelOverrides.ts";
 import { getSettings } from "../settings.ts";
 import { addKey, connectedProviders, discoverModels, editKey, orderKeys, removeAccount, removeKey, saveAccount, testKey, type AccountInput, type KeyInput } from "../providerAccounts.ts";
 import { db } from "../db.ts";
@@ -73,15 +74,16 @@ get("/models", async () => {
       const id = rest.join("/");
       const m = cachedCatalog()?.get(provider)?.models.find((x) => x.id === id);
       const p = names.get(provider);
+      const e = effective(full, s, m ?? null);
       return {
         model: full,
         provider,
         providerName: p?.name ?? cachedCatalog()?.get(provider)?.name ?? provider,
         name: m?.name ?? id,
-        context: m?.context ?? p?.custom?.context ?? null,
-        costIn: m?.costIn ?? null,
-        costOut: m?.costOut ?? null,
-        reasoning: m?.reasoning ?? !!p?.custom?.reasoning,
+        context: e.context ?? p?.custom?.context ?? null,
+        costIn: e.costIn,
+        costOut: e.costOut,
+        reasoning: e.reasoning || !!p?.custom?.reasoning,
         connected: !!p,
       };
     }),

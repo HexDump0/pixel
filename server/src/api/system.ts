@@ -11,6 +11,7 @@ import { crossReadGraph } from "../crossreads.ts";
 import { outcomeText, verdictCounts } from "../knowledge.ts";
 import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
 import { notify, notifyStatus } from "../notify.ts";
+import { validateModelOverrides, validateProviderOverrides } from "../modelOverrides.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
 import { stats } from "../stats.ts";
@@ -72,6 +73,8 @@ put("/settings", async ({ req }) => {
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("opencode auth.json must be a JSON object");
   }
   if (patch.thinkingLevels !== undefined) validateThinking(patch.thinkingLevels);
+  if (patch.modelOverrides !== undefined) validateModelOverrides(patch.modelOverrides);
+  if (patch.providerOverrides !== undefined) validateProviderOverrides(patch.providerOverrides);
   saveSettings(Object.fromEntries(Object.entries(patch).filter(([k]) => known.includes(k))) as Partial<Settings>);
   return withDefaults(getSettings());
 });

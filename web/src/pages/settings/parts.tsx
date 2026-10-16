@@ -58,15 +58,32 @@ export function NumberInput({ value, onChange, unit, zero, min = 0, max, width =
 }
 
 /** Editable KEY=value pairs; `tag` can label a row (which provider reads it). */
-export function EnvEditor({ value, onChange, tag, placeholder = "NAME" }: { value: Record<string, string>; onChange: (v: Record<string, string>) => void; tag?: (name: string) => ReactNode; placeholder?: string }) {
+export function EnvEditor({
+  value,
+  onChange,
+  tag,
+  placeholder = "NAME",
+  header,
+  secret = true,
+  add = "Add variable",
+}: {
+  value: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  tag?: (name: string) => ReactNode;
+  placeholder?: string;
+  /** HTTP header names (any case, letters, digits and -) instead of environment variable names. */
+  header?: boolean;
+  secret?: boolean;
+  add?: string;
+}) {
   const rows = Object.entries(value);
   const set = (i: number, k: string, v: string) => onChange(Object.fromEntries(rows.map((r, j) => (j === i ? [k, v] : r))));
   return (
     <div className="flex w-full flex-col gap-1.5">
       {rows.map(([k, v], i) => (
         <div key={i} className="flex items-center gap-1.5">
-          <input className="input w-[38%] min-w-[140px] font-mono text-[12.5px]" value={k} placeholder={placeholder} spellCheck={false} onChange={(e) => set(i, e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"), v)} />
-          <input className="input flex-1 font-mono text-[12.5px]" type="password" autoComplete="off" value={v} placeholder="value" onChange={(e) => set(i, k, e.target.value)} />
+          <input className="input w-[38%] min-w-[140px] font-mono text-[12.5px]" value={k} placeholder={placeholder} spellCheck={false} onChange={(e) => set(i, header ? e.target.value.replace(/[^A-Za-z0-9-]/g, "-") : e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"), v)} />
+          <input className="input flex-1 font-mono text-[12.5px]" type={secret ? "password" : "text"} autoComplete="off" value={v} placeholder="value" onChange={(e) => set(i, k, e.target.value)} />
           {tag && <span className="hidden w-[120px] shrink-0 truncate text-xs text-ink-3 md:block">{tag(k)}</span>}
           <Button size="sm" icon variant="ghost" aria-label={`Remove ${k || "this variable"}`} className="hover:enabled:text-critical" onClick={() => onChange(Object.fromEntries(rows.filter((_, j) => j !== i)))}>
             <IconX {...IC_SM} />
@@ -75,7 +92,7 @@ export function EnvEditor({ value, onChange, tag, placeholder = "NAME" }: { valu
       ))}
       <Button size="xs" variant="ghost" className="self-start text-ink-3" onClick={() => onChange({ ...value, "": "" })} disabled={"" in value}>
         <IconPlus {...IC_XS} />
-        Add variable
+        {add}
       </Button>
     </div>
   );

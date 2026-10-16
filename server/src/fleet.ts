@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { relative, isAbsolute } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { db, getRun, listRuns, type RunRow } from "./db.ts";
+import { overriddenContext } from "./modelOverrides.ts";
 import { publish, subscribe } from "./bus.ts";
 import { recordFleetUpdate } from "./health.ts";
 import { runtime } from "./runtime/index.ts";
@@ -319,6 +320,9 @@ function contextUsed(run: RunRow): number | null {
 /** Context window per model, asked from opencode once and cached. */
 const contextLimits = new Map<string, number | null>();
 async function contextLimit(run: RunRow): Promise<number | null> {
+  // A context set by hand on the Models page wins (opencode only learns it at its next restart).
+  const set = overriddenContext(run.model);
+  if (set) return set;
   if (contextLimits.has(run.model)) return contextLimits.get(run.model)!;
   if (!run.endpoint || !ACTIVE.includes(run.status)) return null;
   try {

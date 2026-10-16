@@ -14,6 +14,7 @@ import { db, listRuns } from "./db.ts";
 import { getSettings } from "./settings.ts";
 import { backupStatus } from "./backup.ts";
 import { cachedCatalog, catalogProviders } from "./catalog.ts";
+import { effective } from "./modelOverrides.ts";
 import { runtime } from "./runtime/index.ts";
 import { isWatching } from "./runs/events.ts";
 import { kindOf } from "./fleet.ts";
@@ -94,12 +95,13 @@ function allTime(): TokenTotals {
 /** USD saved by cache reads for models whose catalogue entry has both an input and a cache-read price. */
 function cacheSavings(byModel: { provider: string; model: string; cacheRead: number }[]) {
   const catalog = cachedCatalog();
+  const s = getSettings();
   let saved = 0;
   let priced = 0;
   let unpriced = 0;
   for (const m of byModel) {
-    const c = catalog?.get(m.provider)?.models.find((x) => x.id === m.model);
-    if (c?.costIn != null && c.costCacheRead != null) {
+    const c = effective(`${m.provider}/${m.model}`, s, catalog?.get(m.provider)?.models.find((x) => x.id === m.model) ?? null);
+    if (c.costIn != null && c.costCacheRead != null) {
       saved += (m.cacheRead * (c.costIn - c.costCacheRead)) / 1e6;
       priced += m.cacheRead;
     } else unpriced += m.cacheRead;

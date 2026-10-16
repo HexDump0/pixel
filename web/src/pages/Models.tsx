@@ -24,6 +24,7 @@ import { Lineup, type LineupRow, type LineupView } from "./models/Lineup.tsx";
 import { Providers } from "./models/Providers.tsx";
 import { SpeedTestDialog } from "./models/SpeedTest.tsx";
 import { hueVar, splitModel } from "./models/common.tsx";
+import { ModelAdvancedDialog, ProviderAdvancedDialog } from "./models/Advanced.tsx";
 
 const WINDOWS: [number, string][] = [
   [15, "15m"],
@@ -46,6 +47,7 @@ export function ModelsPage() {
   const [picked, setPicked] = useState<string | null>(() => params.get("provider"));
   const [live, setLive] = useState<string | null>(() => params.get("test"));
   const [speed, setSpeed] = useState(() => params.get("tab") === "speed");
+  const [advanced, setAdvanced] = useState<{ model: string } | { provider: string } | null>(null);
 
   useEffect(() => {
     if (settingsReq.data) setSettings(settingsReq.data);
@@ -94,6 +96,15 @@ export function ModelsPage() {
     } catch (e: any) {
       toast(e.message ?? String(e), "error");
     }
+  };
+  /** Save one model's or provider's hand-set values (null drops them); errors stay in the dialog. */
+  const saveOverride = async (kind: "modelOverrides" | "providerOverrides", key: string, o: object | null) => {
+    const all: Record<string, any> = { ...(settings?.[kind] ?? {}) };
+    if (o) all[key] = o;
+    else delete all[key];
+    setSettings(await api.saveSettings({ [kind]: all }));
+    refreshModels();
+    setAdvanced(null);
   };
   const saved = async (id: string, offer?: string[]) => {
     setDialog(null);
@@ -224,6 +235,7 @@ export function ModelsPage() {
             }}
             onTest={setLive}
             onProvider={showProvider}
+            onAdvanced={(model) => setAdvanced({ model })}
           />
 
           <div id="providers" className="scroll-mt-20">
@@ -238,6 +250,8 @@ export function ModelsPage() {
               onEdit={(p) => setDialog({ edit: p })}
               onAdd={() => setDialog({})}
               onTest={setLive}
+              onAdvanced={(model) => setAdvanced({ model })}
+              onAdvancedProvider={(provider) => setAdvanced({ provider })}
               onChanged={() => {
                 refreshModels();
                 void providers.reload();
@@ -248,6 +262,23 @@ export function ModelsPage() {
         </>
       )}
 
+      {settings && advanced && "model" in advanced && (
+        <ModelAdvancedDialog
+          model={advanced.model}
+          settings={settings}
+          provider={list.find((p) => p.id === splitModel(advanced.model)[0])}
+          onSave={(o) => saveOverride("modelOverrides", advanced.model, o)}
+          onClose={() => setAdvanced(null)}
+        />
+      )}
+      {settings && advanced && "provider" in advanced && list.find((p) => p.id === advanced.provider) && (
+        <ProviderAdvancedDialog
+          provider={list.find((p) => p.id === advanced.provider)!}
+          settings={settings}
+          onSave={(o) => saveOverride("providerOverrides", advanced.provider, o)}
+          onClose={() => setAdvanced(null)}
+        />
+      )}
       {live && <LiveTest model={live} models={settings?.models ?? []} onClose={() => setLive(null)} />}
       {speed && (
         <SpeedTestDialog

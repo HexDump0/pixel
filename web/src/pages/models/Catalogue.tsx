@@ -3,7 +3,7 @@
  * open a live test. Offered models stay on top; changes save straight away.
  */
 import { useMemo, useState } from "react";
-import { IconPlayerPlay, IconPlus, IconSearch, IconStar, IconStarFilled } from "@tabler/icons-react";
+import { IconAdjustments, IconPlayerPlay, IconPlus, IconSearch, IconStar, IconStarFilled } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
 import { useQuery } from "@tanstack/react-query";
 import { keys } from "../../lib/query.ts";
@@ -14,6 +14,7 @@ import { Button, ErrorBox } from "../../components/ui.tsx";
 import { IC_SM, IC_XS, Nil } from "../../components/ui/bits.tsx";
 import { refreshModels } from "../../components/ModelSelect.tsx";
 import { toast } from "../../components/Toast.tsx";
+import { describeOverride, shortTokens } from "./Advanced.tsx";
 
 const price = (n: number | null) => (n == null ? "" : n === 0 ? "0" : n < 1 ? n.toFixed(2) : String(Math.round(n * 10) / 10));
 const SHOW = 40;
@@ -26,9 +27,9 @@ const FILTERS: [Filter, string, (m: CatalogModel) => boolean][] = [
   ["free", "Free", (m) => m.costIn === 0],
   ["open", "Open weights", (m) => m.openWeights],
 ];
-const ROW = "grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-x-3.5 px-3 md:grid-cols-[28px_minmax(180px,1.5fr)_64px_96px_minmax(0,1fr)_64px]";
+const ROW = "grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-x-3.5 px-3 md:grid-cols-[28px_minmax(180px,1.5fr)_64px_96px_minmax(0,1fr)_90px]";
 
-export function Catalogue({ provider, settings, onSettings, onTest }: { provider: ConnectedProvider; settings: Settings; onSettings: (s: Settings) => void; onTest: (model: string) => void }) {
+export function Catalogue({ provider, settings, onSettings, onTest, onAdvanced }: { provider: ConnectedProvider; settings: Settings; onSettings: (s: Settings) => void; onTest: (model: string) => void; onAdvanced: (model: string) => void }) {
   // Cached per provider (and prefetched by the provider list), so switching providers doesn't flash a loading state.
   const cat = useQuery({ queryKey: keys.catalogProvider(provider.id), queryFn: () => api.catalogProvider(provider.id).catch(() => null), enabled: !provider.custom, staleTime: 10 * 60_000 });
   // OpenCode Zen without any key serves only its free models.
@@ -127,6 +128,11 @@ export function Catalogue({ provider, settings, onSettings, onTest }: { provider
           const on = offered(m.id);
           const isDefault = settings.defaultModel === prefix + m.id;
           const lastOffered = on && !offered(arr[i + 1]?.id ?? "");
+          const o = settings.modelOverrides?.[prefix + m.id];
+          const custom = describeOverride(o);
+          const context = o?.context ?? m.context;
+          const costIn = o?.cost?.input ?? m.costIn;
+          const costOut = o?.cost?.output ?? m.costOut;
           return (
             <div key={m.id} className={cn(ROW, "group min-h-12 border-t border-line-2 py-1.5 first-of-type:border-t-0 hover:bg-s2", lastOffered && i < arr.length - 1 && "border-b border-b-line")}>
               <label className="flex cursor-pointer items-center justify-center">
@@ -136,12 +142,25 @@ export function Catalogue({ provider, settings, onSettings, onTest }: { provider
                 <span className={cn("block truncate text-[13px]", on ? "text-ink" : "text-ink-2")}>{m.name}</span>
                 {m.name !== m.id && <span className="block truncate font-mono text-[11.5px] text-ink-3">{m.id}</span>}
               </span>
-              <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{m.context ? tokens(m.context) : <Nil />}</span>
-              <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{m.costIn == null ? <Nil /> : m.costIn === 0 && m.costOut === 0 ? "free" : `${price(m.costIn)} / ${price(m.costOut)}`}</span>
+              <span className={cn("text-right font-mono text-xs tabular-nums max-md:hidden", o?.context ? "text-ink" : "text-ink-2")} title={o?.context && m.context ? `Set by hand; the catalogue says ${shortTokens(m.context)}` : undefined}>
+                {context ? tokens(context) : <Nil />}
+              </span>
+              <span className={cn("text-right font-mono text-xs tabular-nums max-md:hidden", o?.cost ? "text-ink" : "text-ink-2")}>{costIn == null ? <Nil /> : costIn === 0 && costOut === 0 ? "free" : `${price(costIn)} / ${price(costOut)}`}</span>
               <span className="truncate text-xs text-ink-3 max-md:hidden">
                 {[!m.tools && "no tool calling", m.reasoning && "reasoning", m.openWeights && "open weights", m.status].filter(Boolean).join(", ")}
               </span>
               <span className="flex justify-end gap-0.5">
+                <Button
+                  size="xs"
+                  icon
+                  variant="ghost"
+                  className={cn(custom.length ? "text-ink-2" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100")}
+                  title={custom.length ? `Advanced settings: ${custom.join(", ")}` : "Advanced settings"}
+                  aria-label={`Advanced settings for ${m.id}`}
+                  onClick={() => onAdvanced(prefix + m.id)}
+                >
+                  <IconAdjustments {...IC_SM} />
+                </Button>
                 <Button size="xs" icon variant="ghost" className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100" title="Live test" aria-label={`Live test ${m.id}`} onClick={() => onTest(prefix + m.id)}>
                   <IconPlayerPlay {...IC_SM} />
                 </Button>

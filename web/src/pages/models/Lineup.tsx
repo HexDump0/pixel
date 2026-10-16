@@ -4,7 +4,7 @@
  * agents used that aren't offered follow, dimmed.
  */
 import { useState } from "react";
-import { IconAdjustmentsHorizontal, IconDots, IconMinus, IconPlayerPlay, IconPlus, IconServer2, IconStar, IconStarFilled } from "@tabler/icons-react";
+import { IconAdjustments, IconAdjustmentsHorizontal, IconDots, IconMinus, IconPlayerPlay, IconPlus, IconServer2, IconStar, IconStarFilled } from "@tabler/icons-react";
 import type { Leaderboard, ProviderHealth, Settings } from "../../lib/types.ts";
 import { duration, money, tokens } from "../../lib/format.ts";
 import { cn } from "../../lib/cn.ts";
@@ -12,6 +12,7 @@ import { Button } from "../../components/ui.tsx";
 import { IC_SM, Join, Nil, Val } from "../../components/ui/bits.tsx";
 import { Dialog, Menu, Tip } from "../../components/ui/overlay.tsx";
 import { hueVar, ms, Share, Spark, splitModel } from "./common.tsx";
+import { describeOverride } from "./Advanced.tsx";
 
 export type LineupView = "now" | "runs";
 type Health = ProviderHealth[number];
@@ -49,6 +50,7 @@ export function Lineup({
   onLimit,
   onTest,
   onProvider,
+  onAdvanced,
 }: {
   rows: LineupRow[];
   view: LineupView;
@@ -59,6 +61,7 @@ export function Lineup({
   onLimit: (key: string, l: Limit | null) => Promise<void>;
   onTest: (key: string) => void;
   onProvider: (id: string) => void;
+  onAdvanced: (key: string) => void;
 }) {
   const [limitFor, setLimitFor] = useState<string | null>(null);
   const firstExtra = rows.findIndex((r) => !r.offered);
@@ -87,6 +90,7 @@ export function Lineup({
           const b = r.board;
           const st = h ? STATE[h.state] : undefined;
           const limit = settings.providerLimits[r.key] ?? null;
+          const custom = describeOverride(settings.modelOverrides?.[r.key]);
           return (
             <div key={r.key}>
               {i === firstExtra && <div className="border-t border-line-2 px-3 pt-4 pb-1.5 text-xs text-ink-3">Used by runs, not offered</div>}
@@ -115,6 +119,17 @@ export function Lineup({
                       <button type="button" onClick={() => onProvider(pid)} className="cursor-pointer truncate border-0 bg-transparent p-0 text-left text-ink-3 hover:text-ink hover:underline">
                         {providerName(pid)}
                       </button>
+                      {custom.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onAdvanced(r.key)}
+                          title={`Set by hand: ${custom.join(", ")}`}
+                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink-3 hover:text-ink"
+                        >
+                          <IconAdjustments size={12} stroke={1.75} className="shrink-0" />
+                          <span className="truncate">{custom[0]}{custom.length > 1 && ` and ${custom.length - 1} more`}</span>
+                        </button>
+                      )}
                       {st && (
                         <Tip content={h?.lastEvent ? `${h.lastEvent.kind}: ${h.lastEvent.message}` : undefined}>
                           <span className={cn("inline-flex shrink-0 items-center gap-1.5", st.tone)}>
@@ -187,6 +202,7 @@ export function Lineup({
                     items={[
                       r.offered && !isDefault && { label: "Make default", icon: <IconStar {...IC_SM} />, onSelect: () => onDefault(r.key) },
                       r.offered && { label: limit ? "Edit limits" : "Set limits", icon: <IconAdjustmentsHorizontal {...IC_SM} />, onSelect: () => setLimitFor(r.key) },
+                      { label: "Advanced settings", icon: <IconAdjustments {...IC_SM} />, hint: custom.length ? "changed" : undefined, onSelect: () => onAdvanced(r.key) },
                       { label: `Open ${providerName(pid)}`, icon: <IconServer2 {...IC_SM} />, onSelect: () => onProvider(pid) },
                       "-",
                       r.offered

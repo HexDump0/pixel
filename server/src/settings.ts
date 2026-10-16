@@ -39,6 +39,38 @@ export interface Settings {
   keyFailover: boolean;
   /** Stop the opencode of a run paused or stopped this long, to free its memory; it starts again on resume or a message (0 = never). */
   releaseIdleMin: number;
+  /** Per "provider/model": values put over the catalogue in opencode's config (modelOverrides.ts). */
+  modelOverrides: Record<string, ModelOverride>;
+  /** Per provider id: request timeouts and extra options for all its models. */
+  providerOverrides: Record<string, ProviderOverride>;
+}
+
+/** What you can change about a model by hand; anything left out comes from the catalogue. */
+export interface ModelOverride {
+  /** Tokens. */
+  context?: number;
+  output?: number;
+  input?: number;
+  /** USD per million tokens. */
+  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  reasoning?: boolean;
+  tool_call?: boolean;
+  attachment?: boolean;
+  /** Whether the model accepts a temperature at all. */
+  temperature?: boolean;
+  /** opencode model options, passed to the AI SDK with every request. */
+  options?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface ProviderOverride {
+  /** Milliseconds; 0 turns the timeout off. */
+  timeout?: number;
+  headerTimeout?: number;
+  chunkTimeout?: number;
+  /** Extra opencode provider options (merged over baseURL and the rest). */
+  options?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 export const defaultSettings: Settings = {
@@ -71,6 +103,8 @@ export const defaultSettings: Settings = {
   thinkingLevels: {},
   keyFailover: true,
   releaseIdleMin: 15,
+  modelOverrides: {},
+  providerOverrides: {},
 };
 
 export function getSettings(): Settings {
