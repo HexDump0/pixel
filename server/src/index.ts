@@ -12,6 +12,7 @@ import { writeIndex } from "./knowledge.ts";
 import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
+import { startArchiving } from "./archive.ts";
 import { startFindingsWatch, stopFindingsWatch } from "./findings.ts";
 import { serveShare } from "./findingShare.ts";
 import dashboard from "../../web/index.html";
@@ -74,6 +75,7 @@ else {
 }
 startFleet();
 startFindingsWatch();
+startArchiving();
 startBackupSchedule();
 
 

@@ -9,6 +9,7 @@ import { runtime } from "../runtime/index.ts";
 import { workbasePath, writeIndex, writeTriage } from "../knowledge.ts";
 import { clientFor, credsStale, mustRun, mustSession, restartOpencode as restartWithCurrentKeys, setRun, setStatus, timeline } from "./state.ts";
 import { unwatch, watch } from "./events.ts";
+import { dropArchive } from "../archive.ts";
 import { finish, sendPrompt } from "./lifecycle.ts";
 import { createRun, prepare } from "./create.ts";
 
@@ -204,6 +205,7 @@ export async function deleteRun(id: string, deleteWorkbase: boolean) {
     rmSync(join(config.historyDir, `${id}.git`), { recursive: true, force: true });
   }
   rmSync(join(config.transcriptsDir, `${id}.json`), { force: true });
+  dropArchive(id);
   writeIndex();
   publish("*", "run.deleted", { id });
 }

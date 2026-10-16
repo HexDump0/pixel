@@ -10,6 +10,7 @@ import { onMessage, onPartActivity, onRetry } from "../providers.ts";
 import { clientFor, notifyRun, setRun, timeline } from "./state.ts";
 import { onIdle } from "./lifecycle.ts";
 import { onToolPart } from "../findings.ts";
+import { archivedParts } from "../archive.ts";
 
 export interface Watcher {
   abort: AbortController;
@@ -314,16 +315,26 @@ export async function syncTranscript(id: string) {
   publish(id, "synced", {});
 }
 
-/** Messages with their parts, oldest first. */
-export function transcript(runId: string, sessionId: string, since = 0) {
+/** Messages with their parts, oldest first; parts of archived runs come from their transcript files. */
+export async function transcript(runId: string, sessionId: string, since = 0) {
   const msgs = db
     .query<{ id: string; data: string }, [string, string, number]>("SELECT id, data FROM messages WHERE run_id = ? AND session_id = ? AND created_at >= ? ORDER BY created_at, id")
     .all(runId, sessionId, since);
+  const parts = db
+    .query<{ message_id: string; data: string }, [string, string]>("SELECT message_id, data FROM parts WHERE run_id = ? AND session_id = ? ORDER BY id")
+    .all(runId, sessionId)
+    .map((r) => ({ m: r.message_id, p: JSON.parse(r.data) }));
+  const archived = await archivedParts(runId, sessionId);
+  if (archived.length) {
+    const inDb = new Set(parts.map((x) => x.p.id));
+    parts.push(...archived.filter((x) => !inDb.has(x.p.id)));
+    parts.sort((a, b) => (a.p.id < b.p.id ? -1 : a.p.id > b.p.id ? 1 : 0));
+  }
   const byMsg = new Map<string, any[]>();
-  for (const p of db.query<{ message_id: string; data: string }, [string, string]>("SELECT message_id, data FROM parts WHERE run_id = ? AND session_id = ? ORDER BY id").all(runId, sessionId)) {
-    const list = byMsg.get(p.message_id) ?? [];
-    list.push(JSON.parse(p.data));
-    byMsg.set(p.message_id, list);
+  for (const { m, p } of parts) {
+    const list = byMsg.get(m) ?? [];
+    list.push(p);
+    byMsg.set(m, list);
   }
   return msgs.map((m) => ({ info: JSON.parse(m.data), parts: byMsg.get(m.id) ?? [] }));
 }

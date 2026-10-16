@@ -122,4 +122,17 @@ get("/system", async () => {
   };
 });
 post("/backup", () => runBackup());
+
+/**
+ * SQLite never gives freed space back to the disk (archived transcripts, the old search index).
+ * VACUUM rewrites the file; it blocks Pixel while it runs (seconds for a few hundred MB), so it's
+ * a button, not a schedule. Live events wait in their sockets meanwhile.
+ */
+post("/system/compact", () => {
+  const before = Bun.file(config.dbPath).size;
+  const t = Date.now();
+  db.exec("VACUUM");
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  return { before, after: Bun.file(config.dbPath).size, ms: Date.now() - t };
+});
 get("/stats", ({ query }) => stats(Number(query.get("days") ?? 7), Number(query.get("tz") ?? 0)));

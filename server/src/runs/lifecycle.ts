@@ -60,11 +60,7 @@ export async function finish(id: string) {
   timeline(id, "pixel", "done", "REPORT.md written and the agent is idle: run done");
   notifyRun("done", run, "Run done", `${run.repo}\nREPORT.md is ready.`);
   unwatch(id);
-  try {
-    exportTranscript(id);
-  } catch (e) {
-    console.error("transcript export failed", e);
-  }
+  await exportTranscript(id).catch((e) => console.error("transcript export failed", e));
   await snapshotWorkbase(id, "done").catch(() => {});
   try {
     await runtime.stopVm(run);
@@ -74,9 +70,10 @@ export async function finish(id: string) {
   }
 }
 
-export function exportTranscript(id: string) {
+export async function exportTranscript(id: string) {
   const sessions = db.query<{ id: string; parent_id: string | null; title: string | null }, [string]>("SELECT id, parent_id, title FROM sessions WHERE run_id = ?").all(id);
-  const out = sessions.map((s) => ({ ...s, messages: transcript(id, s.id) }));
+  const out = [];
+  for (const s of sessions) out.push({ ...s, messages: await transcript(id, s.id) });
   writeFileSync(join(config.transcriptsDir, `${id}.json`), JSON.stringify(out));
 }
 

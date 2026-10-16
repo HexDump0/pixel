@@ -3,6 +3,7 @@ import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import { bytes, dateTime } from "../lib/format.ts";
 import { Badge, Button, Card, Empty, ErrorBox, PageHeader, Stat } from "../components/ui.tsx";
+import { toast } from "../components/Toast.tsx";
 
 export function SystemPage() {
   const sys = useAsync(api.system, []);
@@ -11,6 +12,13 @@ export function SystemPage() {
   const memUsed = s.host.memTotal - s.host.memFree;
   const memTotalGiB = s.host.memTotal / 1024 ** 3;
   const image = s.runtime.image;
+  const compact = () => {
+    toast("Compacting the database…");
+    api.compactDb().then(
+      (r) => (toast(`Database ${bytes(r.before)} → ${bytes(r.after)} in ${(r.ms / 1000).toFixed(1)} s`), sys.reload()),
+      (e) => toast(`Compacting failed: ${e.message}`, "error"),
+    );
+  };
 
   return (
     <div>
@@ -30,7 +38,15 @@ export function SystemPage() {
           hint={s.committedMemoryGiB > memTotalGiB - 1.5 ? "over budget: stop or delete some machines" : `of ~${(memTotalGiB - 1.5).toFixed(0)} GiB available`}
         />
         <Stat label="Data disk free" value={s.host.disk ? bytes(s.host.disk.free) : "–"} hint={s.host.disk ? `of ${bytes(s.host.disk.total)} · ${s.host.dataDir}` : undefined} />
-        <Stat label="Database" value={bytes(s.dbBytes)} />
+        <Stat
+          label="Database"
+          value={bytes(s.dbBytes)}
+          hint={
+            <button className="underline decoration-dotted hover:text-ink" title="Give space freed by archived transcripts back to the disk. Pixel pauses while it runs (seconds to a minute)." onClick={compact}>
+              Compact
+            </button>
+          }
+        />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Runtime">

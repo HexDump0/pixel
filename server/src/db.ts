@@ -243,6 +243,8 @@ CREATE INDEX IF NOT EXISTS tool_calls_run ON tool_calls(run_id, updated_at);
 CREATE INDEX IF NOT EXISTS tool_calls_session ON tool_calls(session_id, updated_at);
 CREATE INDEX IF NOT EXISTS tool_calls_updated ON tool_calls(updated_at);
 CREATE INDEX IF NOT EXISTS tool_calls_child ON tool_calls(run_id, updated_at) WHERE child IS NOT NULL;
+-- Runs whose parts are being moved to transcript files (archive.ts): their tool_calls rows stay.
+CREATE TABLE IF NOT EXISTS parts_archiving (run_id TEXT PRIMARY KEY);
 `);
 /** The tool_calls row for parts row `p` (NEW in a trigger, the table alias in the backfill). */
 const toolCallRow = (p: string) => {
@@ -268,7 +270,7 @@ CREATE TRIGGER tool_calls_update AFTER UPDATE ON parts WHEN NEW.type = 'tool' AN
   DELETE FROM tool_calls WHERE id = NEW.id;
   INSERT INTO tool_calls ${toolCallRow("NEW")};
 END;
-CREATE TRIGGER tool_calls_delete AFTER DELETE ON parts WHEN OLD.type = 'tool' BEGIN
+CREATE TRIGGER tool_calls_delete AFTER DELETE ON parts WHEN OLD.type = 'tool' AND NOT EXISTS (SELECT 1 FROM parts_archiving WHERE run_id = OLD.run_id) BEGIN
   DELETE FROM tool_calls WHERE id = OLD.id;
 END;
 `);

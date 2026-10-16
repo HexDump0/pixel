@@ -208,4 +208,5 @@ export const api = {
   modelVariants: () => request<Record<string, string[]>>("GET", "/models/variants"),
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
+  compactDb: () => request<{ before: number; after: number; ms: number }>("POST", "/system/compact"),
 };
