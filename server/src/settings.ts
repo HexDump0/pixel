@@ -37,6 +37,8 @@ export interface Settings {
   thinkingLevels: Record<string, Record<string, Record<string, unknown>>>;
   /** New runs switch to the provider's next key when theirs runs out or is rejected. */
   keyFailover: boolean;
+  /** Stop the opencode of a run paused or stopped this long, to free its memory; it starts again on resume or a message (0 = never). */
+  releaseIdleMin: number;
 }
 
 export const defaultSettings: Settings = {
@@ -68,6 +70,7 @@ export const defaultSettings: Settings = {
   providerLimits: {},
   thinkingLevels: {},
   keyFailover: true,
+  releaseIdleMin: 15,
 };
 
 export function getSettings(): Settings {

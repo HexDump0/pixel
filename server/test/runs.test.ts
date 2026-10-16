@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { getRun, db } from "../src/db.ts";
 import { saveSettings } from "../src/settings.ts";
 import { config } from "../src/config.ts";
-import { createRun, startWatchdog, stopWatchdog, controls } from "../src/runs/index.ts";
+import { clientFor, createRun, startWatchdog, stopWatchdog, controls } from "../src/runs/index.ts";
+import { releaseIdle } from "../src/runs/release.ts";
 import { seedTemplates } from "../src/templates.ts";
 import { addKey, providerKeys, saveAccount } from "../src/providerAccounts.ts";
 
@@ -137,5 +138,28 @@ describe("run lifecycle", () => {
     expect(getRun(run.id)!.continues).toBe(0);
     await controls.sendMessage(run.id, `REPORT ${join(config.workbasesDir, run.id, "REPORT.md")}`);
     await until("done", () => getRun(run.id)!.status === "done");
+  });
+
+  test("a run paused for a while frees its memory, and resuming brings opencode back on the same session", async () => {
+    const run = createRun({ repo, templateId: "audit", name: "sleepy", promptOverride: "just stop" });
+    await until("stopped", () => getRun(run.id)!.status === "stopped");
+    const session = getRun(run.id)!.session_id;
+    const client = clientFor(getRun(run.id)!);
+    expect(await client.healthy()).toBe(true);
+
+    saveSettings({ releaseIdleMin: 15 });
+    await releaseIdle(); // stopped just now: too soon
+    expect(getRun(run.id)!.asleep).toBe(0);
+    await releaseIdle(Date.now() + 16 * 60_000);
+    expect(getRun(run.id)!.asleep).toBe(1);
+    expect(await client.healthy()).toBe(false);
+    expect(timelineKinds(run.id)).toContain("sleep");
+
+    await controls.resumeRun(run.id);
+    const r = getRun(run.id)!;
+    expect(r.asleep).toBe(0);
+    expect(r.session_id).toBe(session);
+    expect(await client.healthy()).toBe(true);
+    await controls.stopRun(run.id);
   });
 });

@@ -2,6 +2,8 @@
 import type { PublicRun } from "../../../server/src/runs/state.ts";
 import type { Settings } from "../../../server/src/settings.ts";
 import type { AgentPaths } from "../../../server/src/runtime/types.ts";
+import type { ProcessInfo, ProcessKind } from "../../../server/src/runtime/procs.ts";
+import type { PixelHealth } from "../../../server/src/health.ts";
 import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries } from "../../../server/src/fleet.ts";
 import type { FindingEvent, FindingRow, Verdict } from "../../../server/src/findings.ts";
 import type { Leaderboard, ProviderHealth } from "../../../server/src/providers.ts";
@@ -13,6 +15,7 @@ export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, Re
 export type Finding = FindingRow;
 export type { FindingEvent, Verdict };
 export type { CatalogList, CatalogModel, CatalogProvider, ConnectedProvider, PublicKey };
+export type { ProcessInfo, ProcessKind, PixelHealth };
 
 export interface SpeedTestRow {
   id: number;

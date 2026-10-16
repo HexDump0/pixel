@@ -1,5 +1,6 @@
 /** Little pieces the Wall and the run view repeat: hue chip, status chip, severity dot, waves, rings. */
 import { useId, type ReactNode } from "react";
+import { IconZzz } from "@tabler/icons-react";
 import { cn } from "../../lib/cn.ts";
 import type { Health } from "../../lib/health.ts";
 
@@ -42,6 +43,11 @@ export function StatusChip({ h, className }: { h: Health; className?: string }) 
     <span className={cn("inline-flex shrink-0 items-center gap-[7px] text-[12.5px] whitespace-nowrap text-ink-2", WORD[h.s], className)}>
       <span className={cn("size-1.5 shrink-0 rounded-full bg-ink-3", DOT[h.s])} />
       {h.label}
+      {h.asleep && (
+        <span title="Memory freed: opencode starts again when you resume or message the run" className="inline-flex text-ink-3">
+          <IconZzz size={13} stroke={1.75} aria-label="memory freed" />
+        </span>
+      )}
     </span>
   );
 }

@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS share_tokens_finding ON share_tokens(run_id, finding_
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"], ["runs", "status_at", "INTEGER"], ["runs", "asleep", "INTEGER NOT NULL DEFAULT 0"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -277,41 +277,56 @@ END;
 if (!hadToolCalls) db.exec(`INSERT OR REPLACE INTO tool_calls ${toolCallRow("p")} FROM parts p WHERE p.type = 'tool' AND json_valid(p.data)`);
 
 /*
- * Prompt tokens per run (uncached input, cache reads, cache writes) from its assistant messages, kept
- * by triggers. The run view asks for these after every message; summing every message each time
- * grew with the run's length.
+ * Model calls: one row per assistant message with its time, tokens and cost as plain columns, kept
+ * by triggers like tool_calls. Spend, tok/s series, run charts, context use and the Stats page read
+ * these instead of parsing every message's JSON.
  */
-const hadMessageTotals = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_totals'").get();
-const tok = (row: string, path: string) => `COALESCE(json_extract(${row}.data, '$.tokens.${path}'), 0)`;
-const addTotals = (row: string, sign: string) => `
-  INSERT INTO message_totals (run_id, input, cache_read, cache_write)
-  VALUES (${row}.run_id, ${sign}${tok(row, "input")}, ${sign}${tok(row, "cache.read")}, ${sign}${tok(row, "cache.write")})
-  ON CONFLICT(run_id) DO UPDATE SET input = input + excluded.input, cache_read = cache_read + excluded.cache_read, cache_write = cache_write + excluded.cache_write;`;
+db.exec("DROP TABLE IF EXISTS message_totals; DROP TRIGGER IF EXISTS message_totals_insert; DROP TRIGGER IF EXISTS message_totals_update; DROP TRIGGER IF EXISTS message_totals_delete;");
+const hadModelCalls = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_calls'").get();
 db.exec(`
-CREATE TABLE IF NOT EXISTS message_totals (
-  run_id      TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-  input       INTEGER NOT NULL DEFAULT 0,
-  cache_read  INTEGER NOT NULL DEFAULT 0,
-  cache_write INTEGER NOT NULL DEFAULT 0
+CREATE TABLE IF NOT EXISTS model_calls (
+  id          TEXT PRIMARY KEY,               -- the message id
+  run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  session_id  TEXT NOT NULL,
+  provider    TEXT,
+  model       TEXT,
+  created     INTEGER NOT NULL,
+  completed   INTEGER,
+  input       INTEGER NOT NULL,
+  output      INTEGER NOT NULL,
+  reasoning   INTEGER NOT NULL,
+  cache_read  INTEGER NOT NULL,
+  cache_write INTEGER NOT NULL,
+  cost        REAL NOT NULL,
+  error       TEXT                            -- error name, if the call failed
 );
-DROP TRIGGER IF EXISTS message_totals_insert;
-DROP TRIGGER IF EXISTS message_totals_update;
-DROP TRIGGER IF EXISTS message_totals_delete;
-CREATE TRIGGER message_totals_insert AFTER INSERT ON messages WHEN NEW.role = 'assistant' AND json_valid(NEW.data) BEGIN ${addTotals("NEW", "")} END;
-CREATE TRIGGER message_totals_update AFTER UPDATE OF data ON messages WHEN NEW.role = 'assistant' AND json_valid(OLD.data) AND json_valid(NEW.data) BEGIN
-  ${addTotals("OLD", "-")}
-  ${addTotals("NEW", "")}
+CREATE INDEX IF NOT EXISTS model_calls_created ON model_calls(created);
+CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls(run_id, created);
+CREATE INDEX IF NOT EXISTS model_calls_session ON model_calls(session_id, created);
+`);
+const modelCallRow = (m: string) => {
+  const j = (path: string) => `json_extract(${m}.data, '$.${path}')`;
+  const n = (path: string) => `COALESCE(${j(path)}, 0)`;
+  return `SELECT ${m}.id, ${m}.run_id, ${m}.session_id, ${j("providerID")}, ${j("modelID")}, ${m}.created_at, ${j("time.completed")},
+    ${n("tokens.input")}, ${n("tokens.output")}, ${n("tokens.reasoning")}, ${n("tokens.cache.read")}, ${n("tokens.cache.write")}, ${n("cost")}, ${j("error.name")}`;
+};
+db.exec(`
+DROP TRIGGER IF EXISTS model_calls_insert;
+DROP TRIGGER IF EXISTS model_calls_update;
+DROP TRIGGER IF EXISTS model_calls_delete;
+CREATE TRIGGER model_calls_insert AFTER INSERT ON messages WHEN NEW.role = 'assistant' AND json_valid(NEW.data) BEGIN
+  DELETE FROM model_calls WHERE id = NEW.id;
+  INSERT INTO model_calls ${modelCallRow("NEW")};
 END;
--- Only an update here: when a run is deleted its messages go with it, and inserting a row for the gone run would fail the delete.
-CREATE TRIGGER message_totals_delete AFTER DELETE ON messages WHEN OLD.role = 'assistant' AND json_valid(OLD.data) BEGIN
-  UPDATE message_totals SET input = input - ${tok("OLD", "input")}, cache_read = cache_read - ${tok("OLD", "cache.read")}, cache_write = cache_write - ${tok("OLD", "cache.write")}
-  WHERE run_id = OLD.run_id;
+CREATE TRIGGER model_calls_update AFTER UPDATE OF data ON messages WHEN NEW.role = 'assistant' AND json_valid(NEW.data) BEGIN
+  DELETE FROM model_calls WHERE id = NEW.id;
+  INSERT INTO model_calls ${modelCallRow("NEW")};
+END;
+CREATE TRIGGER model_calls_delete AFTER DELETE ON messages WHEN OLD.role = 'assistant' BEGIN
+  DELETE FROM model_calls WHERE id = OLD.id;
 END;
 `);
-if (!hadMessageTotals)
-  db.exec(`INSERT INTO message_totals (run_id, input, cache_read, cache_write)
-    SELECT m.run_id, SUM(${tok("m", "input")}), SUM(${tok("m", "cache.read")}), SUM(${tok("m", "cache.write")})
-    FROM messages m WHERE m.role = 'assistant' AND json_valid(m.data) AND m.run_id IN (SELECT id FROM runs) GROUP BY m.run_id`);
+if (!hadModelCalls) db.exec(`INSERT OR REPLACE INTO model_calls ${modelCallRow("m")} FROM messages m WHERE m.role = 'assistant' AND json_valid(m.data) AND m.run_id IN (SELECT id FROM runs)`);
 
 export type RunStatus =
   | "preparing"
@@ -377,6 +392,10 @@ export interface RunRow {
   started_at: number | null;
   finished_at: number | null;
   last_activity: number | null;
+  /** When the status last changed. */
+  status_at: number | null;
+  /** 1 while Pixel has stopped the run's opencode to free memory (paused or stopped runs); it starts again on resume or a message. */
+  asleep: number;
   triaged_at: number | null;
   triage_notes: string | null;
   triage_verdict: string | null;

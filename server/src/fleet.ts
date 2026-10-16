@@ -11,6 +11,7 @@ import { relative, isAbsolute } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { db, getRun, listRuns, type RunRow } from "./db.ts";
 import { publish, subscribe } from "./bus.ts";
+import { recordFleetUpdate } from "./health.ts";
 import { runtime } from "./runtime/index.ts";
 import { crossReadGraph } from "./crossreads.ts";
 import { OpencodeClient } from "./opencode.ts";
@@ -309,9 +310,7 @@ function subAgents(run: RunRow): SubAgent[] {
 function contextUsed(run: RunRow): number | null {
   if (!run.session_id) return null;
   // The newest message may still be streaming with zero tokens; use the latest one that has counts.
-  for (const m of db.query<{ data: string }, [string]>("SELECT data FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 5").all(run.session_id)) {
-    const t = JSON.parse(m.data).tokens;
-    const n = t ? (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
+  for (const { n } of db.query<{ n: number }, [string]>("SELECT input + output + reasoning + cache_read + cache_write AS n FROM model_calls WHERE session_id = ? ORDER BY created DESC LIMIT 5").all(run.session_id)) {
     if (n > 0) return n;
   }
   return null;
@@ -373,11 +372,7 @@ function computeToday(now: number) {
   const hours = Math.floor((now - start) / 3_600_000) + 1;
   const rows = db
     .query<{ t: number; run: string; i: number; o: number; r: number; cr: number; cw: number; cost: number }, [number]>(
-      `SELECT created_at AS t, run_id AS run,
-         COALESCE(json_extract(data, '$.tokens.input'), 0) AS i, COALESCE(json_extract(data, '$.tokens.output'), 0) AS o,
-         COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r, COALESCE(json_extract(data, '$.tokens.cache.read'), 0) AS cr,
-         COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cw, COALESCE(json_extract(data, '$.cost'), 0) AS cost
-       FROM messages WHERE created_at >= ? AND role = 'assistant'`,
+      "SELECT created AS t, run_id AS run, input AS i, output AS o, reasoning AS r, cache_read AS cr, cache_write AS cw, cost FROM model_calls WHERE created >= ?",
     )
     .all(yStart);
   const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
@@ -438,9 +433,7 @@ function outputSeries(runIds: Set<string>, now: number) {
   const out = new Map<string, number[]>();
   const rows = db
     .query<{ run: string; created: number; done: number | null; o: number; r: number }, [number]>(
-      `SELECT run_id AS run, created_at AS created, json_extract(data, '$.time.completed') AS done,
-         COALESCE(json_extract(data, '$.tokens.output'), 0) AS o, COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r
-       FROM messages WHERE role = 'assistant' AND created_at >= ?`,
+      "SELECT run_id AS run, created, completed AS done, output AS o, reasoning AS r FROM model_calls WHERE created >= ?",
     )
     .all(from - 3_600_000);
   for (const m of rows) {
@@ -611,6 +604,7 @@ async function pushFleet() {
     fleet.ts = now;
     if (Object.keys(patch.runs).length || patch.removed.length || patch.top) publish("*", "fleet.patch", patch);
     const ms = Date.now() - now;
+    recordFleetUpdate(ms);
     if (ms > 250) console.warn(`fleet update took ${ms} ms (${todo.length} runs rebuilt)`);
   } catch (e) {
     console.error("fleet update failed", e);
@@ -721,11 +715,7 @@ export function runSeries(runId: string, buckets = 120) {
   const context: (number | null)[] = Array(buckets).fill(null);
   const msgs = db
     .query<{ session: string; created: number; done: number | null; o: number; r: number; i: number; cr: number; cw: number; cost: number }, [string]>(
-      `SELECT session_id AS session, created_at AS created, json_extract(data, '$.time.completed') AS done,
-         COALESCE(json_extract(data, '$.tokens.output'), 0) AS o, COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r,
-         COALESCE(json_extract(data, '$.tokens.input'), 0) AS i, COALESCE(json_extract(data, '$.tokens.cache.read'), 0) AS cr,
-         COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cw, COALESCE(json_extract(data, '$.cost'), 0) AS cost
-       FROM messages WHERE run_id = ? AND role = 'assistant' ORDER BY created_at`,
+      "SELECT session_id AS session, created, completed AS done, output AS o, reasoning AS r, input AS i, cache_read AS cr, cache_write AS cw, cost FROM model_calls WHERE run_id = ? ORDER BY created",
     )
     .all(runId);
   for (const m of msgs) {

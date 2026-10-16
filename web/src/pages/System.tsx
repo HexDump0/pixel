@@ -4,6 +4,8 @@ import { useAsync } from "../lib/hooks.ts";
 import { bytes, dateTime } from "../lib/format.ts";
 import { Badge, Button, Card, Empty, ErrorBox, PageHeader, Stat } from "../components/ui.tsx";
 import { toast } from "../components/Toast.tsx";
+import { useQuery } from "@tanstack/react-query";
+import { Meter } from "../components/charts/Meter.tsx";
 
 export function SystemPage() {
   const sys = useAsync(api.system, []);
@@ -48,6 +50,7 @@ export function SystemPage() {
           }
         />
       </div>
+      <PixelHealthCard />
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Runtime">
           {s.runtime.error ? (
@@ -125,5 +128,30 @@ export function SystemPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
+const count = (v: number) => Math.round(v).toLocaleString();
+
+/** How Pixel itself is doing over the last day, a sample a minute (since its last restart). */
+function PixelHealthCard() {
+  const q = useQuery({ queryKey: ["pixel-health"], queryFn: api.health, refetchInterval: 60_000 });
+  const xs = q.data?.samples ?? [];
+  const pts = (pick: (x: (typeof xs)[number]) => number) => xs.map((x) => [x.t, pick(x)] as [number, number]);
+  const last = xs[xs.length - 1];
+  return (
+    <Card title="Pixel" className="mb-4">
+      <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-sm:grid-cols-1">
+        <Meter title="Event-loop lag" points={pts((x) => x.lagMax)} fmt={ms} color="var(--r1)" warn={100} bad={500} note={last && <small className="font-mono text-[11.5px] text-ink-3">avg {ms(last.lagAvg)}</small>} />
+        <Meter title="Slowest request" points={pts((x) => x.requestMax)} fmt={ms} color="var(--r2)" warn={500} bad={2000} note={last && <small className="font-mono text-[11.5px] text-ink-3">{count(last.requests)}/min</small>} />
+        <Meter title="Fleet update" points={pts((x) => x.fleetMax)} fmt={ms} color="var(--r0)" warn={100} bad={250} />
+        <Meter title="CPU" points={pts((x) => x.cpu)} fmt={(v) => `${Math.round(v)}%`} color="var(--r5)" warn={50} bad={90} />
+        <Meter title="Memory" points={pts((x) => x.rss)} fmt={bytes} color="var(--r3)" />
+        <Meter title="Database writes" points={pts((x) => x.writes)} fmt={count} color="var(--r4)" note={<small className="font-mono text-[11.5px] text-ink-3">/min</small>} />
+        <Meter title="Database" points={pts((x) => x.dbBytes + x.walBytes)} fmt={bytes} color="var(--r1)" note={last && <small className="font-mono text-[11.5px] text-ink-3">WAL {bytes(last.walBytes)}</small>} />
+        <Meter title="Open tabs" points={pts((x) => x.tabs)} fmt={count} color="var(--r2)" />
+      </div>
+    </Card>
   );
 }

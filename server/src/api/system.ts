@@ -14,6 +14,7 @@ import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
 import { stats } from "../stats.ts";
+import { healthSamples } from "../health.ts";
 import { get, post, put, readJson } from "./router.ts";
 
 // ---- knowledge ----
@@ -118,7 +119,8 @@ get("/system", async () => {
     committedMemoryGiB: runs.filter((r) => RESERVING.includes(r.status)).reduce((n, r) => n + JSON.parse(r.size).memoryGiB, 0),
     activeRuns: runs.filter((r) => ["preparing", "running", "recovering"].includes(r.status)).length,
     backup: backupStatus(),
-    dbBytes: Bun.file(config.dbPath).size,
+    // With the WAL, which holds recent writes until a checkpoint folds them into the file.
+    dbBytes: Bun.file(config.dbPath).size + Bun.file(`${config.dbPath}-wal`).size,
   };
 });
 post("/backup", () => runBackup());
@@ -128,6 +130,8 @@ post("/backup", () => runBackup());
  * VACUUM rewrites the file; it blocks Pixel while it runs (seconds for a few hundred MB), so it's
  * a button, not a schedule. Live events wait in their sockets meanwhile.
  */
+get("/system/health", () => healthSamples());
+
 post("/system/compact", () => {
   const before = Bun.file(config.dbPath).size;
   const t = Date.now();

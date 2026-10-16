@@ -156,6 +156,7 @@ export function SettingsPage() {
             <NumberField label="Stop when machine disk is at (%)" value={s.diskFullPercent} onChange={(v) => update("diskFullPercent", v)} />
             <NumberField label="Workbase size limit (GiB)" value={s.workbaseLimitGiB} onChange={(v) => update("workbaseLimitGiB", v)} />
             <NumberField label="Workbase history snapshot every (min)" value={s.historyIntervalMin} onChange={(v) => update("historyIntervalMin", v)} hint="0 = off" />
+            <NumberField label="Free memory of paused or stopped runs after (min)" value={s.releaseIdleMin} onChange={(v) => update("releaseIdleMin", v)} hint="Stops their opencode until you resume or message them; 0 = never" />
             <Field label="Continue message" className="sm:col-span-2">
               <input className="input" value={s.continueMessage} onChange={(e) => update("continueMessage", e.target.value)} />
             </Field>

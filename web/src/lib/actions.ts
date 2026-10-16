@@ -29,6 +29,11 @@ export const act = {
     if (confirm("Abort what the agent is doing right now? The run will be paused.")) void runAct(api.control(id, "abort"), "Aborted");
   },
   restartOpencode: (id: string) => runAct(api.control(id, "restart-opencode"), "opencode restarted"),
+  release: (id: string) =>
+    api.release(id).then(
+      (r) => (toast(r.released ? "Memory freed" : "The agent is still finishing a step; try again in a moment"), void reloadRuns()),
+      fail,
+    ),
   autopilot: (r: Run) => runAct(api.setAutopilot(r.id, !r.autopilot), r.autopilot ? "Autopilot off" : "Autopilot on"),
   resetCounters: (id: string) => runAct(api.control(id, "reset-counters"), "Counters reset"),
   markDone: (id: string) => {

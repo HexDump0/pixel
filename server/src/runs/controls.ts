@@ -150,6 +150,7 @@ export async function vmAction(id: string, action: VmAction, snapshot?: string) 
   switch (action) {
     case "start":
       await runtime.startVm(run);
+      setRun(id, { asleep: 0 });
       timeline(id, "user", "vm", "Machine started");
       return;
     case "stop":

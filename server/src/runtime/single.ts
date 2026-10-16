@@ -14,6 +14,7 @@ import { config } from "../config.ts";
 import type { RunRow, RunSize } from "../db.ts";
 import type { Credentials, Metrics, PrepareOptions } from "./types.ts";
 import { launchDir, ProcessRuntime, sh } from "./process.ts";
+import { readProc, type ProcessInfo } from "./procs.ts";
 
 const GiB = 1024 ** 3;
 /** Agent uids are allocated upwards from here and never reused (workbases keep their owner). */
@@ -367,6 +368,16 @@ export class SingleRuntime extends ProcessRuntime {
 
   shellCommand(run: RunRow) {
     return `su -s /bin/bash ${this.user(run)} -c 'cd ${this.paths(run).target} && exec bash'`;
+  }
+
+  /** Every process of the agent's user, so things it started and left running (fuzzers, servers) count too. */
+  async processes(run: RunRow): Promise<ProcessInfo[]> {
+    if (!existsSync(this.uidPath(run))) return [];
+    const pids = (recentProcs().get(this.uid(run)) ?? []).map((p) => p.pid);
+    return this.sampler(run).info(
+      pids.flatMap((pid) => readProc(pid) ?? []),
+      this.pid(run),
+    );
   }
 
   async listMachines() {

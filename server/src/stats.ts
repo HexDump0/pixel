@@ -72,12 +72,8 @@ function finish<T extends TokenTotals>(t: T): T {
   return t;
 }
 
-const CALL_COLUMNS = `created_at AS t, run_id AS run,
-  json_extract(data, '$.providerID') AS provider, json_extract(data, '$.modelID') AS model,
-  COALESCE(json_extract(data, '$.tokens.input'), 0) AS i, COALESCE(json_extract(data, '$.tokens.output'), 0) AS o,
-  COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS r, COALESCE(json_extract(data, '$.tokens.cache.read'), 0) AS cr,
-  COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cw, COALESCE(json_extract(data, '$.cost'), 0) AS cost,
-  json_extract(data, '$.error.name') AS err, json_extract(data, '$.time.completed') AS done`;
+const CALL_COLUMNS = `created AS t, run_id AS run, provider, model, input AS i, output AS o, reasoning AS r,
+  cache_read AS cr, cache_write AS cw, cost, error AS err, completed AS done`;
 
 /** Bucket size for a window: hourly up to two days, 6-hourly up to two weeks, daily beyond. */
 const bucketFor = (days: number) => (days <= 2 ? HOUR : days <= 14 ? 6 * HOUR : DAY);
@@ -88,7 +84,7 @@ function allTime(): TokenTotals {
       `SELECT COUNT(*) AS calls, COALESCE(SUM(i), 0) AS input, COALESCE(SUM(o), 0) AS output, COALESCE(SUM(r), 0) AS reasoning,
          COALESCE(SUM(cr), 0) AS cacheRead, COALESCE(SUM(cw), 0) AS cacheWrite, COALESCE(SUM(cost), 0) AS cost,
          COALESCE(SUM(err IS NOT NULL AND err != 'MessageAbortedError'), 0) AS errors
-       FROM (SELECT ${CALL_COLUMNS} FROM messages WHERE role = 'assistant')`,
+       FROM (SELECT ${CALL_COLUMNS} FROM model_calls)`,
     )
     .get()!;
   return finish({ ...r, hitRate: null });
@@ -221,7 +217,7 @@ export async function stats(days: number, tzOffsetMin = 0) {
   const from = to - Math.ceil((days * DAY) / bucket) * bucket;
   // Load the model catalogue (cached for a day) so cache savings can be priced.
   await catalogProviders().catch(() => null);
-  const calls = db.query<CallRow, [number]>(`SELECT ${CALL_COLUMNS} FROM messages WHERE role = 'assistant' AND created_at >= ? ORDER BY created_at`).all(from);
+  const calls = db.query<CallRow, [number]>(`SELECT ${CALL_COLUMNS} FROM model_calls WHERE created >= ? ORDER BY created`).all(from);
 
   const totals = zero();
   const series = Array.from({ length: (to - from) / bucket }, (_, i) => ({ t: from + i * bucket, ...zero() }));

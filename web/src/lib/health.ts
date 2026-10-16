@@ -12,6 +12,8 @@ export interface Health {
   s: HealthState;
   label: string;
   tone: "" | "warn" | "bad";
+  /** Pixel stopped its opencode to free memory; a resume or message starts it again. */
+  asleep?: boolean;
 }
 
 /** "12m", "3h", "45s" */
@@ -51,9 +53,9 @@ export function health(r: Run, fleet?: FleetRun | null, limits = { maxOom: 3, ma
     case "preparing":
       return { s: "preparing", label: "Preparing", tone: "" };
     case "stopped":
-      return { s: "stopped", label: "Stopped", tone: "warn" };
+      return { s: "stopped", label: "Stopped", tone: "warn", asleep: !!r.asleep };
     case "paused":
-      return { s: "paused", label: "Paused", tone: "" };
+      return { s: "paused", label: "Paused", tone: "", asleep: !!r.asleep };
     case "done":
       return { s: "done", label: "Done", tone: "" };
     case "triaged":

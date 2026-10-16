@@ -30,6 +30,7 @@ export type PublicRun = ReturnType<typeof publicRun>;
 const INDEXED_FIELDS = ["status", "commit_sha", "triage_verdict", "report_ready", "language"];
 
 export function setRun(id: string, fields: Partial<RunRow>) {
+  if (fields.status && fields.status !== getRun(id)?.status) fields = { ...fields, status_at: Date.now() };
   updateRun(id, fields);
   const run = getRun(id);
   if (run) {
@@ -70,7 +71,7 @@ export const credsStale = (run: RunRow) => run.creds_hash !== credsHash(agentCre
 export async function restartOpencode(run: RunRow) {
   const creds = agentCredentials(undefined, getRun(run.id) ?? run);
   await runtime.restartOpencode(run, creds);
-  setRun(run.id, { creds_hash: credsHash(creds) });
+  setRun(run.id, { creds_hash: credsHash(creds), asleep: 0 });
 }
 
 export function notifyRun(kind: NotifyKind, run: RunRow, title: string, body: string) {

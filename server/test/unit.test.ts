@@ -79,18 +79,19 @@ describe("search", () => {
 });
 
 describe("derived tables", () => {
-  test("message totals follow inserts, upserts and deletes of assistant messages", () => {
+  test("model calls follow inserts, upserts and deletes of assistant messages", () => {
     db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at) VALUES ('mt-1', 'x', 'p/m', '{}', 'running', 'local', 1)").run();
     const upsert = db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, 'mt-1', 's', ?, ?, 1) ON CONFLICT(id) DO UPDATE SET data = excluded.data WHERE messages.data IS NOT excluded.data");
-    const totals = () => db.query("SELECT input, cache_read, cache_write FROM message_totals WHERE run_id = 'mt-1'").get();
-    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 0 } })); // still streaming
-    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 100, cache: { read: 50, write: 10 } } }));
-    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 100, cache: { read: 50, write: 10 } } })); // unchanged resync
-    upsert.run("m2", "assistant", JSON.stringify({ tokens: { input: 5, cache: { read: 1, write: 0 } } }));
+    const totals = () => db.query("SELECT COUNT(*) AS n, SUM(input) AS input, SUM(cache_read) AS cr, SUM(cache_write) AS cw, SUM(cost) AS cost FROM model_calls WHERE run_id = 'mt-1'").get();
+    upsert.run("m1", "assistant", JSON.stringify({ providerID: "p", modelID: "m", tokens: { input: 0 } })); // still streaming
+    upsert.run("m1", "assistant", JSON.stringify({ providerID: "p", modelID: "m", cost: 0.5, time: { completed: 9 }, tokens: { input: 100, output: 7, cache: { read: 50, write: 10 } } }));
+    upsert.run("m2", "assistant", JSON.stringify({ tokens: { input: 5, cache: { read: 1, write: 0 } }, error: { name: "APIError" } }));
     upsert.run("u1", "user", JSON.stringify({ tokens: { input: 999 } }));
-    expect(totals()).toEqual({ input: 105, cache_read: 51, cache_write: 10 });
+    expect(totals()).toEqual({ n: 2, input: 105, cr: 51, cw: 10, cost: 0.5 });
+    expect(db.query("SELECT provider, model, completed, output, error FROM model_calls WHERE id = 'm1'").get()).toEqual({ provider: "p", model: "m", completed: 9, output: 7, error: null });
+    expect(db.query("SELECT error FROM model_calls WHERE id = 'm2'").get()).toEqual({ error: "APIError" });
     db.query("DELETE FROM messages WHERE id = 'm2'").run();
-    expect(totals()).toEqual({ input: 100, cache_read: 50, cache_write: 10 });
+    expect(totals()).toEqual({ n: 1, input: 100, cr: 50, cw: 10, cost: 0.5 });
   });
 });
 
@@ -100,6 +101,6 @@ describe("deleting a run", () => {
     db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES ('del-m', 'del-1', 's', 'assistant', ?, 1)").run(JSON.stringify({ tokens: { input: 3 } }));
     db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES ('del-p', 'del-1', 's', 'del-m', 'tool', ?, 1)").run(JSON.stringify({ tool: "bash", state: { status: "completed" } }));
     db.query("DELETE FROM runs WHERE id = 'del-1'").run();
-    for (const t of ["messages", "parts", "tool_calls", "message_totals"]) expect(db.query(`SELECT COUNT(*) AS n FROM ${t} WHERE run_id = 'del-1'`).get()).toEqual({ n: 0 });
+    for (const t of ["messages", "parts", "tool_calls", "model_calls"]) expect(db.query(`SELECT COUNT(*) AS n FROM ${t} WHERE run_id = 'del-1'`).get()).toEqual({ n: 0 });
   });
 });

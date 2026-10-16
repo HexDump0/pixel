@@ -4,7 +4,7 @@ import { listRuns, ACTIVE_STATUSES } from "./db.ts";
 import { getSettings } from "./settings.ts";
 import { dispatch } from "./api/index.ts";
 import { authEnabled, isAuthed, login, logoutCookie } from "./auth.ts";
-import { feedData, terminalData, websocket, type SocketData } from "./live.ts";
+import { feedCount, feedData, terminalData, websocket, type SocketData } from "./live.ts";
 import { reattach, startWatchdog, stopWatchdog } from "./runs/index.ts";
 import { seedTemplates } from "./templates.ts";
 import { snapshotWorkbase } from "./history.ts";
@@ -13,6 +13,7 @@ import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
 import { startArchiving } from "./archive.ts";
+import { startHealth } from "./health.ts";
 import { startFindingsWatch, stopFindingsWatch } from "./findings.ts";
 import { serveShare } from "./findingShare.ts";
 import dashboard from "../../web/index.html";
@@ -76,6 +77,7 @@ else {
 startFleet();
 startFindingsWatch();
 startArchiving();
+startHealth(feedCount);
 startBackupSchedule();
 
 

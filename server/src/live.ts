@@ -29,6 +29,8 @@ export const feedData = (): SocketData => ({ kind: "feed", runs: new Set(["*"]) 
 export const terminalData = (runId: string): SocketData => ({ kind: "terminal", runId, pending: [] });
 
 const feeds = new Set<ServerWebSocket<SocketData>>();
+/** Open dashboard tabs (live feed sockets). */
+export const feedCount = () => feeds.size;
 
 subscribe((msg) => {
   const text = JSON.stringify(msg);

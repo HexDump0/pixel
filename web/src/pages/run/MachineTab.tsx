@@ -1,77 +1,90 @@
 /** The run's machine: what it is, how full it is over the run's life, its snapshots, and start / stop / delete. */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { area, curveMonotoneX, line } from "d3-shape";
 import { IconCamera, IconDots, IconPlayerPlay, IconPlayerStop, IconRestore, IconTrash } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
 import { useLive } from "../../lib/live.ts";
 import { ago, bytes, dateTime } from "../../lib/format.ts";
 import { cn } from "../../lib/cn.ts";
-import type { MetricRow, RunDetail } from "../../lib/types.ts";
+import type { MetricRow, ProcessKind, RunDetail } from "../../lib/types.ts";
 import { Button } from "../../components/ui.tsx";
 import { Menu } from "../../components/ui/overlay.tsx";
 import { IC_SM, Nothing, SectionHead } from "../../components/ui/bits.tsx";
-import { ChartTip, TipRow, TipTitle, niceMax, useSize, type TipState } from "../../components/charts/common.tsx";
+import { Meter } from "../../components/charts/Meter.tsx";
 import { toast } from "../../components/Toast.tsx";
 
-const H = 64;
-
-/** One resource over time: the latest value on top, an area under the line, the limit (if any) as the top. */
-function Meter({ title, rows, pick, limit, fmt, color }: { title: string; rows: MetricRow[]; pick: (r: MetricRow) => number | null; limit?: number | null; fmt: (v: number) => string; color: string }) {
-  const [ref, { w }] = useSize<HTMLDivElement>();
-  const [tip, setTip] = useState<TipState | null>(null);
-  const [hi, setHi] = useState<number | null>(null);
-  const pts = rows.flatMap((r) => (pick(r) == null ? [] : [[r.ts, pick(r)!] as [number, number]]));
-  const last = pts[pts.length - 1]?.[1] ?? null;
-  const t0 = pts[0]?.[0] ?? 0;
-  const t1 = pts[pts.length - 1]?.[0] ?? 1;
-  const max = limit ?? niceMax(Math.max(1e-6, ...pts.map((p) => p[1])) * 1.1);
-  const X = (t: number) => (t1 > t0 ? ((t - t0) / (t1 - t0)) * w : w);
-  const Y = (v: number) => H - 2 - (Math.min(v, max) / max) * (H - 6);
-  const ar = area<[number, number]>().x((d) => X(d[0])).y0(H).y1((d) => Y(d[1])).curve(curveMonotoneX);
-  const ln = line<[number, number]>().x((d) => X(d[0])).y((d) => Y(d[1])).curve(curveMonotoneX);
-  const pct = last != null && limit ? last / limit : null;
-  return (
-    <div className="min-w-0 rounded-xl border border-line-2 bg-s2 px-3.5 pt-3 pb-2.5">
-      <div className="flex items-baseline gap-1.5">
-        <span className="mr-auto text-[12.5px] text-ink-3">{title}</span>
-        <b className={cn("text-[15px] font-medium tabular-nums", pct != null && pct > 0.9 && "text-critical", pct != null && pct > 0.75 && pct <= 0.9 && "text-warning")}>{last == null ? "–" : fmt(last)}</b>
-        {limit != null && <small className="font-mono text-[11.5px] text-ink-3">of {fmt(limit)}</small>}
-      </div>
-      <div ref={ref} className="mt-2 h-16">
-        {w > 0 && pts.length > 1 && (
-          <svg
-            width={w}
-            height={H}
-            className="block overflow-visible"
-            onMouseMove={(e) => {
-              const b = e.currentTarget.getBoundingClientRect();
-              const t = t0 + ((e.clientX - b.left) / w) * (t1 - t0);
-              let i = 0;
-              for (let k = 1; k < pts.length; k++) if (Math.abs(pts[k][0] - t) < Math.abs(pts[i][0] - t)) i = k;
-              setHi(i);
-              setTip({ x: e.clientX, y: e.clientY, content: <><TipTitle>{ago(pts[i][0])}</TipTitle><TipRow color={color} label={fmt(pts[i][1])} /></> });
-            }}
-            onMouseLeave={() => (setTip(null), setHi(null))}
-          >
-            <path d={ar(pts) ?? ""} style={{ fill: color, fillOpacity: 0.18 }} />
-            <path d={ln(pts) ?? ""} fill="none" strokeWidth={1.5} style={{ stroke: color }} />
-            {hi != null && <line x1={X(pts[hi][0])} x2={X(pts[hi][0])} y1={0} y2={H} className="stroke-ink/25" />}
-          </svg>
-        )}
-        {pts.length <= 1 && <div className="flex h-full items-center text-xs text-ink-4">{pts.length ? "one sample so far" : "no samples"}</div>}
-      </div>
-      <div className="mt-1 flex justify-between font-mono text-[10.5px] text-ink-4">
-        <span>{pts.length > 1 ? ago(t0) : ""}</span>
-        <span>{pts.length > 1 ? "now" : ""}</span>
-      </div>
-      <ChartTip tip={tip} />
-    </div>
-  );
-}
-
+const series = (rows: MetricRow[], pick: (r: MetricRow) => number | null) => rows.flatMap((r) => (pick(r) == null ? [] : [[r.ts, pick(r)!] as [number, number]]));
 const pctFmt = (v: number) => `${Math.round(v)}%`;
 const gb = (v: number) => (v >= 1024 ** 3 ? `${(v / 1024 ** 3).toFixed(1)} GB` : bytes(v));
+
+const KINDS: [ProcessKind, string, string][] = [
+  ["opencode", "opencode", "var(--r1)"],
+  ["lsp", "Language servers", "var(--r2)"],
+  ["mcp", "MCP servers", "var(--r3)"],
+  ["agent", "Agent's processes", "var(--r0)"],
+];
+const kindColor = (k: ProcessKind) => KINDS.find((x) => x[0] === k)![2];
+const SHOWN = 10;
+
+/** What uses the machine's memory right now, by kind and by process. */
+function Processes({ runId, limit, live }: { runId: string; limit: number; live: boolean }) {
+  const q = useQuery({ queryKey: ["processes", runId], queryFn: () => api.processes(runId), refetchInterval: live ? 5000 : false });
+  const [all, setAll] = useState(false);
+  const ps = q.data ?? [];
+  const total = ps.reduce((a, p) => a + p.rss, 0);
+  const kinds = KINDS.map(([k, label, color]) => ({ k, label, color, rss: ps.filter((p) => p.kind === k).reduce((a, p) => a + p.rss, 0) })).filter((x) => x.rss > 0);
+  const scale = Math.max(limit, total);
+  return (
+    <section>
+      <SectionHead title="Processes" meta={ps.length ? String(ps.length) : undefined} />
+      {!ps.length ? (
+        <Nothing>{q.isLoading ? "…" : "Nothing running"}</Nothing>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-line-2">
+          <div className="bg-s2 px-3.5 pt-3 pb-2.5">
+            <div className="flex items-baseline gap-1.5">
+              <span className="mr-auto text-[12.5px] text-ink-3">Memory</span>
+              <b className="text-[15px] font-medium tabular-nums">{gb(total)}</b>
+              <small className="font-mono text-[11.5px] text-ink-3">of {gb(limit)}</small>
+            </div>
+            <div className="mt-2.5 flex h-2 overflow-hidden rounded-full bg-s3">
+              {kinds.map((x) => (
+                <div key={x.k} title={`${x.label}: ${gb(x.rss)}`} style={{ width: `${(x.rss / scale) * 100}%`, background: x.color }} />
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink-3">
+              {kinds.map((x) => (
+                <span key={x.k} className="inline-flex items-center gap-1.5">
+                  <span className="size-2 rounded-full" style={{ background: x.color }} />
+                  {x.label}
+                  <span className="font-mono text-ink-2 tabular-nums">{gb(x.rss)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <ul className="m-0 list-none p-0">
+            {(all ? ps : ps.slice(0, SHOWN)).map((p) => (
+              <li key={p.pid} className="grid grid-cols-[minmax(0,1fr)_52px_72px] items-center gap-3 border-t border-line-2 px-3.5 py-[7px] text-[13px]">
+                <span className="flex min-w-0 items-center gap-2" title={`${p.cmd}\npid ${p.pid}`}>
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: kindColor(p.kind) }} />
+                  <span className="shrink-0 font-mono text-[12.5px] text-ink">{p.name}</span>
+                  <span className="truncate font-mono text-[11.5px] text-ink-4">{p.cmd}</span>
+                </span>
+                <span className="text-right font-mono text-[12px] text-ink-3 tabular-nums">{p.cpu == null ? "" : `${Math.round(p.cpu)}%`}</span>
+                <span className="text-right font-mono text-[12.5px] tabular-nums">{gb(p.rss)}</span>
+              </li>
+            ))}
+          </ul>
+          {ps.length > SHOWN && (
+            <button className="w-full border-t border-line-2 py-2 text-[12.5px] text-ink-3 hover:bg-s2 hover:text-ink" onClick={() => setAll(!all)}>
+              {all ? "Show fewer" : `Show all ${ps.length}`}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: () => void }) {
   const r = detail.run;
@@ -152,7 +165,11 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
             "State",
             <span className={cn(!running && "text-ink-2")}>
               {state}
-              {running && !vm.data?.opencode && <span className="text-warning"> · opencode not answering</span>}
+              {r.asleep ? (
+                <span className="text-ink-3"> · opencode stopped to free memory; it starts again on resume or a message</span>
+              ) : (
+                running && !vm.data?.opencode && <span className="text-warning"> · opencode not answering</span>
+              )}
             </span>,
           )}
           {fact("Name", r.vm_name ?? "–")}
@@ -162,13 +179,15 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
         </dl>
       </section>
 
+      <Processes runId={r.id} limit={lastMem} live={running} />
+
       <section>
         <SectionHead title="Over the run" />
         <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
-          <Meter title={`CPU · ${r.size.cpu} cores`} rows={m} pick={(x) => x.cpu} limit={100} fmt={pctFmt} color="var(--r1)" />
-          <Meter title="Memory" rows={m} pick={(x) => x.mem_used} limit={lastMem} fmt={gb} color="var(--r2)" />
-          <Meter title="Disk" rows={m} pick={(x) => x.disk_used} limit={lastDisk} fmt={gb} color="var(--r5)" />
-          <Meter title="Workbase" rows={m} pick={(x) => x.workbase_bytes} fmt={bytes} color="var(--r0)" />
+          <Meter title={`CPU · ${r.size.cpu} cores`} points={series(m, (x) => x.cpu)} limit={100} fmt={pctFmt} color="var(--r1)" warn={0.75} bad={0.9} />
+          <Meter title="Memory" points={series(m, (x) => x.mem_used)} limit={lastMem} fmt={gb} color="var(--r2)" warn={0.75} bad={0.9} />
+          <Meter title="Disk" points={series(m, (x) => x.disk_used)} limit={lastDisk} fmt={gb} color="var(--r5)" warn={0.75} bad={0.9} />
+          <Meter title="Workbase" points={series(m, (x) => x.workbase_bytes)} fmt={bytes} color="var(--r0)" />
         </div>
       </section>
 

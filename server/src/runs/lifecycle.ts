@@ -1,7 +1,4 @@
 /** What happens when the agent goes idle, finishes, or opencode stops answering (plan.md §5–6). */
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { config } from "../config.ts";
 import { db, getRun, type RunRow } from "../db.ts";
 import { getSettings } from "../settings.ts";
 import { runtime } from "../runtime/index.ts";
@@ -60,7 +57,6 @@ export async function finish(id: string) {
   timeline(id, "pixel", "done", "REPORT.md written and the agent is idle: run done");
   notifyRun("done", run, "Run done", `${run.repo}\nREPORT.md is ready.`);
   unwatch(id);
-  await exportTranscript(id).catch((e) => console.error("transcript export failed", e));
   await snapshotWorkbase(id, "done").catch(() => {});
   try {
     await runtime.stopVm(run);
@@ -70,11 +66,12 @@ export async function finish(id: string) {
   }
 }
 
+/** The whole transcript (every session with its messages and parts), for downloading. */
 export async function exportTranscript(id: string) {
-  const sessions = db.query<{ id: string; parent_id: string | null; title: string | null }, [string]>("SELECT id, parent_id, title FROM sessions WHERE run_id = ?").all(id);
+  const sessions = db.query<{ id: string; parent_id: string | null; title: string | null }, [string]>("SELECT id, parent_id, title FROM sessions WHERE run_id = ? ORDER BY created_at").all(id);
   const out = [];
   for (const s of sessions) out.push({ ...s, messages: await transcript(id, s.id) });
-  writeFileSync(join(config.transcriptsDir, `${id}.json`), JSON.stringify(out));
+  return out;
 }
 
 /** opencode stopped answering: find out why and bring it back with the right message. */

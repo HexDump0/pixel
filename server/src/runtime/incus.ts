@@ -2,6 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../config.ts";
+import { parsePs, type ProcessInfo } from "./procs.ts";
 import type { RunRow } from "../db.ts";
 import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
 
@@ -286,6 +287,16 @@ export class IncusRuntime implements Runtime {
   async startVm(run: RunRow) {
     await call("PUT", `/1.0/instances/${this.name(run)}/state`, { action: "start" });
     await this.waitForAgent(this.name(run));
+  }
+
+  async processes(run: RunRow): Promise<ProcessInfo[]> {
+    const r = await this.exec(run, ["ps", "-eo", "pid=,rss=,pcpu=,comm=,args=", "--sort=-rss"], 15_000).catch(() => null);
+    // ps's %CPU is the average over the process's life, not the last few seconds.
+    return r?.code === 0 ? parsePs(r.stdout).filter((p) => p.name !== "ps") : [];
+  }
+
+  async release(run: RunRow) {
+    await this.stopVm(run);
   }
 
   async stopVm(run: RunRow) {

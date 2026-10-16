@@ -9,6 +9,7 @@ import type { Subprocess } from "bun";
 import { config } from "../config.ts";
 import type { RunRow } from "../db.ts";
 import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
+import { CpuSampler, processTree, type ProcessInfo } from "./procs.ts";
 
 interface Proc {
   proc: Subprocess;
@@ -170,6 +171,19 @@ export abstract class ProcessRuntime implements Runtime {
     return p && !p.exit ? (p.proc.pid ?? null) : null;
   }
 
+  protected cpu = new Map<string, CpuSampler>();
+  protected sampler(run: RunRow) {
+    let s = this.cpu.get(run.id);
+    if (!s) this.cpu.set(run.id, (s = new CpuSampler()));
+    return s;
+  }
+
+  /** opencode and everything under it. */
+  async processes(run: RunRow): Promise<ProcessInfo[]> {
+    const pid = this.pid(run);
+    return pid ? this.sampler(run).info(processTree(pid), pid) : [];
+  }
+
   async opencodeState(run: RunRow): Promise<OpencodeState> {
     const p = this.procs.get(run.id);
     if (!p) return "exited";
@@ -213,6 +227,10 @@ export abstract class ProcessRuntime implements Runtime {
   }
 
   async stopVm(run: RunRow) {
+    await this.stopOpencode(run);
+  }
+
+  async release(run: RunRow) {
     await this.stopOpencode(run);
   }
 

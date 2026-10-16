@@ -11,6 +11,7 @@ import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } fr
 import { autoApprove, getWatcher, serial, unwatch, watch, watchedRuns, type Watcher } from "./events.ts";
 import { onIdle, recover, sendPrompt } from "./lifecycle.ts";
 import { prepare } from "./create.ts";
+import { releaseIdle } from "./release.ts";
 
 const GiB = 1024 ** 3;
 const METRICS_MS = 60_000;
@@ -23,7 +24,7 @@ const WATCHED: RunRow["status"][] = ["running", "recovering", "paused"];
 
 export async function check(id: string) {
   const run = getRun(id);
-  if (!run || !WATCHED.includes(run.status) || !run.endpoint) return;
+  if (!run || !WATCHED.includes(run.status) || !run.endpoint || run.asleep) return;
   const w = getWatcher(id);
   if (!w) return watch(id);
   const client = clientFor(run);
@@ -116,6 +117,7 @@ function freeBytes() {
 }
 
 let timer: Timer | null = null;
+let releaser: Timer | null = null;
 let checking = false;
 
 export function startWatchdog() {
@@ -131,17 +133,21 @@ export function startWatchdog() {
       checking = false;
     }
   }, config.watchdogMs);
+  releaser = setInterval(() => void releaseIdle(), 60_000);
 }
 
 export function stopWatchdog() {
   if (timer) clearInterval(timer);
-  timer = null;
+  if (releaser) clearInterval(releaser);
+  timer = releaser = null;
   for (const id of watchedRuns()) unwatch(id);
 }
 
 /** On Pixel start: pick every active run back up from SQLite. */
 export async function reattach() {
-  for (const run of listRuns().filter((r) => ACTIVE_STATUSES.includes(r.status))) {
+  // A stopped run's opencode died with Pixel: it's as if its memory had been freed.
+  if (runtime.agentsDieWithPixel) for (const run of listRuns()) if (run.status === "stopped" && run.endpoint && !run.asleep) setRun(run.id, { asleep: 1 });
+  for (const run of listRuns().filter((r) => ACTIVE_STATUSES.includes(r.status) && !r.asleep)) {
     if (run.status === "preparing") {
       timeline(run.id, "pixel", "restart", "Pixel restarted while preparing; resuming");
       void prepare(run.id);

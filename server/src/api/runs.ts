@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { config } from "../config.ts";
 import { addTimeline, db, getRun, listRuns, type RunRow } from "../db.ts";
 import { runtime } from "../runtime/index.ts";
-import { clientFor, controls, createRun, isWatching, publicRun, syncTranscript, transcript, type NewRun } from "../runs/index.ts";
+import { clientFor, controls, createRun, exportTranscript, releaseRun, isWatching, publicRun, syncTranscript, transcript, type NewRun } from "../runs/index.ts";
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
@@ -102,11 +102,19 @@ get("/runs/:id", ({ params: { id } }) => {
     report: existsSync(reportPath(id)),
     // Prompt tokens of every model call: cache rate = read / (input + read + write), as on the Stats page.
     cache: db
-      .query<{ input: number; read: number; write: number }, [string]>("SELECT input, cache_read AS read, cache_write AS write FROM message_totals WHERE run_id = ?")
-      .get(id) ?? { input: 0, read: 0, write: 0 },
+      .query<{ input: number; read: number; write: number }, [string]>(
+        "SELECT COALESCE(SUM(input), 0) AS input, COALESCE(SUM(cache_read), 0) AS read, COALESCE(SUM(cache_write), 0) AS write FROM model_calls WHERE run_id = ?",
+      )
+      .get(id),
     compare: run.compare_group ? all.filter((r) => r.compare_group === run.compare_group).map((r) => r.id) : [],
     followUps: all.filter((r) => r.parent_run === id).map((r) => r.id),
   };
+});
+
+get("/runs/:id/transcript.json", async ({ params: { id } }) => {
+  mustRun(id);
+  const body = Bun.gzipSync(JSON.stringify(await exportTranscript(id)));
+  return new Response(body, { headers: { "content-type": "application/json", "content-encoding": "gzip", "content-disposition": `attachment; filename="${id}-transcript.json"` } });
 });
 
 get("/runs/:id/transcript", ({ params: { id }, query }) => {
@@ -154,6 +162,8 @@ get("/runs/:id/vm", async ({ params: { id } }) => {
   const [state, opencode] = await Promise.all([runtime.vmState(run), run.endpoint ? clientFor(run).healthy() : false]);
   return { state, opencode };
 });
+post("/runs/:id/release", async ({ params: { id } }) => ({ released: await releaseRun(id) }));
+get("/runs/:id/processes", ({ params: { id } }) => runtime.processes(mustRun(id)).catch(() => []));
 get("/runs/:id/snapshots", ({ params: { id } }) => runtime.listSnapshots(mustRun(id)).catch(() => []));
 
 // ---- workbase files and history ----

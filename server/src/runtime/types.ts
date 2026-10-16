@@ -1,3 +1,4 @@
+import type { ProcessInfo } from "./procs.ts";
 import type { RunRow, RunSize } from "../db.ts";
 
 /** Paths as the agent sees them. */
@@ -64,10 +65,14 @@ export interface Runtime {
   vmState(run: RunRow): Promise<string>;
   startVm(run: RunRow): Promise<void>;
   stopVm(run: RunRow): Promise<void>;
+  /** Free a waiting run's memory: stop its opencode (process runtimes leave what the agent started running; a VM stops whole). */
+  release(run: RunRow): Promise<void>;
   snapshot(run: RunRow, name: string): Promise<void>;
   listSnapshots(run: RunRow): Promise<{ name: string; created: string }[]>;
   restore(run: RunRow, name: string): Promise<void>;
   destroy(run: RunRow): Promise<void>;
+  /** The run's processes (opencode, its language servers and MCP servers, whatever the agent started), biggest first. */
+  processes(run: RunRow): Promise<ProcessInfo[]>;
   /** Process id of the run's opencode, where the runtime knows it (process runtimes). */
   pid?(run: RunRow): number | null;
   /** One line for the prompt's environment section: what the machine is and what the agent may do there. */
