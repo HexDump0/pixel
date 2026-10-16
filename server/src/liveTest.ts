@@ -135,7 +135,7 @@ export function liveStatus() {
 }
 
 /** Send one prompt; continues `session` when it's still alive, else starts a new chat. */
-export async function livePrompt(input: { model?: string; variant?: string; text?: string; session?: string; turn?: string; key?: string }) {
+export async function livePrompt(input: { model?: string; variant?: string; text?: string; session?: string; turn?: string; key?: string; proxy?: string }) {
   const model = input.model?.trim() ?? "";
   const text = input.text?.trim() ?? "";
   if (!model.includes("/")) throw new Error("pick a model (provider/model)");
@@ -144,7 +144,7 @@ export async function livePrompt(input: { model?: string; variant?: string; text
   const early = (kind: string, data: Record<string, unknown> = {}) => publish("*", "live", { turn: turnId, session: input.session ?? null, kind, ...data });
   touch();
   // key: omitted = the provider's default key, a key id = that key, "none" = no key at all.
-  const inst = await instance(() => early("starting"), agentCredentials(undefined, input.key ? { key_id: input.key, model } : null));
+  const inst = await instance(() => early("starting"), agentCredentials(undefined, input.key || input.proxy ? { key_id: input.key || null, model, proxy_id: input.proxy || null } : null));
   const unknown = await inst.check(model);
   if (unknown) throw new Error(unknown);
   const known = input.session && turns.has(input.session) ? input.session : null;

@@ -20,6 +20,15 @@ export const config = {
   host: env("PIXEL_HOST", "127.0.0.1"),
   port: Number(env("PIXEL_PORT", "7700")),
   password: env("PIXEL_PASSWORD"),
+  /**
+   * The relay that carries proxied runs' model calls (relay.ts): its port, the address it listens on,
+   * and the address agents reach it at. On Incus, set both addresses to the bridge's (e.g. 10.0.0.1).
+   */
+  relay: {
+    port: Number(env("PIXEL_RELAY_PORT", "7701")),
+    bind: env("PIXEL_RELAY_BIND", "127.0.0.1"),
+    host: env("PIXEL_RELAY_HOST", env("PIXEL_RELAY_BIND", "127.0.0.1")),
+  },
   /** Hostname or IP that `opencode attach` commands should point at, as seen from the user's machine. */
   publicHost: env("PIXEL_PUBLIC_HOST"),
   /** Base URL of the dashboard, used for links in notifications. */

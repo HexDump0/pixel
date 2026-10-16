@@ -11,12 +11,13 @@ import type { Stats } from "../../../server/src/stats.ts";
 import type { CatalogList, CatalogModel, CatalogProvider } from "../../../server/src/catalog.ts";
 import type { ConnectedProvider, PublicKey } from "../../../server/src/providerAccounts.ts";
 import type { NotifyStatus, Sent } from "../../../server/src/notify.ts";
+import type { ProxyInput, ProxyTest, PublicProxy } from "../../../server/src/proxies.ts";
 
 export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries, Leaderboard, ProviderHealth, Stats };
 export type Finding = FindingRow;
 export type { FindingEvent, Verdict };
 export type { CatalogList, CatalogModel, CatalogProvider, ConnectedProvider, PublicKey };
-export type { ProcessInfo, ProcessKind, PixelHealth, NotifyStatus, Sent };
+export type { ProcessInfo, ProcessKind, PixelHealth, NotifyStatus, Sent, ProxyInput, ProxyTest, PublicProxy };
 
 export interface SpeedTestRow {
   id: number;

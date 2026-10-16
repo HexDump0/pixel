@@ -226,5 +226,6 @@ export function rerun(id: string, opts: { asFollowUp?: boolean; model?: string; 
     autopilot: !!run.autopilot,
     keyId: !opts.model || opts.model.split("/")[0] === run.model.split("/")[0] ? (run.key_id ?? undefined) : undefined,
     keyFailover: !!run.key_failover,
+    proxyId: run.proxy_id ?? "",
   });
 }

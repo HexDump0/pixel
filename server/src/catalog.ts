@@ -23,6 +23,9 @@ export interface CatalogModel {
   openWeights: boolean;
   released: string | null;
   status: string | null;
+  /** Where this model's requests go when it differs from the provider's (opencode Zen, gateways). */
+  api: string | null;
+  npm: string | null;
 }
 
 export interface CatalogProvider {
@@ -59,6 +62,8 @@ function slim(raw: Record<string, any>): Map<string, CatalogProvider> {
       openWeights: !!m?.open_weights,
       released: m?.release_date ?? null,
       status: m?.status ?? null,
+      api: m?.provider?.api ?? null,
+      npm: m?.provider?.npm ?? null,
     }));
     out.set(id, { id, name: String(p.name ?? id), env: Array.isArray(p.env) ? p.env : [], doc: p.doc ?? null, api: p.api ?? null, npm: p.npm ?? null, models });
   }

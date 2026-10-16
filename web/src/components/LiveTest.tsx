@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { IconArrowUp, IconLoader2, IconMessagePlus, IconPlayerStopFilled, IconX } from "@tabler/icons-react";
 import { KeySelect } from "./KeySelect.tsx";
+import { ProxySelect, useProxies } from "./ProxySelect.tsx";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { money, tokens as fmtTokens } from "../lib/format.ts";
@@ -144,6 +145,8 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
   const [variant, setVariant] = useState("");
   // "" = the provider's default key, a key id, or "none" to call without a key.
   const [keyChoice, setKeyChoice] = useState("");
+  const [proxyChoice, setProxyChoice] = useState("");
+  const hasProxies = (useProxies().data?.proxies.length ?? 0) > 0;
   const [session, setSession] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -256,7 +259,7 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
     ]);
     setInput("");
     try {
-      const r = await api.livePrompt({ model, variant: variant || undefined, text: prompt, session: session ?? undefined, turn: id, key: keyChoice || undefined });
+      const r = await api.livePrompt({ model, variant: variant || undefined, text: prompt, session: session ?? undefined, turn: id, key: keyChoice || undefined, proxy: proxyChoice || undefined });
       setSession(r.session);
     } catch (e: any) {
       patch(id, (t) => ({ ...t, status: "error", error: e.message ?? String(e), doneAt: Date.now() }));
@@ -308,6 +311,18 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
             }}
           />
         </span>
+        {hasProxies && (
+          <span className="inline-flex items-center gap-2.5">
+            <span className="text-xs text-ink-3">Proxy</span>
+            <ProxySelect
+              value={proxyChoice}
+              onChange={(p) => {
+                setProxyChoice(p);
+                setSession(null);
+              }}
+            />
+          </span>
+        )}
         <span className="inline-flex min-w-0 items-center gap-2.5">
           <span className="text-xs text-ink-3">Thinking</span>
           <ThinkingSelect model={model} value={variant} onChange={setVariant} />

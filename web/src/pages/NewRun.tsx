@@ -13,6 +13,7 @@ import { IC_SM, IC_XS, Join } from "../components/ui/bits.tsx";
 import { Select } from "../components/ui/overlay.tsx";
 import { ModelSelect, ThinkingSelect } from "../components/ModelSelect.tsx";
 import { KeySelect, NO_KEY, useProviders } from "../components/KeySelect.tsx";
+import { ProxySelect, useProxies } from "../components/ProxySelect.tsx";
 
 /** Prefill from the URL, e.g. /new?repo=…&parent=… (used by "re-audit" on a run page). */
 function initialFromQuery(search: string) {
@@ -74,6 +75,9 @@ export function NewRunPage() {
   const [autopilot, setAutopilot] = useState(true);
   // "" = the provider's default key, a key id, or NO_KEY.
   const [keyId, setKeyId] = useState("");
+  const proxyList = useProxies();
+  const [proxyId, setProxyId] = useState<string | null>(null);
+  const proxy = proxyId ?? proxyList.data?.defaultProxy ?? "";
   const [failover, setFailover] = useState<boolean | null>(null);
   const [compare, setCompare] = useState(false);
   const [compareModels, setCompareModels] = useState<string[]>([]);
@@ -135,6 +139,7 @@ export function NewRunPage() {
       promptOverride: edited ? body : undefined,
       keyId: compare ? undefined : keyId === NO_KEY ? NO_KEY : keys.length > 1 ? chosenKey?.id : undefined,
       keyFailover: keyId === NO_KEY ? false : failoverOn,
+      proxyId: proxy,
     };
     if (compare) {
       input.models = compareModels.length ? compareModels : [model];
@@ -250,6 +255,12 @@ export function NewRunPage() {
                     <span className="text-xs text-ink-3">Key</span>
                     {model && <KeySelect model={model} value={keyId} onChange={setKeyId} />}
                   </span>
+                  {(proxyList.data?.proxies.length ?? 0) > 0 && (
+                    <span className="inline-flex items-center gap-2.5">
+                      <span className="text-xs text-ink-3">Proxy</span>
+                      <ProxySelect value={proxy} onChange={setProxyId} />
+                    </span>
+                  )}
                 </div>
                 {keyId === NO_KEY ? (
                   <p className="m-0 text-xs text-ink-3">The agent calls {model.split("/")[0]} without a key: OpenCode Zen's free models, or a server that doesn't check keys.</p>

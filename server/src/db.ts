@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS share_tokens_finding ON share_tokens(run_id, finding_
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"], ["runs", "status_at", "INTEGER"], ["runs", "asleep", "INTEGER NOT NULL DEFAULT 0"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"], ["runs", "status_at", "INTEGER"], ["runs", "asleep", "INTEGER NOT NULL DEFAULT 0"], ["runs", "proxy_id", "TEXT"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -366,6 +366,8 @@ export interface RunRow {
   key_id: string | null;
   /** 1 = move to the provider's next key when this one runs out or is rejected. */
   key_failover: number;
+  /** Proxy the run's model calls go through (proxies.ts, relay.ts); null = straight to the provider. */
+  proxy_id: string | null;
   /** Colour of the run on every chart and tile (0–5), picked at creation so runs live at the same time differ. */
   hue: number | null;
   size: string;

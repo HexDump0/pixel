@@ -12,7 +12,8 @@ import { repoShort } from "../../lib/runs.ts";
 import { openRun } from "../../lib/actions.ts";
 import { cn } from "../../lib/cn.ts";
 import type { FleetRun, RunDetail, Todo } from "../../lib/types.ts";
-import { KeyMenu, openModelDialog, useRunKeyName } from "../../components/RunMenu.tsx";
+import { KeyMenu, openModelDialog, ProxyMenu, useRunKeyName } from "../../components/RunMenu.tsx";
+import { exitOf, useProxies } from "../../components/ProxySelect.tsx";
 import { AgentDot, IC_XS, Join, Nil } from "../../components/ui/bits.tsx";
 
 const KINDS: [string, string][] = [
@@ -193,6 +194,9 @@ function OtherWorkbases({ runId }: { runId: string }) {
 function Facts({ detail }: { detail: RunDetail }) {
   const r = detail.run;
   const key = useRunKeyName(r);
+  const proxies = useProxies().data?.proxies ?? [];
+  const hasProxies = proxies.length > 0;
+  const proxy = proxies.find((p) => p.id === r.proxy_id);
   const limits = useLimits();
   const hours = Math.max(0.25, ((r.finished_at ?? Date.now()) - (r.started_at ?? r.created_at)) / 3_600_000);
   const row = (k: string, v: React.ReactNode) => (
@@ -233,6 +237,16 @@ function Facts({ detail }: { detail: RunDetail }) {
             </button>
           </KeyMenu>,
         )}
+        {(r.proxy_id || hasProxies) &&
+          row(
+            "Proxy",
+            <ProxyMenu run={r}>
+              <button type="button" className={factBtn}>
+                <span className="truncate">{r.proxy_id ? (proxy ? `${proxy.name}${proxy.test?.ok ? `, ${exitOf(proxy)}` : ""}` : "removed") : "none"}</span>
+                <IconChevronDown {...IC_XS} className="shrink-0" />
+              </button>
+            </ProxyMenu>,
+          )}
         {row("Tokens", <Join items={[`${tokens(r.tokens_in)} in`, `${tokens(r.tokens_out + r.tokens_reasoning)} out`]} />)}
         {row("Cost", <>{money(r.cost)}{small(`${money(r.cost / hours)}/h`)}</>)}
         {!!r.autopilot && row("Continues", <span className={cn(r.continues >= limits.maxContinues - 1 && "text-warning")}>{r.continues} of {limits.maxContinues}</span>)}

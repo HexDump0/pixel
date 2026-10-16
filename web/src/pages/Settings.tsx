@@ -32,10 +32,10 @@ import { EnvEditor, NumberInput, Row, Section, State, Toggle } from "./settings/
 import { GithubSection } from "./settings/Github.tsx";
 
 type Update = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
-type Draft = Omit<Settings, "models" | "defaultModel" | "providerLimits" | "thinkingLevels">;
+type Draft = Omit<Settings, "models" | "defaultModel" | "providerLimits" | "thinkingLevels" | "modelOverrides" | "providerOverrides" | "defaultProxy">;
 
 /** Edited on the Models page; never sent from this draft so it can't overwrite them. */
-const ELSEWHERE = ["defaults", "models", "defaultModel", "providerLimits", "thinkingLevels"];
+const ELSEWHERE = ["defaults", "models", "defaultModel", "providerLimits", "thinkingLevels", "modelOverrides", "providerOverrides", "defaultProxy"];
 const draftOf = (s: Settings): Draft => Object.fromEntries(Object.entries(s).filter(([k]) => !ELSEWHERE.includes(k))) as Draft;
 
 /** Number of leaf values that differ (an env var added counts once). */

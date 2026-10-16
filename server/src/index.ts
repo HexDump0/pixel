@@ -10,6 +10,7 @@ import { seedTemplates } from "./templates.ts";
 import { snapshotWorkbase } from "./history.ts";
 import { writeIndex } from "./knowledge.ts";
 import { startBackupSchedule } from "./backup.ts";
+import { startRelay } from "./relay.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
 import { startArchiving } from "./archive.ts";
@@ -79,6 +80,7 @@ startFindingsWatch();
 startArchiving();
 startHealth(feedCount);
 startBackupSchedule();
+startRelay();
 
 
 /** Git snapshots of active workbases every `historyIntervalMin`. */

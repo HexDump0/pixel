@@ -25,6 +25,7 @@ import { Providers } from "./models/Providers.tsx";
 import { SpeedTestDialog } from "./models/SpeedTest.tsx";
 import { hueVar, splitModel } from "./models/common.tsx";
 import { ModelAdvancedDialog, ProviderAdvancedDialog } from "./models/Advanced.tsx";
+import { Proxies } from "./models/Proxies.tsx";
 
 const WINDOWS: [number, string][] = [
   [15, "15m"],
@@ -261,6 +262,8 @@ export function ModelsPage() {
           </div>
         </>
       )}
+
+      {settings && <Proxies defaultProxy={settings.defaultProxy ?? ""} onDefault={async (id) => setSettings(await api.saveSettings({ defaultProxy: id }))} />}
 
       {settings && advanced && "model" in advanced && (
         <ModelAdvancedDialog

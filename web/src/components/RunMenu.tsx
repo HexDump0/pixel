@@ -35,6 +35,8 @@ import { ModelAndThinking } from "./ModelSelect.tsx";
 import { startRename } from "./RunName.tsx";
 import { openPalette } from "./CommandPalette.tsx";
 import { toast } from "./Toast.tsx";
+import { exitOf, useProxies } from "./ProxySelect.tsx";
+import { IconWorld, IconWorldOff } from "@tabler/icons-react";
 
 const listeners = new Set<(id: string) => void>();
 /** Open the model + thinking dialog for a run (from any menu or the side column). */
@@ -158,4 +160,20 @@ export function useRunKeyName(run: Run) {
   const info = useQuery({ queryKey: keys.runKeys(run.id), queryFn: () => api.runKeys(run.id), staleTime: 60_000 });
   const k = info.data;
   return { name: k?.current === "none" ? "no key" : (k?.keys.find((x) => x.id === k.current)?.name ?? (k && !k.keys.length ? "from Settings" : "default")), failover: !!k?.failover && k?.current !== "none", many: (k?.keys.length ?? 0) > 1 || k?.current === "none" };
+}
+
+/** The run's proxy as a clickable value: another proxy applies from the next model call. */
+export function ProxyMenu({ run, children }: { run: Run; children: React.ReactNode }) {
+  const list = useProxies().data?.proxies ?? [];
+  const pick = (id: string | null, msg: string) =>
+    api.setRunProxy(run.id, id).then(
+      () => (toast(msg), reloadRuns()),
+      (e) => toast(e.message, "error"),
+    );
+  const items: MenuEntry[] = [
+    { head: "Model calls go through" },
+    { label: "No proxy", checked: !run.proxy_id, icon: <IconWorldOff {...IC_SM} />, hint: "direct", onSelect: () => void pick(null, "Model calls now go straight to the provider") },
+    ...list.map((p) => ({ label: p.name, checked: p.id === run.proxy_id, icon: <IconWorld {...IC_SM} />, hint: exitOf(p), onSelect: () => void pick(p.id, `Model calls now go through ${p.name}`) })),
+  ];
+  return <Menu align="start" items={items} trigger={children} />;
 }

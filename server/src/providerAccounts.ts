@@ -15,6 +15,7 @@ import { getSettings, saveSettings, type Settings } from "./settings.ts";
 import { cachedCatalog, catalogProvider } from "./catalog.ts";
 import { githubForAgents } from "./github.ts";
 import { opencodeModel, opencodeProviderOptions } from "./modelOverrides.ts";
+import { proxySubject, relayUrl, runSubject, upstreamBase } from "./relay.ts";
 
 export type KeyState = "rejected" | "credit" | "ratelimit";
 
@@ -100,6 +101,9 @@ function load(): Record<string, ProviderAccount> {
 function store(accounts: Record<string, ProviderAccount>) {
   db.query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(KEY, JSON.stringify(accounts));
 }
+
+/** The endpoint set for a provider added on the Models page (custom endpoint or proxy URL), if any. */
+export const accountBaseURL = (id: string) => load()[id]?.baseURL ?? null;
 
 export const hint = (key: string) => (!key ? null : key.length < 12 ? "****" : `${key.slice(0, 3)}...${key.slice(-4)}`);
 
@@ -310,7 +314,16 @@ export function connectedProviders(s: Settings = getSettings()) {
  * The environment and auth.json every agent (and the speed and live tests) gets: Settings, plus the
  * providers added on the Models page, plus GitHub (token as env, read-only MCP server in the config).
  */
-export function agentCredentials(s: Settings = getSettings(), run?: { key_id: string | null; model?: string } | null): { env: Record<string, string>; authJson: string } {
+/** What a run (or a live test) is: its key, model, and the proxy its model calls go through. */
+export interface CredsFor {
+  key_id: string | null;
+  model?: string;
+  /** A run's id: proxied calls look up its current proxy at the relay. Without one, `proxy_id` is fixed. */
+  id?: string;
+  proxy_id?: string | null;
+}
+
+export function agentCredentials(s: Settings = getSettings(), run?: CredsFor | null): { env: Record<string, string>; authJson: string } {
   const creds = credentials(s, run);
   const bare = run?.key_id === NO_KEY ? run.model?.split("/")[0] : undefined;
   return bare ? withoutKey(creds, bare) : creds;
@@ -326,7 +339,7 @@ function withoutKey(creds: { env: Record<string, string>; authJson: string }, pr
   return { env, authJson: Object.keys(auth).length ? JSON.stringify(auth, null, 2) : "" };
 }
 
-function credentials(s: Settings, run?: { key_id: string | null } | null): { env: Record<string, string>; authJson: string } {
+function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, string>; authJson: string } {
   const accounts = Object.values(load());
   const github = githubForAgents();
   // Settings env first, so the GitHub card wins over a GITHUB_TOKEN typed there by hand.
@@ -337,7 +350,8 @@ function credentials(s: Settings, run?: { key_id: string | null } | null): { env
   levels.push(...Object.entries(s.thinkingLevels ?? {}).filter(([, v]) => Object.keys(v).length));
   const modelOverrides = Object.entries(s.modelOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
   const providerOverrides = Object.entries(s.providerOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
-  if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length) return { env, authJson: s.agentAuthJson };
+  const relaySubject = run?.proxy_id ? (run.id ? runSubject(run.id) : proxySubject(run.proxy_id)) : null;
+  if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length && !relaySubject) return { env, authJson: s.agentAuthJson };
 
   const auth = parseAuth(s.agentAuthJson);
   if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
@@ -373,6 +387,14 @@ function credentials(s: Settings, run?: { key_id: string | null } | null): { env
     p.models ??= {};
     p.models[mid] = opencodeModel(full, o, p.models[mid]);
   }
+  // A proxied run's model calls go to Pixel's relay, which sends them on through the proxy.
+  if (relaySubject)
+    for (const { id } of connectedProviders(s)) {
+      // Skip only providers known to have no relayable address; before the catalogue loads, relay everything (fail closed).
+      if (cachedCatalog() && !upstreamBase(id)) continue;
+      const p = (provider[id] ??= {});
+      p.options = { ...p.options, baseURL: relayUrl(relaySubject, id) };
+    }
   // Custom thinking levels become extra variants on the model, next to opencode's own.
   for (const [full, vs] of levels) {
     const [pid, ...rest] = full.split("/");

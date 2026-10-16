@@ -28,6 +28,7 @@ export const keys = {
   runKeys: (id: string) => ["run", id, "keys"] as const,
   catalogProvider: (id: string) => ["catalog", id] as const,
   providers: ["providers"] as const,
+  proxies: ["proxies"] as const,
 };
 
 type Handler = (m: { run: string; type: string; data: any }) => void;

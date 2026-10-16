@@ -13,6 +13,7 @@ import { keyFailing, keyFor, NO_KEY, providerKeys, setKeyStatus, type ApiKey, ty
 import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { getWatcher, serial, syncTranscript } from "./events.ts";
 import { sendPrompt } from "./lifecycle.ts";
+import { getProxy } from "../proxies.ts";
 
 /** opencode retries 429s by itself; only a limit that outlasts this moves the run to another key. */
 export const RATELIMIT_FAILOVER_MS = 10 * 60_000;
@@ -151,6 +152,33 @@ export async function chooseKey(runId: string, keyId: string | null) {
   const idle = live && run.agent_status === "idle";
   timeline(runId, "user", "key", `Key changed to ${name}${live && !idle ? "; the agent picks it up when it next goes idle or is resumed" : ""}`);
   if (!idle) return;
+  const task = async () => {
+    const r = getRun(runId)!;
+    await restartOpencode(r);
+    await clientFor(r).waitHealthy(180_000);
+  };
+  const w = getWatcher(runId);
+  await (w ? serial(w, task) : task());
+}
+
+/**
+ * Send a run's model calls through another proxy, or none. Between two proxies it applies from the next
+ * call (the relay looks the proxy up each time). Turning the proxy on or off changes where opencode
+ * sends its calls, so an idle agent's opencode restarts now and a busy one's when it next goes idle.
+ */
+export async function chooseProxy(runId: string, proxyId: string | null) {
+  const run = getRun(runId);
+  if (!run) throw new Error(`no run ${runId}`);
+  const proxy = proxyId ? getProxy(proxyId) : null;
+  if (proxyId && !proxy) throw new Error(`no proxy ${proxyId}`);
+  if ((run.proxy_id ?? null) === (proxy?.id ?? null)) return;
+  setRun(runId, { proxy_id: proxy?.id ?? null });
+  const live = ["running", "recovering"].includes(run.status) && run.endpoint;
+  const idle = live && run.agent_status === "idle";
+  const restart = !run.proxy_id !== !proxy;
+  const what = proxy ? `Model calls now go through proxy ${proxy.name}` : "Model calls now go straight to the provider";
+  timeline(runId, "user", "proxy", `${what}${restart && live && !idle ? "; the agent picks it up when it next goes idle or is resumed" : ""}`);
+  if (!restart || !idle) return;
   const task = async () => {
     const r = getRun(runId)!;
     await restartOpencode(r);

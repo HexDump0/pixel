@@ -39,6 +39,8 @@ export interface Settings {
   keyFailover: boolean;
   /** Stop the opencode of a run paused or stopped this long, to free its memory; it starts again on resume or a message (0 = never). */
   releaseIdleMin: number;
+  /** Proxy id new runs use for their model calls; "" = none. */
+  defaultProxy: string;
   /** Per "provider/model": values put over the catalogue in opencode's config (modelOverrides.ts). */
   modelOverrides: Record<string, ModelOverride>;
   /** Per provider id: request timeouts and extra options for all its models. */
@@ -103,6 +105,7 @@ export const defaultSettings: Settings = {
   thinkingLevels: {},
   keyFailover: true,
   releaseIdleMin: 15,
+  defaultProxy: "",
   modelOverrides: {},
   providerOverrides: {},
 };

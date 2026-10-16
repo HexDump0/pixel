@@ -27,6 +27,9 @@ import type {
   RunDetail,
   SearchHit,
   Settings,
+  PublicProxy,
+  ProxyInput,
+  ProxyTest,
   NotifyStatus,
   Sent,
   SystemInfo,
@@ -106,6 +109,8 @@ export interface CreateRunInput {
   name?: string;
   keyId?: string;
   keyFailover?: boolean;
+  /** Proxy for model calls; "" = none, omitted = the default. */
+  proxyId?: string;
 }
 
 export interface RunKeys {
@@ -210,7 +215,15 @@ export const api = {
   discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
   catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
   catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),
-  livePrompt: (body: { model: string; variant?: string; text: string; session?: string; turn: string; key?: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
+  livePrompt: (body: { model: string; variant?: string; text: string; session?: string; turn: string; key?: string; proxy?: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
+  proxies: () => request<{ defaultProxy: string; relay: string; unrelayable: string[]; proxies: (PublicProxy & { runs: string[] })[] }>("GET", "/proxies"),
+  addProxy: (body: ProxyInput) => request<PublicProxy>("POST", "/proxies", body),
+  editProxy: (id: string, body: ProxyInput) => request<PublicProxy>("PUT", `/proxies/${encodeURIComponent(id)}`, body),
+  removeProxy: (id: string) => request<{ runs: string[] }>("DELETE", `/proxies/${encodeURIComponent(id)}`),
+  testProxy: (id: string) => request<ProxyTest>("POST", `/proxies/${encodeURIComponent(id)}/test`),
+  /** Test an address before saving; `id` fills in the stored password when editing. */
+  testProxyAddress: (body: ProxyInput & { id?: string }) => request<ProxyTest>("POST", "/proxies/test", body),
+  setRunProxy: (id: string, proxyId: string | null) => request("POST", `/runs/${encodeURIComponent(id)}/proxy`, { proxyId }),
   liveAbort: (session: string) => request("POST", `/live/${encodeURIComponent(session)}/abort`),
   models: () => request<{ defaultModel: string; models: OfferedModel[] }>("GET", "/models"),
   modelVariants: () => request<Record<string, string[]>>("GET", "/models/variants"),

@@ -4,9 +4,11 @@ import { catalogProvider, catalogProviders } from "../catalog.ts";
 import { liveAbort, livePrompt, liveStatus, modelVariants } from "../liveTest.ts";
 import { cachedCatalog } from "../catalog.ts";
 import { effective } from "../modelOverrides.ts";
-import { getSettings } from "../settings.ts";
+import { getSettings, saveSettings } from "../settings.ts";
+import { getProxy, listProxies, parseProxyUrl, publicProxy, removeProxy, saveProxy, testProxy, testProxyUrl, type ProxyInput } from "../proxies.ts";
+import { relayBase, upstreamBase } from "../relay.ts";
 import { addKey, connectedProviders, discoverModels, editKey, orderKeys, removeAccount, removeKey, saveAccount, testKey, type AccountInput, type KeyInput } from "../providerAccounts.ts";
-import { db } from "../db.ts";
+import { ACTIVE_STATUSES, db, listRuns } from "../db.ts";
 import { timeline } from "../runs/state.ts";
 import { del, get, post, put, readJson, HttpError } from "./router.ts";
 
@@ -96,3 +98,49 @@ get("/models/variants", () => modelVariants());
 get("/live", () => liveStatus());
 post("/live", async ({ req }) => livePrompt(await readJson(req)));
 post("/live/:session/abort", ({ params: { session } }) => liveAbort(session));
+
+// ---- proxies for model calls ----
+
+/** The provider APIs the offered models use, for a proxy test to try. */
+const offeredBases = async () => {
+  await catalogProviders();
+  const s = getSettings();
+  return [...new Set(s.models.map((m) => upstreamBase(m.split("/")[0], m.split("/").slice(1).join("/"))).filter((b): b is string => !!b))];
+};
+
+get("/proxies", async () => {
+  await catalogProviders();
+  const s = getSettings();
+  const runs = listRuns().filter((r) => r.proxy_id && ACTIVE_STATUSES.includes(r.status));
+  return {
+    defaultProxy: s.defaultProxy,
+    relay: relayBase(),
+    /** Connected providers whose calls can't go through a proxy (Pixel doesn't know their API's address). */
+    unrelayable: connectedProviders(s).filter((p) => !upstreamBase(p.id)).map((p) => p.name),
+    proxies: listProxies().map((p) => ({ ...publicProxy(p), runs: runs.filter((r) => r.proxy_id === p.id).map((r) => r.id) })),
+  };
+});
+post("/proxies", async ({ req }) => publicProxy(saveProxy(await readJson<ProxyInput>(req))));
+put("/proxies/:id", async ({ req, params: { id } }) => publicProxy(saveProxy(await readJson<ProxyInput>(req), id)));
+del("/proxies/:id", ({ params: { id } }) => {
+  const p = getProxy(id);
+  if (!p) throw new HttpError(404, `no proxy ${id}`);
+  removeProxy(id);
+  if (getSettings().defaultProxy === id) saveSettings({ defaultProxy: "" });
+  // Runs on it fail closed at the relay until they get another proxy; say so on each.
+  const runs = listRuns().filter((r) => r.proxy_id === id);
+  for (const r of runs) timeline(r.id, "user", "proxy", `Proxy ${p.name} was removed; model calls fail until the run gets another proxy or none`);
+  return { runs: runs.map((r) => r.id) };
+});
+post("/proxies/:id/test", async ({ params: { id } }) => testProxy(id, await offeredBases()));
+/** Test an address before saving it (the add dialog); an id fills in the stored password when editing. */
+post("/proxies/test", async ({ req }) => {
+  const b = await readJson<ProxyInput & { id?: string }>(req);
+  const old = b.id ? getProxy(b.id) : null;
+  const u = b.url?.trim() ? parseProxyUrl(b.url) : old ? new URL(old.url) : null;
+  if (!u) throw new HttpError(400, "proxy address needed");
+  if (b.username !== undefined) u.username = encodeURIComponent(b.username.trim());
+  if (b.password) u.password = encodeURIComponent(b.password);
+  else if (old && !u.password) u.password = new URL(old.url).password;
+  return testProxyUrl(u.toString().replace(/\/$/, ""), await offeredBases());
+});

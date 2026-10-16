@@ -11,7 +11,7 @@ import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } 
 import { llmBrief, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
-import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
+import { chooseKey, chooseProxy, nextKey, setFailover } from "../runs/keys.ts";
 
 function mustRun(id: string) {
   const r = getRun(id);
@@ -218,6 +218,7 @@ get("/runs/:id/keys", ({ params: { id } }) => {
   };
 });
 post("/runs/:id/key", async ({ req, params: { id } }) => chooseKey(id, (await readJson(req)).keyId ?? null));
+post("/runs/:id/proxy", async ({ req, params: { id } }) => chooseProxy(id, (await readJson(req)).proxyId || null));
 post("/runs/:id/failover", async ({ req, params: { id } }) => setFailover(id, !!(await readJson(req)).on));
 post("/runs/:id/label", async ({ req, params: { id } }) => controls.setLabel(id, (await readJson(req)).label));
 post("/runs/:id/reset-counters", ({ params: { id } }) => controls.resetCounters(id));

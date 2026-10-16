@@ -9,6 +9,7 @@ import { detectLanguage, ensureWorkbase, refreshRunFiles, workbasePath } from ".
 import { checkParts, getVersion, latestVersion, render } from "../templates.ts";
 import { snapshotWorkbase } from "../history.ts";
 import { clientFor, credsHash, notifyRun, publicRun, setRun, setStatus, timeline } from "./state.ts";
+import { getProxy } from "../proxies.ts";
 import { watch } from "./events.ts";
 
 export interface NewRun {
@@ -32,6 +33,8 @@ export interface NewRun {
   keyId?: string;
   /** Move to the provider's next key if this one runs out or is rejected; omitted = the Settings default. */
   keyFailover?: boolean;
+  /** Proxy for the run's model calls; undefined = the default from Settings, "" = none. */
+  proxyId?: string;
 }
 
 export function repoName(repo: string) {
@@ -91,11 +94,16 @@ export function createRun(o: NewRun): RunRow {
   );
   const variant = o.variant?.trim();
   if (variant) db.query("UPDATE runs SET variant = ? WHERE id = ?").run(variant, id);
+  const proxyId = o.proxyId === undefined ? s.defaultProxy || null : o.proxyId || null;
+  const proxy = proxyId ? getProxy(proxyId) : null;
+  if (o.proxyId && !proxy) throw new Error(`no proxy ${o.proxyId}`);
+  // A default proxy that was removed since: run without one rather than fail.
+  db.query("UPDATE runs SET proxy_id = ? WHERE id = ?").run(proxy?.id ?? null, id);
   db.query("UPDATE runs SET key_id = ?, key_failover = ?, hue = ? WHERE id = ?").run(noKey ? NO_KEY : (key?.id ?? null), !noKey && (o.keyFailover ?? s.keyFailover) ? 1 : 0, pickHue(), id);
   ensureWorkbase(id);
   refreshRunFiles(id);
   const keyNote = noKey ? ", no API key" : providerKeys(model.split("/")[0]).length > 1 ? `, key ${(key ?? keyFor(null, model.split("/")[0]))!.name}${(o.keyFailover ?? s.keyFailover) ? " (failover on)" : ""}` : "";
-  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}${variant ? ` (thinking ${variant})` : ""}${keyNote}, template ${tv.template_id} v${tv.version}`);
+  timeline(id, "user", "created", `Run created: ${repo}${o.ref ? ` @ ${o.ref}` : ""}, ${model}${variant ? ` (thinking ${variant})` : ""}${keyNote}${proxy ? `, proxy ${proxy.name}` : ""}, template ${tv.template_id} v${tv.version}`);
   const run = getRun(id)!;
   publish("*", "run", publicRun(run));
   void prepare(id);

@@ -18,7 +18,7 @@ import { describeOverride, shortTokens } from "./Advanced.tsx";
 
 const price = (n: number | null) => (n == null ? "" : n === 0 ? "0" : n < 1 ? n.toFixed(2) : String(Math.round(n * 10) / 10));
 const SHOW = 40;
-const blank = (id: string, extra: Partial<CatalogModel> = {}): CatalogModel => ({ id, name: id, family: null, context: null, output: null, costIn: null, costOut: null, costCacheRead: null, tools: true, reasoning: false, openWeights: false, released: null, status: null, ...extra });
+const blank = (id: string, extra: Partial<CatalogModel> = {}): CatalogModel => ({ id, name: id, family: null, context: null, output: null, costIn: null, costOut: null, costCacheRead: null, tools: true, reasoning: false, openWeights: false, released: null, status: null, api: null, npm: null, ...extra });
 
 type Filter = "tools" | "reasoning" | "free" | "open";
 const FILTERS: [Filter, string, (m: CatalogModel) => boolean][] = [
