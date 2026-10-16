@@ -30,7 +30,7 @@ import { age } from "../../lib/health.ts";
 import { cn } from "../../lib/cn.ts";
 import type { Activity, FleetRun, Question, RunDetail, TimelineEntry } from "../../lib/types.ts";
 import { Button } from "../../components/ui.tsx";
-import { AgentDot, IC_SM, Kbd, SectionHead } from "../../components/ui/bits.tsx";
+import { AgentDot, IC_SM, Kbd, SectionHead, Sep } from "../../components/ui/bits.tsx";
 import { RunCharts } from "../../components/charts/RunCharts.tsx";
 import { toast } from "../../components/Toast.tsx";
 
@@ -153,7 +153,7 @@ function Now({ runId, fleet, rootSession }: { runId: string; fleet?: FleetRun; r
         <div key={a.id} className="mb-1.5 flex items-center gap-[9px] text-[13px] text-ink-3">
           <AgentDot s={a.state} />
           <span className="truncate">{a.title}</span>
-          <span>· {a.state === "waiting" ? "waiting on subagents" : a.state === "idle" ? "idle" : a.state === "interrupted" ? "interrupted" : a.state}</span>
+          <span><Sep className="ml-0" />{a.state === "waiting" ? "waiting on subagents" : a.state === "idle" ? "idle" : a.state === "interrupted" ? "interrupted" : a.state}</span>
         </div>
       ))}
     </section>

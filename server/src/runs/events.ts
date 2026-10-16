@@ -198,7 +198,7 @@ function touch(runId: string) {
 function errorText(err: any) {
   const d = err?.data ?? {};
   const msg = String(d.message ?? "");
-  const body = d.responseBody && !msg.includes(String(d.responseBody)) ? ` · ${d.responseBody}` : "";
+  const body = d.responseBody && !msg.includes(String(d.responseBody)) ? `: ${d.responseBody}` : "";
   return `${err?.name ?? "unknown"}${d.statusCode ? ` (HTTP ${d.statusCode})` : ""}: ${msg}${body}`.slice(0, 500);
 }
 

@@ -8,6 +8,7 @@ import { useId, useMemo, useState } from "react";
 import { area, curveBasis, line, stack, stackOffsetSilhouette } from "d3-shape";
 import { ChartTip, TipRow, TipTitle, useSize, type TipState } from "./common.tsx";
 import { age } from "../../lib/health.ts";
+import { Sep } from "../ui/bits.tsx";
 
 export const STREAM_N = 180;
 export const STREAM_STEP = 10_000;
@@ -115,7 +116,7 @@ export function Stream({ runs, marks, onOpen }: { runs: StreamRun[]; marks: Stre
             content: (
               <>
                 <TipTitle>
-                  {when} · {Math.round(geo.sums[i])} tok/s
+                  {when} <Sep /> {Math.round(geo.sums[i])} tok/s
                 </TipTitle>
                 {rows.map((r) => (
                   <TipRow key={r.id} hue={r.hue} label={r.name} value={Math.round(r.series[i])} hot={r.id === run} />
@@ -189,7 +190,7 @@ export function Stream({ runs, marks, onOpen }: { runs: StreamRun[]; marks: Stre
                 content: (
                   <>
                     <TipTitle>
-                      {m.kind === "find" ? `${m.sev ?? ""} finding` : m.kind === "ask" ? "Question" : "Crash"} · {age(m.at)} ago
+                      {m.kind === "find" ? `${m.sev ?? ""} finding` : m.kind === "ask" ? "Question" : "Crash"} <Sep /> {age(m.at)} ago
                     </TipTitle>
                     <TipRow hue={s.run.hue} label={s.run.name} />
                     <div className="mt-1.5 leading-snug text-ink">{m.text}</div>
@@ -209,7 +210,7 @@ export function Stream({ runs, marks, onOpen }: { runs: StreamRun[]; marks: Stre
               <g key={l.run.id} opacity={hot && hot !== l.run.id ? 0.4 : 1}>
                 <path d={`M${pw + 2},${l.y} C${pw + 8},${l.y} ${lx - 8},${y} ${lx - 3},${y}`} fill="none" strokeWidth={1} style={{ stroke: hueVar(l.run.hue), strokeOpacity: 0.6 }} />
                 <text x={lx} y={y - 2} className="fill-ink text-xs font-medium">
-                  {l.run.name.length > 20 ? `${l.run.name.slice(0, 19)}…` : l.run.name}
+                  {l.run.name.length > 20 ? `${l.run.name.slice(0, 19)}.` : l.run.name}
                 </text>
                 <text x={lx} y={y + 12} className="font-mono text-[11px]" style={{ fill: hueVar(l.run.hue) }}>
                   {Math.round(l.v)}

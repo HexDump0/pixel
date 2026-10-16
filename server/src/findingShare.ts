@@ -198,7 +198,7 @@ export async function serveShare(req: Request, path: string) {
   const m = /^\/api\/share\/([^/]+?)(?:\.tar\.gz|\/files\/(.+))$/.exec(path);
   if (!m) return Response.json({ error: "not found" }, { status: 404 });
   const s = checkToken(req);
-  if (!s) return Response.json({ error: "send a valid token as Authorization: Bearer pxf_…; it may have expired" }, { status: 401 });
+  if (!s) return Response.json({ error: "send a valid token as Authorization: Bearer pxf_...; it may have expired" }, { status: 401 });
   const f = getFinding(s.run, s.fid);
   if (!f || decodeURIComponent(m[1]) !== s.fid) return Response.json({ error: "this token is for another finding" }, { status: 403 });
   if (!m[2]) return new Response(await findingArchive(f), { headers: { "content-type": "application/gzip", "content-disposition": `attachment; filename="${f.id}.tar.gz"` } });

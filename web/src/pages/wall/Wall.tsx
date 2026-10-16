@@ -16,7 +16,7 @@ import { navigate } from "../../lib/router.tsx";
 import { cn } from "../../lib/cn.ts";
 import { ErrorBox, Button, buttonClass } from "../../components/ui.tsx";
 import { IC_SM, Kbd, Nothing } from "../../components/ui/bits.tsx";
-import { Dialog } from "../../components/ui/overlay.tsx";
+import { Dialog, Select } from "../../components/ui/overlay.tsx";
 import { openCatchUp } from "../../components/CatchUp.tsx";
 import { openPalette } from "../../components/CommandPalette.tsx";
 import { toast } from "../../components/Toast.tsx";
@@ -163,8 +163,8 @@ export function Wall() {
             />
             <Kbd>/</Kbd>
           </label>
-          <Select icon={<IconBrain {...IC_SM} />} label="Model" value={model} onChange={setModel} options={[["", "All models"], ...models.map((m) => [m, m.split("/").slice(1).join("/").replace(/^claude-/, "")] as [string, string])]} />
-          <Select icon={<IconArrowDown {...IC_SM} />} label="Sort by" value={sort} onChange={setSort} options={Object.entries(SORTS).map(([k, s]) => [k, s.label])} />
+          <Select className="max-md:hidden" icon={<IconBrain {...IC_SM} />} label="Model" value={model} onChange={setModel} options={[["", "All models"], ...models.map((m) => [m, m.split("/").slice(1).join("/").replace(/^claude-/, "")] as [string, string])]} />
+          <Select className="max-md:hidden" icon={<IconArrowDown {...IC_SM} />} label="Sort by" value={sort} onChange={setSort} options={Object.entries(SORTS).map(([k, s]) => [k, s.label])} />
           <div role="group" aria-label="Layout" className="inline-flex h-[34px] items-center rounded-[10px] border border-line-2 bg-s1 p-0.5">
             {(
               [
@@ -314,22 +314,6 @@ function SectionTitle({ title, n }: { title: string; n: number }) {
   );
 }
 
-function Select({ icon, label, value, onChange, options }: { icon: React.ReactNode; label: string; value: string; onChange: (v: string) => void; options: [string, string][] }) {
-  return (
-    <span className="relative inline-flex h-[34px] items-center rounded-[10px] border border-line-2 bg-s1 pl-2.5 text-ink-3 hover:border-line max-md:hidden">
-      {icon}
-      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className="h-full cursor-pointer appearance-none border-0 bg-transparent pr-7 pl-2 text-[13px] text-ink-2 outline-none [&>option]:bg-s2 [&>option]:text-ink">
-        {options.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-      <span aria-hidden className="pointer-events-none absolute top-3.5 right-[11px] size-[5px] rotate-45 border-r-[1.5px] border-b-[1.5px] border-ink-3" />
-    </span>
-  );
-}
-
 /** One message sent to every selected run. */
 function BulkMessage({ open, onOpenChange, runs, onSent }: { open: boolean; onOpenChange: (o: boolean) => void; runs: { id: string; label: string | null; hue: number | null; session_id: string | null }[]; onSent: () => void }) {
   const [text, setText] = useState("");
@@ -345,29 +329,32 @@ function BulkMessage({ open, onOpenChange, runs, onSent }: { open: boolean; onOp
     onSent();
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={`Message ${targets.length} runs`} className="w-[min(560px,calc(100vw-32px))]">
-      <textarea
-        rows={4}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && void send()}
-        placeholder="Sent to each run's main agent"
-        aria-label="Message"
-        className="w-full resize-y rounded-[10px] border border-line bg-s2 px-3 py-2.5 text-ink outline-none focus:border-ink-3"
-      />
-      <div className="mt-3 flex items-start gap-3">
-        <span className="flex flex-1 flex-wrap gap-1.5">
-          {targets.map((r) => (
-            <span key={r.id} className="inline-flex h-7 items-center gap-[7px] rounded-lg border border-line-2 bg-s2 px-2.5 text-[12.5px]">
-              <i className="size-2.5 rounded-[3px]" style={{ background: `var(--r${r.hue ?? 0})` }} />
-              {runName(r)}
-            </span>
-          ))}
-        </span>
-        <Button variant="primary" onClick={send} disabled={!text.trim() || !targets.length}>
-          Send
-        </Button>
-      </div>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="md"
+      title={`Message ${targets.length} runs`}
+      description="Sent to each run's main agent."
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={send} disabled={!text.trim() || !targets.length}>
+            Send
+          </Button>
+        </>
+      }
+    >
+      <span className="flex flex-wrap gap-1.5">
+        {targets.map((r) => (
+          <span key={r.id} className="inline-flex h-7 items-center gap-[7px] rounded-lg border border-line-2 bg-s2 px-2.5 text-[12.5px]">
+            <i className="size-2.5 rounded-[3px]" style={{ background: `var(--r${r.hue ?? 0})` }} />
+            {runName(r)}
+          </span>
+        ))}
+      </span>
+      <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && void send()} placeholder="Message" aria-label="Message" className="input w-full" />
     </Dialog>
   );
 }

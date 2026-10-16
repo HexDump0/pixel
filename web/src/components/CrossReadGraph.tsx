@@ -24,7 +24,7 @@ export function CrossReadGraph({ edges }: { edges: CrossReadEdge[] }) {
         const b = pos.get(e.other_run)!;
         return (
           <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="stroke-zinc-400" strokeOpacity={0.7} strokeWidth={1 + (3 * e.n) / maxN} markerEnd="url(#arrow)">
-            <title>{`${e.run_id} read ${e.other_run} ${e.n}×`}</title>
+            <title>{`${e.run_id} read ${e.other_run} ${e.n} times`}</title>
           </line>
         );
       })}

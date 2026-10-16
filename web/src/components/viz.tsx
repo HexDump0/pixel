@@ -1,7 +1,9 @@
 /** Small SVG charts drawn from fleet telemetry. Colours come from CSS tokens so both themes work. */
 import type { FleetRun, FleetSnapshot, Lanes } from "../lib/types.ts";
+import { IconCaretDownFilled, IconCaretUpFilled } from "@tabler/icons-react";
 import { distinctNames, kindColor, rate, runColor, shortName } from "../lib/fleet.ts";
 import { bytes, money } from "../lib/format.ts";
+import { Nil } from "./ui/bits.tsx";
 
 export const fmtInt = (n: number) => Math.round(n).toLocaleString("en-US");
 
@@ -123,7 +125,7 @@ export function TokensToday({ t }: { t: FleetSnapshot["tokens"] }) {
         ))}
         {diff != null && (
           <span style={{ color: diff >= 0 ? "var(--ok)" : "var(--warn)" }} title="Cache hit rate today vs all of yesterday up to this time">
-            {diff >= 0 ? "▲" : "▼"} {Math.abs(diff)} pts vs yesterday
+            {diff >= 0 ? <IconCaretUpFilled size={12} className="inline align-middle" /> : <IconCaretDownFilled size={12} className="inline align-middle" />} {Math.abs(diff)} pts vs yesterday
           </span>
         )}
       </div>
@@ -308,7 +310,7 @@ export function LanesChart({ data }: { data: Lanes }) {
 
 /** Two-row CPU / memory meter for table cells. */
 export function MiniMeters({ run }: { run: FleetRun }) {
-  if (run.cpu == null && run.mem.used == null) return <span className="muted">–</span>;
+  if (run.cpu == null && run.mem.used == null) return <Nil />;
   const memPct = run.mem.used && run.mem.total ? run.mem.used / run.mem.total : 0;
   return (
     <>
@@ -316,13 +318,13 @@ export function MiniMeters({ run }: { run: FleetRun }) {
         <b>
           <i style={{ width: `${Math.min(100, run.cpu ?? 0)}%` }} />
         </b>
-        <span>{run.cpu == null ? "–" : `${Math.round(run.cpu)}%`}</span>
+        <span>{run.cpu == null ? <Nil /> : `${Math.round(run.cpu)}%`}</span>
       </div>
       <div className="meter">
         <b>
           <i className={memPct > 0.8 ? "hot" : ""} style={{ width: `${Math.min(100, memPct * 100)}%` }} />
         </b>
-        <span>{run.mem.used == null ? "–" : bytes(run.mem.used).replace(" ", "")}</span>
+        <span>{run.mem.used == null ? <Nil /> : bytes(run.mem.used).replace(" ", "")}</span>
       </div>
     </>
   );

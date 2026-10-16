@@ -17,7 +17,7 @@ import type { Message, Part, RunDetail } from "../../lib/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
 import { Button, ErrorBox } from "../../components/ui.tsx";
 import { Menu } from "../../components/ui/overlay.tsx";
-import { IC_SM, IC_XS, Kbd, Nothing } from "../../components/ui/bits.tsx";
+import { IC_SM, IC_XS, Kbd, Nothing, Sep } from "../../components/ui/bits.tsx";
 
 /** A gap this long, or a model change, gets a divider with the time. */
 const GAP_MS = 5 * 60_000;
@@ -46,7 +46,7 @@ function errorDetail(err: { name: string; data?: any }) {
   const d = err.data ?? {};
   const msg = String(d.message ?? "");
   const body = d.responseBody && !msg.includes(String(d.responseBody)) ? String(d.responseBody) : "";
-  return [d.statusCode && `HTTP ${d.statusCode}`, msg, body.slice(0, 1000)].filter(Boolean).join(" · ") || "no details from the provider";
+  return [d.statusCode && `HTTP ${d.statusCode}`, msg, body.slice(0, 1000)].filter(Boolean).join(", ") || "no details from the provider";
 }
 
 function entriesOf(msgs: Message[]): Entry[] {
@@ -337,7 +337,7 @@ export function TranscriptTab({ detail }: { detail: RunDetail }) {
                   items={[
                     { label: "Main agent", checked: session === root, onSelect: () => setSession(root) },
                     "-",
-                    { head: `Subagents · ${children.length}` },
+                    { head: `Subagents (${children.length})` },
                     ...children.map((s) => ({ label: s.title ?? s.id, hint: s.agent ?? undefined, checked: session === s.id, onSelect: () => setSession(s.id) })),
                   ]}
                 />
@@ -408,7 +408,7 @@ export function TranscriptTab({ detail }: { detail: RunDetail }) {
                   <div key={b.id} className="flex items-center gap-3 pt-2 font-mono text-[11.5px] text-ink-4 tabular-nums">
                     <span className="h-px flex-1 bg-line-2" />
                     {clock(b.ts)}
-                    {b.model && ` · ${b.model}`}
+                    {b.model && <><Sep />{b.model}</>}
                     <span className="h-px flex-1 bg-line-2" />
                   </div>
                 );

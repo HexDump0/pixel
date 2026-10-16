@@ -5,26 +5,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
 import * as D from "@radix-ui/react-dialog";
-import {
-  IconActivity,
-  IconBook,
-  IconBug,
-  IconChartBar,
-  IconCpu,
-  IconFileText,
-  IconGauge,
-  IconLayoutGrid,
-  IconLogout,
-  IconMessage,
-  IconPencil,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconPlayerSkipForward,
-  IconPlus,
-  IconSearch,
-  IconSettings,
-  IconTerminal2,
-} from "@tabler/icons-react";
+import { IconActivity, IconArrowDown, IconArrowUp, IconBook, IconBug, IconChartBar, IconCornerDownLeft, IconCpu, IconFileText, IconGauge, IconLayoutGrid, IconLogout, IconMessage, IconPencil, IconPlayerPause, IconPlayerPlay, IconPlayerSkipForward, IconPlus, IconSearch, IconSettings, IconTerminal2 } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
 import { navigate, useLocation, match } from "../lib/router.tsx";
 import { useRuns, repoShort } from "../lib/runs.ts";
@@ -146,18 +127,18 @@ export function CommandPalette({ authEnabled }: { authEnabled: boolean }) {
                   <Command.Empty className="px-3.5 py-4 text-sm text-ink-3">No matches</Command.Empty>
                   {cur && (
                     <Command.Group heading={runName(cur)} className={groupClass}>
-                      <Item icon={<IconMessage {...IC_SM} />} label="Message the agent…" onSelect={() => (setMessageTo(cur.id), setQ(""))} />
-                      <Item icon={<IconPencil {...IC_SM} />} label="Rename run…" onSelect={go(() => startRename(cur.id))} />
+                      <Item icon={<IconMessage {...IC_SM} />} label="Message the agent" onSelect={() => (setMessageTo(cur.id), setQ(""))} />
+                      <Item icon={<IconPencil {...IC_SM} />} label="Rename run" onSelect={go(() => startRename(cur.id))} />
                       {canPause(cur) && <Item icon={<IconPlayerPause {...IC_SM} />} label="Pause" onSelect={go(() => act.pause(cur.id))} />}
                       {canResume(cur) && <Item icon={<IconPlayerPlay {...IC_SM} />} label="Resume" onSelect={go(() => act.resume(cur.id))} />}
-                      {cur.status === "running" && <Item icon={<IconPlayerSkipForward {...IC_SM} />} label="Send “continue”" onSelect={go(() => act.continue(cur.id))} />}
+                      {cur.status === "running" && <Item icon={<IconPlayerSkipForward {...IC_SM} />} label="Send continue" onSelect={go(() => act.continue(cur.id))} />}
                       <Item icon={<IconTerminal2 {...IC_SM} />} label="Open terminal" onSelect={go(() => openRun(cur.id, "terminal"))} />
                       <Item icon={<IconBug {...IC_SM} />} label="Findings of this run" onSelect={go(() => openRun(cur.id, "findings"))} />
                     </Command.Group>
                   )}
                   <Command.Group heading="Runs" className={groupClass}>
                     {(runs ?? []).map((r) => (
-                      <Item key={r.id} value={`${runName(r)} ${r.id} ${r.repo}`} icon={<Hue hue={r.hue} className="mx-[3px]" />} label={runName(r)} sub={`${r.status} · ${repoShort(r.repo)}`} onSelect={go(() => openRun(r.id))} />
+                      <Item key={r.id} value={`${runName(r)} ${r.id} ${r.repo}`} icon={<Hue hue={r.hue} className="mx-[3px]" />} label={runName(r)} sub={`${r.status}, ${repoShort(r.repo)}`} onSelect={go(() => openRun(r.id))} />
                     ))}
                   </Command.Group>
                   <Command.Group heading="Go to" className={groupClass}>
@@ -185,11 +166,11 @@ export function CommandPalette({ authEnabled }: { authEnabled: boolean }) {
             </Command.List>
             <div className="flex gap-4 border-t border-line-2 px-4.5 py-2.5 text-xs text-ink-3">
               <span className="inline-flex items-center gap-1">
-                <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd> move
+                <Kbd><IconArrowUp size={11} /></Kbd>
+                <Kbd><IconArrowDown size={11} /></Kbd> move
               </span>
               <span className="inline-flex items-center gap-1">
-                <Kbd>↵</Kbd> {messageTo ? "send" : "run"}
+                <Kbd><IconCornerDownLeft size={11} /></Kbd> {messageTo ? "send" : "run"}
               </span>
               <span className="inline-flex items-center gap-1">
                 <Kbd>esc</Kbd> {messageTo ? "back" : "close"}

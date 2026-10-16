@@ -6,7 +6,7 @@ import { runName } from "../../lib/fleet.ts";
 import { age } from "../../lib/health.ts";
 import { openRun } from "../../lib/actions.ts";
 import type { Finding, Run } from "../../lib/types.ts";
-import { Hue, Sev } from "../../components/ui/bits.tsx";
+import { Hue, Join, Sev } from "../../components/ui/bits.tsx";
 
 /** What the verdict column says: the human's verdict, else "new" when changed since you looked, else the state. */
 function VerdictCell({ f, isNew }: { f: Finding; isNew?: boolean }) {
@@ -39,7 +39,7 @@ function Row({ f, run, showRun, selected, isNew, onOpen }: { f: Finding; run?: R
       </Sev>
       <span className="min-w-0">
         <b className="block truncate font-medium">{f.title}</b>
-        {(f.location || f.class) && <small className="block truncate font-mono text-xs text-ink-3">{[f.location, f.class].filter(Boolean).join(" · ")}</small>}
+        {(f.location || f.class) && <small className="block truncate font-mono text-xs text-ink-3"><Join items={[f.location, f.class]} /></small>}
       </span>
       {showRun && (
         <span className="flex min-w-0 items-center gap-2 text-[12.5px] text-ink-2 max-md:hidden">

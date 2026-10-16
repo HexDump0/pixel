@@ -66,7 +66,7 @@ export function RunName({ run, editable = false, className, children }: { run: {
   return (
     <span
       className={cn("truncate", editable && "cursor-text", className)}
-      title={editable ? (run.label ? `${run.id} · double-click to rename` : "Double-click to rename") : run.label ? run.id : undefined}
+      title={editable ? (run.label ? `${run.id}, double-click to rename` : "Double-click to rename") : run.label ? run.id : undefined}
       onDoubleClick={
         editable
           ? (e) => {

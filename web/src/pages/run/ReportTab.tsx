@@ -8,6 +8,7 @@ import { reloadRuns } from "../../lib/runs.ts";
 import type { Run } from "../../lib/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
 import { Button } from "../../components/ui.tsx";
+import { Sep } from "../../components/ui/bits.tsx";
 
 export function ReportTab({ run, onOpenFinding }: { run: Run; onOpenFinding: (id: string) => void }) {
   const report = useQuery({ queryKey: [...keys.runReport(run.id), run.report_ready], queryFn: () => api.report(run.id) });
@@ -47,12 +48,12 @@ export function ReportTab({ run, onOpenFinding }: { run: Run; onOpenFinding: (id
       <section className="flex flex-col gap-3 border-t border-line-2 pt-6">
         <div className="flex items-baseline gap-2.5">
           <h2 className="m-0 text-[13.5px] font-medium">Triage</h2>
-          <span className="text-[12.5px] text-ink-3">saved to TRIAGE.md{run.triaged_at ? ` · triaged ${dateTime(run.triaged_at)}` : ""}</span>
+          <span className="text-[12.5px] text-ink-3">saved to TRIAGE.md{run.triaged_at ? `, triaged ${dateTime(run.triaged_at)}` : ""}</span>
         </div>
         <p className="m-0 text-[13.5px] text-ink-2">
           {run.findings?.outcome ? `Result: ${run.findings.outcome}` : "No finding verdicts yet"}
           {run.findings?.untriaged ? `, ${run.findings.untriaged} still to triage` : ""}
-          {run.triage_verdict && <span className="text-ink-3"> · earlier overall verdict: {run.triage_verdict}</span>}
+          {run.triage_verdict && <span className="text-ink-3"><Sep />earlier overall verdict: {run.triage_verdict}</span>}
         </p>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={6} placeholder="Notes (markdown)" aria-label="Notes" className="resize-y rounded-lg border border-line bg-s2 px-2.5 py-2 font-mono text-[12.5px] text-ink outline-none focus:border-ink-3" />
         <label className="flex items-center gap-2 text-[13px] text-ink-2">

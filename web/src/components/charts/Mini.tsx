@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { FleetRun, FleetSnapshot } from "../../lib/types.ts";
 import { money } from "../../lib/format.ts";
 import { ChartTip, TipRow, TipTitle, useSize, type TipState } from "./common.tsx";
+import { Sep } from "../ui/bits.tsx";
 
 const hueVar = (h: number | null | undefined) => `var(--r${h ?? 0})`;
 type Named = { id: string; name: string; hue: number | null };
@@ -43,13 +44,13 @@ export function SpendBars({ spend, runs }: { spend: FleetSnapshot["spend"]; runs
               content:
                 k >= spend.hours ? (
                   <>
-                    <TipTitle>{lab} · projected</TipTitle>
+                    <TipTitle>{lab}, projected</TipTitle>
                     <TipRow color="transparent" label="at the last hour's rate" value={money(spend.perHour)} />
                   </>
                 ) : (
                   <>
                     <TipTitle>
-                      {lab} · {money(hourly[k])}
+                      {lab} <Sep /> {money(hourly[k])}
                     </TipTitle>
                     {spend.runs
                       .filter((r) => r.hourly[k] > 0)
@@ -120,7 +121,7 @@ export function CallBars({ runs, names }: { runs: FleetRun[]; names: Map<string,
               content: (
                 <>
                   <TipTitle>
-                    {ago ? `${ago} min ago` : "this minute"} · {tot(i)} calls
+                    {ago ? `${ago} min ago` : "this minute"} <Sep /> {tot(i)} calls
                   </TipTitle>
                   {per
                     .filter((p) => p.m[i])

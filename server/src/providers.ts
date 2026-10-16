@@ -142,13 +142,13 @@ export function onRetry(runId: string, model: string, sessionId: string, status:
 
 // ---- health: the last hour, per provider/model ----
 
-const pct = (xs: number[], p: number) => {
+export const pct = (xs: number[], p: number) => {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
 };
 
-interface CallRow {
+export interface CallRow {
   provider: string;
   model: string;
   created: number;
@@ -160,9 +160,9 @@ interface CallRow {
   error: string | null;
 }
 
-const ttftOf = (c: CallRow) => (c.first_token && c.first_token >= c.created ? c.first_token - c.created : null);
+export const ttftOf = (c: CallRow) => (c.first_token && c.first_token >= c.created ? c.first_token - c.created : null);
 /** Output speed while streaming; very short answers say little about throughput, so they're skipped. */
-const tpsOf = (c: CallRow) => {
+export const tpsOf = (c: CallRow) => {
   const out = c.tokens_out + c.tokens_reasoning;
   if (!c.first_token || !c.completed || out < 30) return null;
   const s = (c.completed - c.first_token) / 1000;
@@ -172,7 +172,7 @@ const tpsOf = (c: CallRow) => {
 export function health(minutes = 60) {
   const now = Date.now();
   const from = now - minutes * 60_000;
-  const BUCKETS = 12;
+  const BUCKETS = 30;
   const size = (now - from) / BUCKETS;
   const calls = db.query<CallRow, [number]>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls WHERE created >= ?").all(from);
   const events = db.query<{ ts: number; provider: string; model: string; kind: string; message: string }, [number]>("SELECT ts, provider, model, kind, message FROM provider_events WHERE ts >= ? ORDER BY ts DESC").all(from);

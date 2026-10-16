@@ -1,5 +1,6 @@
 /** Shared knowledge: search all workbases, browse them, and see who reads whose work. */
 import { useMemo, useState } from "react";
+import { IconArrowLeft } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import { Link } from "../lib/router.tsx";
@@ -8,6 +9,8 @@ import type { CrossReadEdge, SearchHit } from "../lib/types.ts";
 import { WorkbaseBrowser } from "../components/WorkbaseBrowser.tsx";
 import { CrossReadGraph } from "../components/CrossReadGraph.tsx";
 import { Badge, Card, Empty, ErrorBox, PageHeader, Tabs } from "../components/ui.tsx";
+import { Select } from "../components/ui/overlay.tsx";
+import { Nil, Sep } from "../components/ui/bits.tsx";
 
 /** Search snippets come back with [[match]] markers. */
 function Snippet({ text }: { text: string }) {
@@ -42,7 +45,7 @@ function SearchPane({ onOpen }: { onOpen: (run: string) => void }) {
   return (
     <div>
       <form onSubmit={run} className="mb-3 flex gap-2">
-        <input className="input flex-1" placeholder="Search notes, reports and scripts in every workbase…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+        <input className="input flex-1" placeholder="Search notes, reports and scripts in every workbase" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
         <button className="btn btn-primary" type="submit">
           Search
         </button>
@@ -77,18 +80,18 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap gap-2">
-        <select className="input" value={lang} onChange={(e) => setLang(e.target.value)}>
-          <option value="">All languages</option>
-          {langs.map((l) => (
-            <option key={l}>{l}</option>
-          ))}
-        </select>
-        <select className="input" value={verdict} onChange={(e) => setVerdict(e.target.value)}>
-          <option value="">Any triage result</option>
-          <option value="real">With real findings</option>
-          <option value="other">Nothing real</option>
-          <option value="untriaged">Not triaged</option>
-        </select>
+        <Select label="Language" value={lang} onChange={setLang} options={[["", "All languages"], ...langs.map((l): [string, string] => [l, l])]} />
+        <Select
+          label="Triage result"
+          value={verdict}
+          onChange={setVerdict}
+          options={[
+            ["", "Any triage result"],
+            ["real", "With real findings"],
+            ["other", "Nothing real"],
+            ["untriaged", "Not triaged"],
+          ]}
+        />
       </div>
       <ErrorBox error={wbs.error} />
       <div className="card overflow-x-auto p-0">
@@ -107,11 +110,11 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
               <tr key={w.run} className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/50" onClick={() => onOpen(w.run)}>
                 <td className="td font-medium">{w.run}</td>
                 <td className="td max-w-xs truncate text-xs muted">{w.repo ?? "(run deleted)"}</td>
-                <td className="td">{w.language ?? "–"}</td>
+                <td className="td">{w.language ?? <Nil />}</td>
                 <td className="td">
                   <Badge value={w.status} />
                 </td>
-                <td className="td">{w.verdict ?? "–"}</td>
+                <td className="td">{w.verdict ?? <Nil />}</td>
                 <td className="td tabular-nums">{w.files}</td>
                 <td className="td tabular-nums">{bytes(w.bytes)}</td>
                 <td className="td whitespace-nowrap">{ago(w.last)}</td>
@@ -197,9 +200,9 @@ export function KnowledgePage() {
           <div>
             <div className="mb-2 text-sm">
               <button className="cursor-pointer text-accent hover:underline" onClick={() => setOpen(null)}>
-                ← INDEX.md
+                <IconArrowLeft size={12} className="inline align-middle" /> INDEX.md
               </button>{" "}
-              · <Link to={`/runs/${encodeURIComponent(open)}`}>open run</Link>
+              <Sep /> <Link to={`/runs/${encodeURIComponent(open)}`}>open run</Link>
             </div>
             <WorkbaseBrowser runId={open} className="h-[75vh] rounded-xl border border-line-2" />
           </div>

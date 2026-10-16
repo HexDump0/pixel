@@ -32,7 +32,7 @@ async function restic(args: string[]) {
 
 export async function runBackup() {
   const b = getSettings().backup;
-  if (!b.repository || !b.password) throw new Error("backup repository and password are not set (Settings → Backups)");
+  if (!b.repository || !b.password) throw new Error("backup repository and password are not set (Settings, Backups)");
   if (running) throw new Error("a backup is already running");
   running = true;
   publish("*", "backup", { running: true });

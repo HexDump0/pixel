@@ -185,7 +185,7 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
       const st = e.changes?.state;
       if (st) return `${e.finding_id} ${STATE_WORDS[String(st[1])] ?? st[1]}: ${title}${note}`;
       const sev = e.changes?.severity;
-      if (sev) return `${e.finding_id} severity ${sev[0] ?? "none"} → ${sev[1]}: ${title}${note}`;
+      if (sev) return `${e.finding_id} severity ${sev[0] ?? "none"} to ${sev[1]}: ${title}${note}`;
       return `${e.finding_id} updated: ${title}${note}`;
     }
   }

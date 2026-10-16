@@ -4,6 +4,7 @@ import { area, curveMonotoneX, line } from "d3-shape";
 import { ago } from "../../lib/format.ts";
 import { cn } from "../../lib/cn.ts";
 import { ChartTip, TipRow, TipTitle, niceMax, useSize, type TipState } from "./common.tsx";
+import { Nil } from "../ui/bits.tsx";
 
 const H = 64;
 
@@ -47,7 +48,7 @@ export function Meter({
     <div className="min-w-0 rounded-xl border border-line-2 bg-s2 px-3.5 pt-3 pb-2.5">
       <div className="flex items-baseline gap-1.5">
         <span className="mr-auto text-[12.5px] text-ink-3">{title}</span>
-        <b className={cn("text-[15px] font-medium tabular-nums", tone)}>{last == null ? "–" : fmt(last)}</b>
+        <b className={cn("text-[15px] font-medium tabular-nums", tone)}>{last == null ? <Nil /> : fmt(last)}</b>
         {note ?? (limit != null && <small className="font-mono text-[11.5px] text-ink-3">of {fmt(limit)}</small>)}
       </div>
       <div ref={ref} className="mt-2 h-16">

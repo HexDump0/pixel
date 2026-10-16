@@ -363,4 +363,61 @@ run({
 await setVerdict("sqlite-fts5-2026-10-12", "F1", "not_bug", "Needs a single 2 GB document; not reachable with the default SQLITE_MAX_LENGTH.");
 await setVerdict("yaml-cpp-2026-10-12", "F2", "real", null);
 
+
+// ---- Models page: providers with keys, offered models, an hour of model calls, a speed test ----
+
+const { saveSettings } = await import("../src/settings.ts");
+await import("../src/providers.ts"); // creates llm_calls, provider_events and speedtests
+const acct = (id: string, name: string, keys: [string, string, string?][], extra: Record<string, unknown> = {}) => ({
+  id, name, added: now - 9 * 24 * H, ...extra,
+  keys: keys.map(([kname, note, state], i) => ({ id: `key_${id}_${i}`, name: kname, key: `sk-demo-${id}-${i}-0000000000${i}a4f2`, note, added: now - (9 - i) * 24 * H, ...(state && { status: { state, at: now - 6 * M, detail: state === "ratelimit" ? "429 Too Many Requests: tokens per minute exceeded" : "402 insufficient credit" } }) })),
+});
+db.query("INSERT INTO settings (key, value) VALUES ('_providers', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+  JSON.stringify({
+    anthropic: acct("anthropic", "Anthropic", [["Work", "Team plan, billed to the lab"], ["Personal", "Own card, $200/month cap", "ratelimit"]]),
+    openrouter: acct("openrouter", "OpenRouter", [["Credits", "Prepaid $50"]]),
+    deepseek: acct("deepseek", "DeepSeek", [["Trial", "Free trial credit, expires in November", "credit"]]),
+    "lab-vllm": acct("lab-vllm", "Lab vLLM", [["Internal", ""]], { baseURL: "http://10.0.4.12:8000/v1", custom: { api: "openai", models: ["qwen3-coder-480b", "glm-4.6"], context: 262144, reasoning: true } }),
+  }),
+);
+const offered = ["anthropic/claude-opus-4-5", "anthropic/claude-sonnet-4-5", "openrouter/qwen/qwen3-coder", "openrouter/moonshotai/kimi-k2", "deepseek/deepseek-chat", "lab-vllm/qwen3-coder-480b", "opencode/big-pickle"];
+saveSettings({ models: offered, defaultModel: "anthropic/claude-opus-4-5", providerLimits: { "anthropic/claude-opus-4-5": { tpm: 400_000, rpm: 50 }, "openrouter/qwen/qwen3-coder": { tpm: 120_000 } } });
+
+// Older runs on other models, so the leaderboard compares something.
+db.query("UPDATE runs SET model = 'anthropic/claude-sonnet-4-5' WHERE id IN ('yaml-cpp-2026-10-12', 'libxml2-2026-10-14')").run();
+db.query("UPDATE runs SET model = 'openrouter/qwen/qwen3-coder' WHERE id = 'sqlite-fts5-2026-10-12'").run();
+
+const runIds = db.query<{ id: string }, []>("SELECT id FROM runs").all().map((r) => r.id);
+const callIns = db.query("INSERT INTO llm_calls (id, run_id, session_id, provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, tokens_cache, cost, error, key_id) VALUES (?, ?, 'demo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+// [provider, model, calls in the last 6 h, first-token ms, tok/s, error share]
+const traffic: [string, string, number, number, number, number][] = [
+  ["anthropic", "claude-opus-4-5", 520, 1900, 62, 0.01],
+  ["anthropic", "claude-sonnet-4-5", 260, 1100, 88, 0.02],
+  ["openrouter", "qwen/qwen3-coder", 180, 2600, 140, 0.08],
+  ["openrouter", "moonshotai/kimi-k2", 70, 3400, 46, 0.3],
+  ["lab-vllm", "qwen3-coder-480b", 120, 650, 54, 0],
+  ["opencode", "big-pickle", 40, 1500, 95, 0.03],
+];
+for (const [provider, model, n, ttft, tps, errShare] of traffic)
+  for (let i = 0; i < n; i++) {
+    const created = now - rnd() * 6 * H;
+    const out = Math.round(200 + rnd() * 1800);
+    const ft = created + ttft * (0.6 + rnd() * 0.9);
+    const err = rnd() < errShare ? "upstream error: 502 Bad Gateway" : null;
+    callIns.run(uid("call"), runIds[i % runIds.length], provider, model, created, err ? null : ft, err ? null : ft + (out / (tps * (0.7 + rnd() * 0.6))) * 1000, Math.round(20_000 + rnd() * 60_000), err ? 0 : out, 0, Math.round(rnd() * 50_000), 0, err, `key_${provider}_0`);
+  }
+const evIns = db.query("INSERT INTO provider_events (ts, run_id, provider, model, kind, message) VALUES (?, ?, ?, ?, ?, ?)");
+evIns.run(now - 4 * M, runIds[0], "openrouter", "moonshotai/kimi-k2", "ratelimit", "429 Too Many Requests: rate limit exceeded for moonshotai/kimi-k2");
+for (let i = 0; i < 5; i++) evIns.run(now - (8 + i * 6) * M, runIds[1], "openrouter", "moonshotai/kimi-k2", "retry", "Retrying after upstream 502");
+evIns.run(now - 50 * M, runIds[0], "anthropic", "claude-opus-4-5", "retry", "overloaded_error: retrying in 4 s");
+
+const stIns = db.query("INSERT INTO speedtests (batch, ts, provider, model, ttft_ms, total_ms, tokens_out, tps, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+for (const [batch, at] of [["b1", now - 26 * H], ["b2", now - 2 * H]] as const)
+  for (const [provider, model, , ttft, tps] of traffic) {
+    const t = Math.round(ttft * (0.8 + rnd() * 0.4));
+    const sp = tps * (0.85 + rnd() * 0.3);
+    const fail = batch === "b2" && model === "moonshotai/kimi-k2";
+    stIns.run(batch, at, provider, model, fail ? null : t, fail ? null : Math.round(t + (340 / sp) * 1000), fail ? null : 340, fail ? null : sp, fail ? 0 : 1, fail ? "429 Too Many Requests" : null);
+  }
+
 console.log(`Seeded ${db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM runs").get()!.n} runs in ${process.env.PIXEL_DATA}`);

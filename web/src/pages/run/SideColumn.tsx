@@ -13,7 +13,7 @@ import { openRun } from "../../lib/actions.ts";
 import { cn } from "../../lib/cn.ts";
 import type { FleetRun, RunDetail, Todo } from "../../lib/types.ts";
 import { KeyMenu, openModelDialog, useRunKeyName } from "../../components/RunMenu.tsx";
-import { AgentDot, IC_XS } from "../../components/ui/bits.tsx";
+import { AgentDot, IC_XS, Join, Nil } from "../../components/ui/bits.tsx";
 
 const KINDS: [string, string][] = [
   ["shell", "shell"],
@@ -55,7 +55,7 @@ function Agents({ detail, fleet }: { detail: RunDetail; fleet: FleetRun }) {
   const nowText = (n: FleetRun["now"], state: string) => {
     if (state === "waiting") return <span className="font-sans">waiting on subagents</span>;
     if (state === "idle") return <span className="font-sans text-warning">idle</span>;
-    if (state === "interrupted") return <span className="font-sans text-warning">interrupted · can be resumed</span>;
+    if (state === "interrupted") return <span className="font-sans text-warning">interrupted, can be resumed</span>;
     if (state === "failed") return <span className="font-sans text-critical">failed</span>;
     if (state === "done" || state === "finished" || state === "paused") return null;
     if (n && (n.status === "running" || n.status === "pending"))
@@ -182,7 +182,7 @@ function OtherWorkbases({ runId }: { runId: string }) {
         {[...others].map(([o, n]) => (
           <li key={o} className="flex items-baseline gap-2">
             {o === "*" ? <span>the workbases index</span> : <button type="button" className="cursor-pointer truncate border-0 bg-transparent p-0 text-left text-ink underline decoration-ink-4 underline-offset-[3px] hover:decoration-ink" onClick={() => openRun(o)}>{o}</button>}
-            <span className="font-mono text-xs text-ink-3">×{n}</span>
+            <span className="font-mono text-xs text-ink-3">{n}x</span>
           </li>
         ))}
       </ul>
@@ -214,7 +214,7 @@ function Facts({ detail }: { detail: RunDetail }) {
           </a>,
         )}
         {row("Ref", `${r.ref ?? "default branch"}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ""}`)}
-        {row("Template", r.template_id ? `${r.template_id} v${r.template_version}` : "–")}
+        {row("Template", r.template_id ? `${r.template_id} v${r.template_version}` : <Nil />)}
         {row(
           "Model",
           <button type="button" className={factBtn} aria-haspopup="dialog" onClick={() => openModelDialog(r.id)}>
@@ -233,12 +233,12 @@ function Facts({ detail }: { detail: RunDetail }) {
             </button>
           </KeyMenu>,
         )}
-        {row("Tokens", `${tokens(r.tokens_in)} in · ${tokens(r.tokens_out + r.tokens_reasoning)} out`)}
+        {row("Tokens", <Join items={[`${tokens(r.tokens_in)} in`, `${tokens(r.tokens_out + r.tokens_reasoning)} out`]} />)}
         {row("Cost", <>{money(r.cost)}{small(`${money(r.cost / hours)}/h`)}</>)}
         {!!r.autopilot && row("Continues", <span className={cn(r.continues >= limits.maxContinues - 1 && "text-warning")}>{r.continues} of {limits.maxContinues}</span>)}
         {r.oom_restarts > 0 && row("OOM", `${r.oom_restarts} of ${limits.maxOom} restarts`)}
-        {row("Machine", `${r.size.cpu} CPU · ${r.size.memoryGiB} GB`)}
-        {row("Started", r.started_at ? `${age(r.started_at)} ago` : "–")}
+        {row("Machine", <Join items={[`${r.size.cpu} CPU`, `${r.size.memoryGiB} GB`]} />)}
+        {row("Started", r.started_at ? `${age(r.started_at)} ago` : <Nil />)}
         {r.parent_run && row("Follow-up of", <button type="button" className={factBtn} onClick={() => openRun(r.parent_run!)}>{r.parent_run}</button>)}
         {detail.followUps.length > 0 && row("Follow-ups", <span className="flex flex-wrap gap-x-2">{detail.followUps.map((c) => <button key={c} type="button" className={factBtn} onClick={() => openRun(c)}>{c}</button>)}</span>)}
         {detail.compare.filter((c) => c !== r.id).length > 0 && row("Compared", <span className="flex flex-wrap gap-x-2">{detail.compare.filter((c) => c !== r.id).map((c) => <button key={c} type="button" className={factBtn} onClick={() => openRun(c)}>{c}</button>)}</span>)}

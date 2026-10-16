@@ -102,7 +102,7 @@ export const runName = (r: { id: string; label?: string | null }) => r.label || 
 
 /**
  * Names for a set of runs that tell same-named runs apart, by the day (and number) from their id:
- * two "folia" runs become "folia ·12" and "folia ·13".
+ * two "folia" runs become "folia 12" and "folia 13".
  */
 export function distinctNames(runs: { id: string; label?: string | null }[]) {
   const names = new Map(runs.map((r) => [r.id, r.label || shortName(r.id)]));
@@ -112,7 +112,7 @@ export function distinctNames(runs: { id: string; label?: string | null }[]) {
     const n = names.get(r.id)!;
     if (count.get(n)! < 2) continue;
     const m = r.id.match(/-\d{4}-\d{2}-(\d{2})(-\d+)?$/);
-    if (m) names.set(r.id, `${n} ·${m[1]}${m[2] ?? ""}`);
+    if (m) names.set(r.id, `${n} ${m[1]}${m[2] ?? ""}`);
   }
   return names;
 }

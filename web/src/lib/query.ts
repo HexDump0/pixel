@@ -26,6 +26,8 @@ export const keys = {
   runActivity: (id: string) => ["run", id, "activity"] as const,
   runReport: (id: string) => ["run", id, "report"] as const,
   runKeys: (id: string) => ["run", id, "keys"] as const,
+  catalogProvider: (id: string) => ["catalog", id] as const,
+  providers: ["providers"] as const,
 };
 
 type Handler = (m: { run: string; type: string; data: any }) => void;

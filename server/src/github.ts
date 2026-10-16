@@ -27,7 +27,7 @@ function load(): GithubConfig {
   return { token: v.token ?? "", mcp: v.mcp ?? true, toolsets: v.toolsets || DEFAULT_TOOLSETS };
 }
 
-const hint = (t: string) => (!t ? null : t.length < 12 ? "••••" : `${t.slice(0, 4)}…${t.slice(-4)}`);
+const hint = (t: string) => (!t ? null : t.length < 12 ? "****" : `${t.slice(0, 4)}...${t.slice(-4)}`);
 
 export function githubPublic() {
   const g = load();
@@ -38,7 +38,7 @@ export function saveGithub(input: { token?: string; mcp?: boolean; toolsets?: st
   const g = load();
   if (input.token !== undefined) {
     const t = input.token.trim();
-    if (t && !/^[A-Za-z0-9_]{20,255}$/.test(t)) throw new Error("that doesn't look like a GitHub token (ghp_…, github_pat_…)");
+    if (t && !/^[A-Za-z0-9_]{20,255}$/.test(t)) throw new Error("that doesn't look like a GitHub token (ghp_..., github_pat_...)");
     g.token = t;
   }
   if (input.mcp !== undefined) g.mcp = !!input.mcp;

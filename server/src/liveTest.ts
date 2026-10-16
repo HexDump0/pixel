@@ -111,12 +111,14 @@ function touch() {
   idleTimer = setTimeout(() => void shutdown(), IDLE_MS);
 }
 
-async function instance(onStart: () => void) {
-  if (oc && oc.creds !== JSON.stringify(agentCredentials())) await shutdown();
+/** The warm opencode, restarted when the credentials it needs changed (Settings, or another key picked). */
+async function instance(onStart: () => void, creds = agentCredentials()) {
+  if (starting) await starting.catch(() => {});
+  if (oc && oc.creds !== JSON.stringify(creds)) await shutdown();
   if (oc) return oc;
   if (!starting) {
     onStart();
-    starting = startScratchOpencode("livetest")
+    starting = startScratchOpencode("livetest", creds)
       .then((inst) => {
         oc = inst;
         stream = new AbortController();
@@ -133,7 +135,7 @@ export function liveStatus() {
 }
 
 /** Send one prompt; continues `session` when it's still alive, else starts a new chat. */
-export async function livePrompt(input: { model?: string; variant?: string; text?: string; session?: string; turn?: string }) {
+export async function livePrompt(input: { model?: string; variant?: string; text?: string; session?: string; turn?: string; key?: string }) {
   const model = input.model?.trim() ?? "";
   const text = input.text?.trim() ?? "";
   if (!model.includes("/")) throw new Error("pick a model (provider/model)");
@@ -141,7 +143,8 @@ export async function livePrompt(input: { model?: string; variant?: string; text
   const turnId = input.turn || `lt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const early = (kind: string, data: Record<string, unknown> = {}) => publish("*", "live", { turn: turnId, session: input.session ?? null, kind, ...data });
   touch();
-  const inst = await instance(() => early("starting"));
+  // key: omitted = the provider's default key, a key id = that key, "none" = no key at all.
+  const inst = await instance(() => early("starting"), agentCredentials(undefined, input.key ? { key_id: input.key, model } : null));
   const unknown = await inst.check(model);
   if (unknown) throw new Error(unknown);
   const known = input.session && turns.has(input.session) ? input.session : null;

@@ -1,6 +1,6 @@
 /** Little pieces the Wall and the run view repeat: hue chip, status chip, severity dot, waves, rings. */
 import { useId, type ReactNode } from "react";
-import { IconZzz } from "@tabler/icons-react";
+import { IconMinus, IconPointFilled, IconZzz } from "@tabler/icons-react";
 import { cn } from "../../lib/cn.ts";
 import type { Health } from "../../lib/health.ts";
 
@@ -181,3 +181,27 @@ export function BrandMark() {
     </svg>
   );
 }
+
+/** Separator between items on one line (a small dot icon, never a typed character). */
+export const Sep = ({ className }: { className?: string }) => <IconPointFilled size={6} aria-hidden className={cn("mx-1.5 inline-block shrink-0 align-middle text-ink-4", className)} />;
+
+/** A value that isn't there (no calls yet, not measured). */
+export const Nil = ({ className }: { className?: string }) => <IconMinus size={11} stroke={2} aria-label="none" className={cn("inline-block align-middle text-ink-4", className)} />;
+
+/** Items on one line with a separator between them; empty items are skipped. */
+export function Join({ items, className }: { items: ReactNode[]; className?: string }) {
+  const shown = items.filter((x) => x !== null && x !== undefined && x !== false && x !== "");
+  return (
+    <span className={className}>
+      {shown.map((x, i) => (
+        <span key={i}>
+          {i > 0 && <Sep />}
+          {x}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** A formatted value, or the none mark when the formatter had nothing ("" or null). */
+export const Val = ({ v }: { v: ReactNode }) => (v === "" || v === null || v === undefined ? <Nil /> : <>{v}</>);

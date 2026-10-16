@@ -9,7 +9,7 @@ import { cn } from "../../lib/cn.ts";
 import type { MetricRow, ProcessKind, RunDetail } from "../../lib/types.ts";
 import { Button } from "../../components/ui.tsx";
 import { Menu } from "../../components/ui/overlay.tsx";
-import { IC_SM, Nothing, SectionHead } from "../../components/ui/bits.tsx";
+import { IC_SM, Join, Nil, Nothing, SectionHead, Sep } from "../../components/ui/bits.tsx";
 import { Meter } from "../../components/charts/Meter.tsx";
 import { toast } from "../../components/Toast.tsx";
 
@@ -38,7 +38,7 @@ function Processes({ runId, limit, live }: { runId: string; limit: number; live:
     <section>
       <SectionHead title="Processes" meta={ps.length ? String(ps.length) : undefined} />
       {!ps.length ? (
-        <Nothing>{q.isLoading ? "…" : "Nothing running"}</Nothing>
+        <Nothing>{q.isLoading ? "Loading" : "Nothing running"}</Nothing>
       ) : (
         <div className="overflow-hidden rounded-xl border border-line-2">
           <div className="bg-s2 px-3.5 pt-3 pb-2.5">
@@ -113,7 +113,7 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
   const ask = (text: string, fn: () => Promise<unknown>, done?: string) => () => {
     if (confirm(text)) void act(fn, done)();
   };
-  const state = vm.data?.state ?? "…";
+  const state = vm.data?.state ?? "checking";
   const running = /running/i.test(state);
   const lastMem = [...m].reverse().find((x) => x.mem_total)?.mem_total ?? r.size.memoryGiB * 1024 ** 3;
   const lastDisk = [...m].reverse().find((x) => x.disk_total)?.disk_total ?? r.size.diskGiB * 1024 ** 3;
@@ -166,14 +166,14 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
             <span className={cn(!running && "text-ink-2")}>
               {state}
               {r.asleep ? (
-                <span className="text-ink-3"> · opencode stopped to free memory; it starts again on resume or a message</span>
+                <span className="text-ink-3"><Sep />opencode stopped to free memory; it starts again on resume or a message</span>
               ) : (
-                running && !vm.data?.opencode && <span className="text-warning"> · opencode not answering</span>
+                running && !vm.data?.opencode && <span className="text-warning"><Sep />opencode not answering</span>
               )}
             </span>,
           )}
-          {fact("Name", r.vm_name ?? "–")}
-          {fact("Size", `${r.size.cpu} CPU · ${r.size.memoryGiB} GB memory · ${r.size.diskGiB} GB disk`)}
+          {fact("Name", r.vm_name ?? <Nil />)}
+          {fact("Size", <Join items={[`${r.size.cpu} CPU`, `${r.size.memoryGiB} GB memory`, `${r.size.diskGiB} GB disk`]} />)}
           {fact("Runtime", r.runtime)}
           {r.endpoint && fact("opencode", r.endpoint)}
         </dl>
@@ -184,7 +184,7 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
       <section>
         <SectionHead title="Over the run" />
         <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
-          <Meter title={`CPU · ${r.size.cpu} cores`} points={series(m, (x) => x.cpu)} limit={100} fmt={pctFmt} color="var(--r1)" warn={0.75} bad={0.9} />
+          <Meter title={`CPU, ${r.size.cpu} cores`} points={series(m, (x) => x.cpu)} limit={100} fmt={pctFmt} color="var(--r1)" warn={0.75} bad={0.9} />
           <Meter title="Memory" points={series(m, (x) => x.mem_used)} limit={lastMem} fmt={gb} color="var(--r2)" warn={0.75} bad={0.9} />
           <Meter title="Disk" points={series(m, (x) => x.disk_used)} limit={lastDisk} fmt={gb} color="var(--r5)" warn={0.75} bad={0.9} />
           <Meter title="Workbase" points={series(m, (x) => x.workbase_bytes)} fmt={bytes} color="var(--r0)" />

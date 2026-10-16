@@ -6,6 +6,7 @@ import { navigate } from "../lib/router.tsx";
 import { dateTime } from "../lib/format.ts";
 import type { TemplateVersion } from "../lib/types.ts";
 import { Button, Card, Empty, ErrorBox, Field, PageHeader, cx } from "../components/ui.tsx";
+import { Sep } from "../components/ui/bits.tsx";
 
 /** Line diff (LCS) between two template bodies. */
 function lineDiff(a: string, b: string) {
@@ -96,7 +97,7 @@ function TemplateEditor({ id }: { id: string }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
       <Card
-        title={current ? `${id} · v${current.version}${dirty ? " (edited)" : ""}` : id}
+        title={current ? `${id} v${current.version}${dirty ? " (edited)" : ""}` : id}
         actions={
           <Button
             small
@@ -134,7 +135,7 @@ function TemplateEditor({ id }: { id: string }) {
               </Field>
             </div>
             <div className="mt-2 text-xs muted">
-              Variables: {t.data?.variables.map((v) => `{{${v}}}`).join(" ")} · Conditionals: <code>{"{{#if var}}…{{/if}}"}</code>
+              Variables: {t.data?.variables.map((v) => `{{${v}}}`).join(" ")} <Sep /> Conditionals: <code>{"{{#if var}} ... {{/if}}"}</code>
             </div>
             <Sections parts={t.data?.parts ?? []} />
             <PromptPreview body={body} />

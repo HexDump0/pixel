@@ -91,7 +91,7 @@ export function TerminalTab({ detail }: { detail: RunDetail }) {
         <span className="min-w-0 truncate font-mono text-[12px] text-ink-3">
           {detail.paths.target}
         </span>
-        {state === "connecting" && <span className="text-ink-3">connecting…</span>}
+        {state === "connecting" && <span className="text-ink-3">connecting</span>}
         {state === "closed" && (
           <>
             <span className="text-warning">connection closed</span>

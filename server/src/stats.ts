@@ -17,6 +17,7 @@ import { cachedCatalog, catalogProviders } from "./catalog.ts";
 import { runtime } from "./runtime/index.ts";
 import { isWatching } from "./runs/events.ts";
 import { kindOf } from "./fleet.ts";
+import { pct, tpsOf, ttftOf, type CallRow as LlmCall } from "./providers.ts";
 
 db.exec("CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at)");
 
@@ -223,7 +224,12 @@ export async function stats(days: number, tzOffsetMin = 0) {
   const series = Array.from({ length: (to - from) / bucket }, (_, i) => ({ t: from + i * bucket, ...zero() }));
   const models = new Map<string, TokenTotals & { provider: string; model: string; durations: number[] }>();
   const perRun = new Map<string, TokenTotals>();
+  // Model calls by the viewer's weekday (0 = Monday) and hour, for the when-do-agents-work heatmap.
+  const heatmap = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+  const tzMs = (Math.max(-840, Math.min(840, Math.round(tzOffsetMin) || 0))) * 60_000;
   for (const c of calls) {
+    const local = new Date(c.t + tzMs);
+    heatmap[(local.getUTCDay() + 6) % 7][local.getUTCHours()]++;
     add(totals, c);
     const b = series[Math.floor((c.t - from) / bucket)];
     if (b) add(b, c);
@@ -246,12 +252,57 @@ export async function stats(days: number, tzOffsetMin = 0) {
     })
     .sort((a, b) => b.input + b.cacheRead + b.output - (a.input + a.cacheRead + a.output));
 
+  // ---- per-bucket extras: cost by model, model speed, tool calls by kind, findings by severity, runs started and finished ----
+  const nB = series.length;
+  const at = (t: number) => Math.floor((t - from) / bucket);
+  const zeros = () => Array<number>(nB).fill(0);
+  const topModels = byModel.slice(0, 5).map((m) => `${m.provider}/${m.model}`);
+  const modelSeries = [...topModels, ...(byModel.length > 5 ? ["other"] : [])].map((key) => ({ key, cost: zeros(), tokens: zeros() }));
+  for (const c of calls) {
+    const i = at(c.t);
+    if (i < 0 || i >= nB) continue;
+    const m = modelSeries.find((x) => x.key === `${c.provider ?? "?"}/${c.model ?? "?"}`) ?? modelSeries.find((x) => x.key === "other");
+    if (!m) continue;
+    m.cost[i] += c.cost;
+    m.tokens[i] += c.i + c.o + c.cr + c.cw;
+  }
+  const llm = db.query<LlmCall, [number]>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls WHERE created >= ?").all(from);
+  const speedBuckets = Array.from({ length: nB }, () => ({ ttft: [] as number[], tps: [] as number[] }));
+  for (const c of llm) {
+    const b = speedBuckets[at(c.created)];
+    if (!b) continue;
+    const f = ttftOf(c);
+    const v = tpsOf(c);
+    if (f != null) b.ttft.push(f);
+    if (v != null) b.tps.push(v);
+  }
+  const speed = speedBuckets.map((b) => ({ ttft: pct(b.ttft, 50), tps: pct(b.tps, 50) }));
+  const toolRows = db
+    .query<{ b: number; tool: string; n: number }, [number, number, number]>("SELECT (started - ?) / ? AS b, tool, COUNT(*) AS n FROM tool_calls WHERE started >= ? AND tool IS NOT NULL GROUP BY b, tool")
+    .all(from, bucket, from);
+  const toolSeries: Record<string, number[]> = {};
+  for (const r of toolRows) {
+    const i = Math.floor(r.b);
+    if (i < 0 || i >= nB) continue;
+    (toolSeries[kindOf(r.tool) ?? "other"] ??= zeros())[i] += r.n;
+  }
+  const findingSeries: Record<string, number[]> = {};
+  for (const f of db.query<{ created: number; severity: string | null }, [number]>("SELECT created, severity FROM findings WHERE created >= ? AND removed_at IS NULL").all(from)) {
+    const i = at(f.created);
+    if (i >= 0 && i < nB) (findingSeries[f.severity ?? "none"] ??= zeros())[i]++;
+  }
+
   const runs = listRuns();
+  const runSeries = { started: zeros(), finished: zeros() };
+  for (const r of runs) {
+    if (r.started_at && r.started_at >= from) runSeries.started[at(r.started_at)] !== undefined && runSeries.started[at(r.started_at)]++;
+    if (r.finished_at && r.finished_at >= from) runSeries.finished[at(r.finished_at)] !== undefined && runSeries.finished[at(r.finished_at)]++;
+  }
   const runById = new Map(runs.map((r) => [r.id, r]));
   const byRun = [...perRun.entries()]
     .map(([id, t]) => {
       const r = runById.get(id);
-      return { id, repo: r?.repo ?? null, status: r?.status ?? null, model: r?.model ?? null, ...finish(t) };
+      return { id, label: r?.label ?? null, hue: r?.hue ?? null, repo: r?.repo ?? null, status: r?.status ?? null, model: r?.model ?? null, ...finish(t) };
     })
     .sort((a, b) => b.input + b.cacheRead + b.output - (a.input + a.cacheRead + a.output))
     .slice(0, 20);
@@ -271,6 +322,9 @@ export async function stats(days: number, tzOffsetMin = 0) {
       "SELECT COALESCE(SUM(continues), 0) AS continues, COALESCE(SUM(oom_restarts), 0) AS oom, SUM(created_at >= ?) AS created, SUM(finished_at >= ?) AS finished FROM runs",
     )
     .get(from, from)!;
+  const findings = db
+    .query<{ severity: string | null; state: string; n: number }, [number]>("SELECT severity, state, COUNT(*) AS n FROM findings WHERE created >= ? AND removed_at IS NULL GROUP BY severity, state")
+    .all(from);
   const sessions = db.query<{ n: number; sub: number }, [number]>("SELECT COUNT(*) AS n, COALESCE(SUM(parent_id IS NOT NULL), 0) AS sub FROM sessions WHERE created_at >= ?").get(from)!;
 
   return {
@@ -282,6 +336,17 @@ export async function stats(days: number, tzOffsetMin = 0) {
     byModel,
     byRun,
     tools: tools(from),
+    heatmap,
+    modelSeries,
+    speed,
+    toolSeries,
+    findingSeries,
+    runSeries,
+    findings: {
+      total: findings.reduce((a, f) => a + f.n, 0),
+      bySeverity: findings.reduce<Record<string, number>>((m, f) => ((m[f.severity ?? "none"] = (m[f.severity ?? "none"] ?? 0) + f.n), m), {}),
+      byState: findings.reduce<Record<string, number>>((m, f) => ((m[f.state] = (m[f.state] ?? 0) + f.n), m), {}),
+    },
     runs: {
       total: runs.length,
       status,

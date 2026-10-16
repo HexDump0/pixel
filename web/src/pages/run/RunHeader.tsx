@@ -74,8 +74,8 @@ export function RunHeader({ detail, fleet, h, railHidden, onShowRail, onClose }:
               }
             />
           )}
-          <Kp value={tokens(total)} unit="tokens" tip={`${tokens(r.tokens_in)} in · ${tokens(r.tokens_out + r.tokens_reasoning)} out · ${tokens(r.tokens_cache)} cache`} />
-          {cacheRate != null && <Kp value={`${cacheRate}%`} unit="cached" tip="Share of prompt tokens read from the cache: cache read ÷ (input + cache read + cache write)" cls="max-xl:hidden" />}
+          <Kp value={tokens(total)} unit="tokens" tip={`${tokens(r.tokens_in)} in, ${tokens(r.tokens_out + r.tokens_reasoning)} out, ${tokens(r.tokens_cache)} cache`} />
+          {cacheRate != null && <Kp value={`${cacheRate}%`} unit="cached" tip="Share of prompt tokens read from the cache: cache read / (input + cache read + cache write)" cls="max-xl:hidden" />}
           <Kp value={money(r.cost)} unit={`${money(r.cost / hours)}/h`} tip="Cost so far and per hour" />
           {live && ctxPct != null && <Kp value={`${ctxPct}%`} unit="context" cls={cn("max-xl:hidden", ctxPct > 80 && "[&_b]:text-warning")} tip={`${tokens(ctx!.used)} of ${tokens(ctx!.limit)} context window`} pre={<ContextRing pct={ctxPct} warn={ctxPct > 80} />} />}
           {fleet && (

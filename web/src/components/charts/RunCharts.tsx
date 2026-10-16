@@ -6,6 +6,7 @@ import { kindColor } from "../../lib/fleet.ts";
 import { money, tokens } from "../../lib/format.ts";
 import { elapsed } from "../../lib/health.ts";
 import { ChartTip, TipRow, TipTitle, niceMax, useSize, type TipState } from "./common.tsx";
+import { Sep } from "../ui/bits.tsx";
 
 const H = 72;
 const MARK: Record<string, string> = { continue: "var(--warning)", recover: "var(--warning)", restart: "var(--warning)", key: "var(--warning)", limit: "var(--critical)" };
@@ -58,7 +59,7 @@ function Plot({ s, values, kind, color, fmt, marks = false }: { s: RunSeries; va
               content: (
                 <>
                   <TipTitle>{elapsed(tAt(i) - s.from)} in</TipTitle>
-                  <TipRow color={color} label={values[i] == null ? "–" : fmt(values[i]!)} />
+                  <TipRow color={color} label={values[i] == null ? "none" : fmt(values[i]!)} />
                   {near.map((m, k) => (
                     <div key={k} className="mt-1 text-ink-2">
                       {m.message}
@@ -105,7 +106,7 @@ function KindBars({ s }: { s: RunSeries }) {
           onMouseMove={(e) => {
             const b = e.currentTarget.getBoundingClientRect();
             const i = Math.max(0, Math.min(n - 1, Math.floor((e.clientX - b.left) / slot)));
-            setTip({ x: e.clientX, y: e.clientY, content: <><TipTitle>{elapsed(s.from + i * s.step - s.from)} in · {tot(i)} calls</TipTitle>{kinds.filter((k) => s.kinds[k][i]).map((k) => <TipRow key={k} color={kindColor(k)} label={k === "task" ? "subagent" : k} value={s.kinds[k][i]} />)}</> });
+            setTip({ x: e.clientX, y: e.clientY, content: <><TipTitle>{elapsed(s.from + i * s.step - s.from)} in <Sep /> {tot(i)} calls</TipTitle>{kinds.filter((k) => s.kinds[k][i]).map((k) => <TipRow key={k} color={kindColor(k)} label={k === "task" ? "subagent" : k} value={s.kinds[k][i]} />)}</> });
           }}
           onMouseLeave={() => setTip(null)}
         >
@@ -144,7 +145,7 @@ export function RunCharts({ s, contextLimit }: { s: RunSeries; contextLimit: num
       <Frame title="Cost" value={money(s.cost.at(-1) ?? 0)} axis={axis}>
         <Plot s={s} values={s.cost} kind="line" color="var(--ink-2)" fmt={money} />
       </Frame>
-      <Frame title="Context" value={lastCtx != null ? tokens(lastCtx) : "–"} unit={contextLimit ? `of ${tokens(contextLimit)}` : undefined} axis={axis}>
+      <Frame title="Context" value={lastCtx != null ? tokens(lastCtx) : ""} unit={contextLimit ? `of ${tokens(contextLimit)}` : undefined} axis={axis}>
         <Plot s={s} values={s.context} kind="line" color="var(--r2)" fmt={(v) => `${tokens(v)} tokens`} marks />
       </Frame>
       <Frame title="Tool calls" value={String(totalCalls)} axis={axis} wide>

@@ -41,8 +41,8 @@ const freePort = () => {
   return p;
 };
 
-export async function startScratchOpencode(kind: string): Promise<ScratchOpencode> {
-  const creds = agentCredentials();
+/** `creds` defaults to what every agent gets; the live test passes its own to try a key, or none. */
+export async function startScratchOpencode(kind: string, creds = agentCredentials()): Promise<ScratchOpencode> {
   const env = withoutMcp(creds.env);
   mkdirSync(join(config.dataDir, kind), { recursive: true, mode: 0o700 });
   const dir = mkdtempSync(join(config.dataDir, kind, "run-"));
@@ -100,7 +100,7 @@ export async function startScratchOpencode(kind: string): Promise<ScratchOpencod
     if (!catalogue?.providers) return null;
     const [providerID, ...rest] = model.split("/");
     const p = catalogue.providers.find((x) => x.id === providerID);
-    if (!p) return `provider ${providerID} not configured (add it under Models → Providers)`;
+    if (!p) return `provider ${providerID} not configured (add it on the Models page)`;
     return rest.join("/") in (p.models ?? {}) ? null : `unknown model for ${providerID}`;
   };
 

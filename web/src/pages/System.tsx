@@ -6,6 +6,7 @@ import { Badge, Button, Card, Empty, ErrorBox, PageHeader, Stat } from "../compo
 import { toast } from "../components/Toast.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { Meter } from "../components/charts/Meter.tsx";
+import { Join, Nil } from "../components/ui/bits.tsx";
 
 export function SystemPage() {
   const sys = useAsync(api.system, []);
@@ -15,9 +16,9 @@ export function SystemPage() {
   const memTotalGiB = s.host.memTotal / 1024 ** 3;
   const image = s.runtime.image;
   const compact = () => {
-    toast("Compacting the database…");
+    toast("Compacting the database");
     api.compactDb().then(
-      (r) => (toast(`Database ${bytes(r.before)} → ${bytes(r.after)} in ${(r.ms / 1000).toFixed(1)} s`), sys.reload()),
+      (r) => (toast(`Database went from ${bytes(r.before)} to ${bytes(r.after)} in ${(r.ms / 1000).toFixed(1)} s`), sys.reload()),
       (e) => toast(`Compacting failed: ${e.message}`, "error"),
     );
   };
@@ -33,13 +34,13 @@ export function SystemPage() {
         }
       />
       <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-        <Stat label="Host memory" value={`${bytes(memUsed)} / ${bytes(s.host.memTotal)}`} hint={`${s.host.cpus} CPUs · load ${s.host.load.map((l) => l.toFixed(2)).join(" ")}`} />
+        <Stat label="Host memory" value={`${bytes(memUsed)} / ${bytes(s.host.memTotal)}`} hint={`${s.host.cpus} CPUs, load ${s.host.load.map((l) => l.toFixed(2)).join(" ")}`} />
         <Stat
           label="RAM promised to machines"
           value={`${s.committedMemoryGiB} GiB`}
           hint={s.committedMemoryGiB > memTotalGiB - 1.5 ? "over budget: stop or delete some machines" : `of ~${(memTotalGiB - 1.5).toFixed(0)} GiB available`}
         />
-        <Stat label="Data disk free" value={s.host.disk ? bytes(s.host.disk.free) : "–"} hint={s.host.disk ? `of ${bytes(s.host.disk.total)} · ${s.host.dataDir}` : undefined} />
+        <Stat label="Data disk free" value={s.host.disk ? bytes(s.host.disk.free) : <Nil />} hint={s.host.disk ? `of ${bytes(s.host.disk.total)} in ${s.host.dataDir}` : undefined} />
         <Stat
           label="Database"
           value={bytes(s.dbBytes)}
@@ -63,14 +64,14 @@ export function SystemPage() {
                 <>
                   <dt className="muted">Incus</dt>
                   <dd>
-                    {s.runtime.server} · kernel {s.runtime.kernel} · storage {s.runtime.storage}
+                    <Join items={[s.runtime.server, `kernel ${s.runtime.kernel}`, `storage ${s.runtime.storage}`]} />
                   </dd>
                 </>
               )}
               {image && (
                 <>
                   <dt className="muted">Image</dt>
-                  <dd>{image.missing ? <span className="text-red-500">{image.alias} is missing: build it with image/build.sh</span> : `${image.alias} · ${image.fingerprint} · ${dateTime(Date.parse(image.created))} · ${image.description ?? ""}`}</dd>
+                  <dd>{image.missing ? <span className="text-red-500">{image.alias} is missing: build it with image/build.sh</span> : `${image.alias}, ${image.fingerprint}, ${dateTime(Date.parse(image.created))}, ${image.description ?? ""}`}</dd>
                 </>
               )}
               {s.runtime.note && (
@@ -86,7 +87,7 @@ export function SystemPage() {
           title="Backups"
           actions={
             <Button small onClick={async () => (await api.backup(), sys.reload())} disabled={s.backup.running} done="Backup finished">
-              {s.backup.running ? "Running…" : "Back up now"}
+              {s.backup.running ? "Running" : "Back up now"}
             </Button>
           }
         >
@@ -116,7 +117,7 @@ export function SystemPage() {
                   <tr key={m.name}>
                     <td className="td font-mono">{m.name}</td>
                     <td className="td">{m.status}</td>
-                    <td className="td">{m.cpu ?? "–"}</td>
+                    <td className="td">{m.cpu ?? <Nil />}</td>
                     <td className="td">{bytes(m.memory)}</td>
                   </tr>
                 ))}

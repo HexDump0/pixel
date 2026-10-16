@@ -29,7 +29,7 @@ function snippet(line: string, terms: string[]) {
   const lower = line.toLowerCase();
   const at = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
   const from = Math.max(0, at - 80);
-  let text = (from ? "… " : "") + line.slice(from, from + 220).trim() + (line.length > from + 220 ? " …" : "");
+  let text = (from ? "... " : "") + line.slice(from, from + 220).trim() + (line.length > from + 220 ? " ..." : "");
   const re = new RegExp(terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
   return text.replace(re, (m) => `[[${m}]]`);
 }

@@ -18,7 +18,7 @@ import { openPalette } from "../../components/CommandPalette.tsx";
 import { RunMenuButton } from "../../components/RunMenu.tsx";
 import { toast } from "../../components/Toast.tsx";
 import { Button } from "../../components/ui.tsx";
-import { Hue, IC_SM, Kbd, Sev, StatusChip, Unseen, Wave } from "../../components/ui/bits.tsx";
+import { Hue, IC_SM, Kbd, Nil, Sev, StatusChip, Unseen, Wave } from "../../components/ui/bits.tsx";
 
 /** Everything the cards need about one run. */
 export interface RunView {
@@ -165,7 +165,7 @@ function FindingLine({ v }: { v: RunView }) {
   const f = v.findings[0];
   if (f)
     return (
-      <div className="flex min-w-0 items-baseline gap-2.5 px-[18px] pt-2.5 text-[13.5px] leading-[1.45]" title={`${f.id} · ${f.severity ?? ""} · ${STATE_WORD[f.state]}`}>
+      <div className="flex min-w-0 items-baseline gap-2.5 px-[18px] pt-2.5 text-[13.5px] leading-[1.45]" title={[f.id, f.severity, STATE_WORD[f.state]].filter(Boolean).join(", ")}>
         <Sev sev={sevOf(f)} done={!!f.verdict} className="translate-y-[-1px]" />
         <span className="line-clamp-2 min-w-0 flex-1">{f.title}</span>
         {v.findings.length > 1 && <span className="shrink-0 font-mono text-xs text-ink-3">+{v.findings.length - 1}</span>}
@@ -390,7 +390,7 @@ export function ListRow({ v, picked, onPick, selected, onSelect }: { v: RunView;
         ))}
       </span>
       <span className="truncate font-mono text-xs text-ink-2 max-lg:hidden">{r.model.split("/").slice(1).join("/").replace(/^claude-/, "")}</span>
-      <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-lg:hidden">{live && tps >= 1 ? Math.round(tps) : "–"}</span>
+      <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-lg:hidden">{live && tps >= 1 ? Math.round(tps) : <Nil />}</span>
       <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-lg:hidden">{money(r.cost)}</span>
       <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-lg:hidden">{elapsed(runtimeOf(r))}</span>
       <span className="flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100 max-lg:hidden">

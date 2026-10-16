@@ -10,7 +10,7 @@ import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
 import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } from "../findings.ts";
 import { llmBrief, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
-import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
+import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
 
 function mustRun(id: string) {
@@ -210,7 +210,7 @@ get("/runs/:id/keys", ({ params: { id } }) => {
   const nameOf = (k: string | null) => (k && findKey(k)?.key.name) || (k ? "removed key" : "before keys were tracked");
   return {
     provider,
-    current: cur?.id ?? null,
+    current: run.key_id === NO_KEY ? NO_KEY : (cur?.id ?? null),
     failover: !!run.key_failover,
     next: cur && run.key_failover ? (nextKey(provider, cur.id)?.name ?? null) : null,
     keys: keys.map(publicKey),

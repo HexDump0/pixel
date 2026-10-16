@@ -15,7 +15,7 @@ import { cn } from "../lib/cn.ts";
 import type { FileEntry, Finding } from "../lib/types.ts";
 import { Markdown } from "./Markdown.tsx";
 import { Button, ErrorBox } from "./ui.tsx";
-import { IC_SM, IC_XS, Nothing, Sev } from "./ui/bits.tsx";
+import { IC_SM, IC_XS, Join, Nothing, Sev } from "./ui/bits.tsx";
 
 const PINNED = ["REPORT.md", "FINDINGS.md", "TRIAGE.md"];
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
@@ -236,7 +236,7 @@ function Viewer({ runId, path, onSaved }: { runId: string; path: string; onSaved
     <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-line-2 px-4 py-2">
         <span className="min-w-0 truncate font-mono text-[12.5px] text-ink">{path}</span>
-        {f && <span className="font-mono text-[11.5px] whitespace-nowrap text-ink-4">{bytes(f.size)} · {ago(f.mtime)}{f.truncated ? " · cut at 2 MB" : ""}</span>}
+        {f && <span className="font-mono text-[11.5px] whitespace-nowrap text-ink-4"><Join items={[bytes(f.size), ago(f.mtime), f.truncated && "cut at 2 MB"]} /></span>}
         <span className="flex-1" />
         {mode === "edit" ? (
           <>

@@ -45,6 +45,8 @@ export interface AccountInput {
   name?: string;
   /** The default (first) key. Omitted when editing = keep it. */
   key?: string;
+  /** Drop every key: agents call the provider without one (OpenCode Zen's free models, a local server). */
+  noKey?: boolean;
   baseURL?: string;
   custom?: { api?: CustomApi; models: string[]; context?: number; reasoning?: boolean };
   cacheKey?: boolean;
@@ -98,7 +100,7 @@ function store(accounts: Record<string, ProviderAccount>) {
   db.query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(KEY, JSON.stringify(accounts));
 }
 
-export const hint = (key: string) => (!key ? null : key.length < 12 ? "••••" : `${key.slice(0, 3)}…${key.slice(-4)}`);
+export const hint = (key: string) => (!key ? null : key.length < 12 ? "****" : `${key.slice(0, 3)}...${key.slice(-4)}`);
 
 function cleanUrl(u: string | undefined) {
   const s = u?.trim().replace(/\/+$/, "");
@@ -122,8 +124,9 @@ export async function saveAccount(input: AccountInput) {
     custom.models = [...new Set(custom.models.map((m) => m.trim()).filter(Boolean))];
     if (!custom.models.length) throw new Error("list at least one model id");
   }
-  const keys = old?.keys.map((k) => ({ ...k })) ?? [];
-  if (input.key !== undefined) {
+  let keys = old?.keys.map((k) => ({ ...k })) ?? [];
+  if (input.noKey) keys = [];
+  else if (input.key !== undefined) {
     const key = cleanKey(input.key);
     if (keys[0]) {
       if (keys[0].key !== key) delete keys[0].status;
@@ -226,8 +229,12 @@ export function providerKeys(providerId: string): ApiKey[] {
   return load()[providerId]?.keys ?? [];
 }
 
-/** The key a run uses for a provider: its chosen key when it belongs to that provider, else the default. */
-export function keyFor(run: { key_id: string | null } | null | undefined, providerId: string): ApiKey | null {
+/** A run's key_id (and a live test's key) meaning "call the model's provider without any key". */
+export const NO_KEY = "none";
+
+/** The key a run uses for a provider: its chosen key when it belongs to that provider, else the default; none when it runs without a key. */
+export function keyFor(run: { key_id: string | null; model?: string } | null | undefined, providerId: string): ApiKey | null {
+  if (run?.key_id === NO_KEY && (!run.model || run.model.split("/")[0] === providerId)) return null;
   const keys = providerKeys(providerId);
   return keys.find((k) => k.id === run?.key_id) ?? keys[0] ?? null;
 }
@@ -302,7 +309,23 @@ export function connectedProviders(s: Settings = getSettings()) {
  * The environment and auth.json every agent (and the speed and live tests) gets: Settings, plus the
  * providers added on the Models page, plus GitHub (token as env, read-only MCP server in the config).
  */
-export function agentCredentials(s: Settings = getSettings(), run?: { key_id: string | null } | null): { env: Record<string, string>; authJson: string } {
+export function agentCredentials(s: Settings = getSettings(), run?: { key_id: string | null; model?: string } | null): { env: Record<string, string>; authJson: string } {
+  const creds = credentials(s, run);
+  const bare = run?.key_id === NO_KEY ? run.model?.split("/")[0] : undefined;
+  return bare ? withoutKey(creds, bare) : creds;
+}
+
+/** Drop every way a provider's key reaches opencode: its auth.json entry and its catalogue env vars. */
+function withoutKey(creds: { env: Record<string, string>; authJson: string }, providerId: string) {
+  const env = { ...creds.env };
+  for (const v of cachedCatalog()?.get(providerId)?.env ?? []) delete env[v];
+  const auth = parseAuth(creds.authJson);
+  if (!auth?.[providerId]) return { env, authJson: creds.authJson };
+  delete auth[providerId];
+  return { env, authJson: Object.keys(auth).length ? JSON.stringify(auth, null, 2) : "" };
+}
+
+function credentials(s: Settings, run?: { key_id: string | null } | null): { env: Record<string, string>; authJson: string } {
   const accounts = Object.values(load());
   const github = githubForAgents();
   // Settings env first, so the GitHub card wins over a GITHUB_TOKEN typed there by hand.

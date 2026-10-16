@@ -87,7 +87,7 @@ describe("health", () => {
     expect(good.state).toBe("ok");
     expect(good.requestsPerMin).toBe(1); // 5 calls in the last 5 minutes
     expect(good.tokensPerMin).toBe((4 * 3000 + 105) / 5);
-    expect(good.buckets.length).toBe(12);
+    expect(good.buckets.length).toBe(30);
     expect(good.buckets.reduce((a, b) => a + b.calls, 0)).toBe(5);
     expect(flaky.errors).toBe(1);
     expect(flaky.rateLimits).toBe(1);

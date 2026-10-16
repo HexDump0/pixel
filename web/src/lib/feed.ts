@@ -60,6 +60,6 @@ export function feedKind(e: Pick<FeedEntry, "kind" | "data" | "actor">): { k: st
 export function feedText(e: Pick<FeedEntry, "kind" | "message" | "data">) {
   let t = e.message;
   if (e.kind === "finding" && e.data?.title) return e.data.title as string;
-  t = t.replace(/^Agent asked: /, "Asked: ").replace(/^Preparing failed: /, "").replace(/^REPORT\.md written and the agent is idle: run done$/, "Finished · REPORT.md written");
+  t = t.replace(/^Agent asked: /, "Asked: ").replace(/^Preparing failed: /, "").replace(/^REPORT\.md written and the agent is idle: run done$/, "Finished, REPORT.md written");
   return t;
 }

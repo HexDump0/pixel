@@ -9,7 +9,7 @@
  */
 import { getRun, type RunRow } from "../db.ts";
 import { getSettings } from "../settings.ts";
-import { keyFailing, keyFor, providerKeys, setKeyStatus, type ApiKey, type KeyState } from "../providerAccounts.ts";
+import { keyFailing, keyFor, NO_KEY, providerKeys, setKeyStatus, type ApiKey, type KeyState } from "../providerAccounts.ts";
 import { clientFor, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { getWatcher, serial, syncTranscript } from "./events.ts";
 import { sendPrompt } from "./lifecycle.ts";
@@ -140,11 +140,13 @@ export async function chooseKey(runId: string, keyId: string | null) {
   const run = getRun(runId);
   if (!run) throw new Error(`no run ${runId}`);
   const provider = run.model.split("/")[0];
-  const key = keyId ? providerKeys(provider).find((k) => k.id === keyId) : null;
-  if (keyId && !key) throw new Error(`key ${keyId} does not belong to ${provider}`);
-  if ((run.key_id ?? null) === (key?.id ?? null)) return;
-  setRun(runId, { key_id: key?.id ?? null });
-  const name = (key ?? keyFor(null, provider))?.name ?? "default";
+  const noKey = keyId === NO_KEY;
+  const key = keyId && !noKey ? providerKeys(provider).find((k) => k.id === keyId) : null;
+  if (keyId && !noKey && !key) throw new Error(`key ${keyId} does not belong to ${provider}`);
+  const next = noKey ? NO_KEY : (key?.id ?? null);
+  if ((run.key_id ?? null) === next) return;
+  setRun(runId, { key_id: next });
+  const name = noKey ? "no key" : ((key ?? keyFor(null, provider))?.name ?? "default");
   const live = ["running", "recovering"].includes(run.status) && run.endpoint;
   const idle = live && run.agent_status === "idle";
   timeline(runId, "user", "key", `Key changed to ${name}${live && !idle ? "; the agent picks it up when it next goes idle or is resumed" : ""}`);

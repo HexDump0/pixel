@@ -1,6 +1,6 @@
 /** The fleet at the top of the Wall: the stream, the Latest feed, and four small stats. */
 import { useMemo } from "react";
-import { IconAlertTriangle, IconBug, IconFileCheck, IconMessageQuestion, IconPlayerPlay, IconPointFilled } from "@tabler/icons-react";
+import { IconAlertTriangle, IconArrowRight, IconBug, IconFileCheck, IconMessageQuestion, IconPlayerPlay, IconPointFilled } from "@tabler/icons-react";
 import { rate, runName, streamSeries } from "../../lib/fleet.ts";
 import { money } from "../../lib/format.ts";
 import { feedKind, feedText, useFeed } from "../../lib/feed.ts";
@@ -17,7 +17,7 @@ const panel = "rounded-2xl border border-line-2 bg-s1";
 const ICON: Record<string, typeof IconBug> = { find: IconBug, ask: IconMessageQuestion, bad: IconAlertTriangle, warn: IconAlertTriangle, done: IconFileCheck, you: IconPointFilled, "": IconPlayerPlay };
 const SEV_TEXT: Record<string, string> = { critical: "text-sev-high", high: "text-sev-high", medium: "text-sev-medium", low: "text-sev-low", info: "text-sev-low" };
 
-function Mini({ label, small, value, children, onClick }: { label: string; small?: string; value: string; children?: React.ReactNode; onClick?: () => void }) {
+function Mini({ label, small, value, children, onClick }: { label: string; small?: React.ReactNode; value: string; children?: React.ReactNode; onClick?: () => void }) {
   const Tag = onClick ? "button" : "section";
   return (
     <Tag
@@ -102,7 +102,7 @@ export function FleetRow({ snap, runs, findings, onTriage, onCatchUp }: { snap: 
       </section>
 
       <div className="grid min-h-0 grid-cols-2 grid-rows-2 gap-3 max-xl:col-span-full max-xl:grid-cols-4 max-xl:grid-rows-[112px] max-md:grid-cols-2 max-md:grid-rows-[108px_108px]">
-        <Mini label="Spend today" small={snap ? `→ ${money(snap.spend.projected)}` : undefined} value={money(snap?.spend.total ?? 0)}>
+        <Mini label="Spend today" small={snap ? <span className="inline-flex items-center gap-1"><IconArrowRight size={11} />{money(snap.spend.projected)}</span> : undefined} value={money(snap?.spend.total ?? 0)}>
           <div className="relative mt-1.5 min-h-0 flex-1">{snap && <SpendBars spend={snap.spend} runs={[...named.values()]} />}</div>
         </Mini>
         <Mini label="Tool calls" small="/ min" value={String(Math.round(calls))}>

@@ -5,7 +5,7 @@ import { config } from "../src/config.ts";
 import { getSettings, saveSettings } from "../src/settings.ts";
 import { catalogProvider, catalogProviders } from "../src/catalog.ts";
 import { saveGithub } from "../src/github.ts";
-import { addKey, agentCredentials, connectedProviders, discoverModels, editKey, findKey, keyFor, orderKeys, providerKeys, RATELIMIT_MARK_MS, removeAccount, removeKey, saveAccount, setKeyStatus, testKey } from "../src/providerAccounts.ts";
+import { addKey, agentCredentials, connectedProviders, NO_KEY, discoverModels, editKey, findKey, keyFor, orderKeys, providerKeys, RATELIMIT_MARK_MS, removeAccount, removeKey, saveAccount, setKeyStatus, testKey } from "../src/providerAccounts.ts";
 import { classifyKeyError, nextKey } from "../src/runs/keys.ts";
 import { db } from "../src/db.ts";
 
@@ -44,6 +44,14 @@ describe("provider accounts", () => {
     const again = agentCredentials();
     expect(JSON.parse(again.authJson).anthropic.key).toBe("sk-ant-secret-1234");
     expect(JSON.parse(again.env.OPENCODE_CONFIG_CONTENT).provider.anthropic).toEqual({ options: { baseURL: "https://proxy.example.com/v1" } });
+
+    // noKey drops every key; the provider stays connected and agents get no key for it.
+    addKey("anthropic", { name: "Second", key: "sk-ant-second-5678" });
+    await saveAccount({ id: "anthropic", noKey: true });
+    expect(providerKeys("anthropic")).toEqual([]);
+    expect(connectedProviders().find((p) => p.id === "anthropic")?.via).toContain("pixel");
+    expect(JSON.parse(agentCredentials().authJson).anthropic).toBeUndefined();
+    await saveAccount({ id: "anthropic", key: "sk-ant-secret-1234" });
   });
 
   test("custom endpoints become opencode providers for both API types", async () => {
@@ -84,7 +92,7 @@ describe("provider accounts", () => {
     const list = connectedProviders();
     const by = Object.fromEntries(list.map((p) => [p.id, p]));
     expect(by.anthropic.via).toEqual(["pixel"]);
-    expect(by.anthropic.keyHint).toBe("sk-…1234");
+    expect(by.anthropic.keyHint).toBe("sk-...1234");
     expect(JSON.stringify(list)).not.toContain("secret");
     expect(by.groq).toMatchObject({ via: ["env"], envVars: ["GROQ_API_KEY"] });
     expect(by.hand.via).toEqual(["auth.json"]);
@@ -175,7 +183,7 @@ describe("several keys per provider", () => {
     const work = addKey("groq", { name: " Work ", key: "gsk-work-abcdefgh", note: "company card" });
     const spare = addKey("groq", { key: "gsk-spare-abcdefgh" });
     expect(spare.name).toBe("Key 3");
-    expect(work).toEqual({ id: work.id, name: "Work", note: "company card", hint: "gsk…efgh", added: expect.any(Number), status: null });
+    expect(work).toEqual({ id: work.id, name: "Work", note: "company card", hint: "gsk...efgh", added: expect.any(Number), status: null });
     expect(() => addKey("groq", { key: " " })).toThrow("paste the API key");
 
     // Editing without a key keeps it; a new key clears any failure mark.
@@ -203,6 +211,21 @@ describe("several keys per provider", () => {
     expect(JSON.parse(agentCredentials(undefined, { key_id: "k_elsewhere" }).authJson).groq.key).toBe(first.key);
     expect(keyFor({ key_id: second.id }, "groq")!.id).toBe(second.id);
     expect(findKey(second.id)!.provider).toBe("groq");
+  });
+
+  test("a run with no key gets nothing for its model's provider, other providers keep theirs", () => {
+    saveSettings({ agentEnv: { GROQ_API_KEY: "gsk-env", OTHER: "x" } });
+    const run = { key_id: NO_KEY, model: "groq/llama-3.3-70b" };
+    const c = agentCredentials(undefined, run);
+    const auth = c.authJson ? JSON.parse(c.authJson) : {};
+    expect(auth.groq).toBeUndefined();
+    // Every other provider keeps its key.
+    expect(Object.keys(auth)).toEqual(Object.keys(JSON.parse(agentCredentials().authJson)).filter((k) => k !== "groq"));
+    expect(c.env.GROQ_API_KEY).toBeUndefined();
+    expect(c.env.OTHER).toBe("x");
+    expect(keyFor(run, "groq")).toBeNull();
+    expect(keyFor({ key_id: NO_KEY, model: "anthropic/x" }, "groq")!.id).toBe(providerKeys("groq")[0].id);
+    saveSettings({ agentEnv: {} });
   });
 
   test("failover order skips failing keys; rate-limit marks wear off", () => {

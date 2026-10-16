@@ -12,7 +12,7 @@ import { age } from "../../lib/health.ts";
 import { openRun } from "../../lib/actions.ts";
 import type { Finding, FindingEvent, Run } from "../../lib/types.ts";
 import { Button } from "../../components/ui.tsx";
-import { Hue, IC_XS, Kbd, Sev } from "../../components/ui/bits.tsx";
+import { Hue, IC_XS, Kbd, Sep, Sev } from "../../components/ui/bits.tsx";
 
 const FIELD: Record<string, string> = { state: "state", severity: "severity", title: "title", summary: "summary", location: "location", poc: "PoC", class: "class", verdict: "verdict" };
 
@@ -24,7 +24,7 @@ function describe(e: FindingEvent) {
     return v ? `You: ${verdictLabel(v).toLowerCase()}` : "You cleared the verdict";
   }
   const parts = Object.entries(e.changes ?? {}).map(([k, [a, b]]) =>
-    k === "state" ? `${STATE_WORD[String(a)] ?? a} → ${STATE_WORD[String(b)] ?? b}` : k === "severity" ? `severity ${a ?? "none"} → ${b}` : `${FIELD[k] ?? k} changed`,
+    k === "state" ? `${STATE_WORD[String(a)] ?? a} to ${STATE_WORD[String(b)] ?? b}` : k === "severity" ? `severity ${a ?? "none"} to ${b}` : `${FIELD[k] ?? k} changed`,
   );
   return parts.length ? parts.join(", ").replace(/^./, (c) => c.toUpperCase()) : "Note";
 }
@@ -110,7 +110,7 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
 
       {f.state !== "lead" && !f.removed_at && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-line-2 bg-s2 px-4 py-3.5">
-          <div className="text-[12.5px] text-ink-3">Your verdict · written to TRIAGE.md</div>
+          <div className="text-[12.5px] text-ink-3">Your verdict, written to TRIAGE.md</div>
           <div className="grid grid-cols-3 gap-1.5 max-md:grid-cols-1">
             {VERDICTS.map((v) => (
               <button
@@ -158,7 +158,7 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
                 <span className="pt-0.5 font-mono text-[11.5px] text-ink-3">{age(e.at)} ago</span>
                 <span>
                   {describe(e)}
-                  {e.note && <span className="text-ink-3"> · {e.note}</span>}
+                  {e.note && <span className="text-ink-3"><Sep />{e.note}</span>}
                 </span>
               </li>
             ))}

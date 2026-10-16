@@ -170,3 +170,45 @@ export function PageHeader({ title, subtitle, actions }: { title: ReactNode; sub
     </div>
   );
 }
+
+/** A small set of mutually exclusive choices shown side by side (time window, view). */
+export function Segmented<T extends string | number>({ value, onChange, options, label, className }: { value: T; onChange: (v: T) => void; options: [T, ReactNode][]; label: string; className?: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className={cn("inline-flex h-[30px] items-center rounded-[9px] border border-line-2 bg-s1 p-0.5", className)}>
+      {options.map(([v, l]) => (
+        <button
+          key={String(v)}
+          type="button"
+          role="radio"
+          aria-checked={v === value}
+          onClick={() => onChange(v)}
+          className="inline-flex h-[24px] cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 text-[12.5px] text-ink-3 hover:text-ink aria-checked:bg-s3 aria-checked:text-ink"
+        >
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** An on/off setting: a switch with its label and an optional line of explanation. */
+export function Switch({ checked, onChange, label, hint, disabled, className }: { checked: boolean; onChange: (on: boolean) => void; label: ReactNode; hint?: ReactNode; disabled?: boolean; className?: string }) {
+  return (
+    <label className={cn("flex cursor-pointer items-start gap-3", disabled && "cursor-default opacity-50", className)}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className="mt-px inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border border-line bg-s3 p-[2px] transition-colors aria-checked:border-transparent aria-checked:bg-[var(--accent-c)] disabled:cursor-default"
+      >
+        <span className={cn("size-3 rounded-full bg-ink-2 transition-transform", checked && "translate-x-[14px] bg-white")} />
+      </button>
+      <span className="min-w-0 text-[13px]">
+        {label}
+        {hint && <span className="mt-0.5 block text-xs text-ink-3">{hint}</span>}
+      </span>
+    </label>
+  );
+}

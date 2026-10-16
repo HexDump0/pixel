@@ -7,6 +7,7 @@ import { kindColor, runColor } from "../lib/fleet.ts";
 import { useRuns } from "../lib/runs.ts";
 import type { Activity, TimelineEntry } from "../lib/types.ts";
 import { PageHeader } from "../components/ui.tsx";
+import { Select } from "../components/ui/overlay.tsx";
 import { KIND_LEGEND } from "../components/viz.tsx";
 
 const LIMIT = 400;
@@ -62,14 +63,7 @@ export function ActivityPage() {
     <div>
       <PageHeader title="Activity" subtitle="Every tool call and every action Pixel took, across all runs, as it happens." />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
-        <select className="input" value={run} onChange={(e) => setRun(e.target.value)} aria-label="Run">
-          <option value="">All runs</option>
-          {(runs ?? []).map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.id}
-            </option>
-          ))}
-        </select>
+        <Select label="Run" value={run} onChange={setRun} options={[["", "All runs"], ...(runs ?? []).map((r): [string, string] => [r.id, r.id])]} />
         <div className="tabs">
           {KIND_LEGEND.map(([k, label]) => (
             <button key={k} className={`tab ${kinds.has(k) ? "on" : ""}`} onClick={() => toggle(k)} aria-pressed={kinds.has(k)}>

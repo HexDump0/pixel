@@ -4,11 +4,17 @@
  * is refused, so it checks the key, the endpoint and the model's speed, not its agent skills.
  */
 import { useEffect, useRef, useState } from "react";
+import { IconArrowUp, IconLoader2, IconMessagePlus, IconPlayerStopFilled, IconX } from "@tabler/icons-react";
+import { KeySelect } from "./KeySelect.tsx";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { money, tokens as fmtTokens } from "../lib/format.ts";
+import { cn } from "../lib/cn.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ModelSelect, ThinkingSelect } from "./ModelSelect.tsx";
+import { Button } from "./ui.tsx";
+import { IC_SM, Join, Nil, Sep, Val } from "./ui/bits.tsx";
+import { DialogClose, Sheet } from "./ui/overlay.tsx";
 import { toast } from "./Toast.tsx";
 
 type Status = "starting" | "waiting" | "streaming" | "done" | "error" | "stopped";
@@ -46,16 +52,16 @@ const PRESETS: { label: string; text: string }[] = [
   { label: "Reasoning", text: "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Explain in two sentences." },
 ];
 
-const STATUS: Record<Status, { ring: string; label: string }> = {
-  starting: { ring: "waiting", label: "starting opencode" },
-  waiting: { ring: "running", label: "waiting for first token" },
-  streaming: { ring: "running", label: "streaming" },
-  done: { ring: "done", label: "done" },
-  error: { ring: "failed", label: "failed" },
-  stopped: { ring: "interrupted", label: "stopped" },
+const STATUS: Record<Status, { dot: string; label: string }> = {
+  starting: { dot: "bg-ink-4", label: "Starting opencode" },
+  waiting: { dot: "bg-warning", label: "Waiting for the first token" },
+  streaming: { dot: "bg-good", label: "Streaming" },
+  done: { dot: "bg-ink-3", label: "Done" },
+  error: { dot: "bg-critical", label: "Failed" },
+  stopped: { dot: "bg-ink-4", label: "Stopped" },
 };
 
-const ms = (n: number | null | undefined) => (n == null ? "–" : n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(n < 10_000 ? 2 : 1)} s`);
+const ms = (n: number | null | undefined) => (n == null ? "" : n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(n < 10_000 ? 2 : 1)} s`);
 const active = (t: Turn | undefined) => !!t && (t.status === "starting" || t.status === "waiting" || t.status === "streaming");
 /** Rough output tokens while streaming (exact counts arrive when the message completes). */
 const estimate = (t: Turn) => Math.round(t.parts.reduce((a, p) => a + p.text.length, 0) / 4);
@@ -66,27 +72,30 @@ const speed = (t: Turn, now: number) => {
   return s > 0.25 ? outTokens(t) / s : null;
 };
 
-function Spark({ values }: { values: number[] }) {
-  const W = 120;
-  const H = 22;
-  if (values.length < 2) return <svg width={W} height={H} aria-hidden="true" />;
+/** Output tokens/s while the answer streams, across the full width under the numbers. */
+function SpeedArea({ values }: { values: number[] }) {
+  const W = 600;
+  const H = 34;
+  if (values.length < 2) return <div className="h-[34px]" />;
   const max = Math.max(1, ...values);
   const step = W / (values.length - 1);
-  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 2 - (v / max) * (H - 4)).toFixed(1)}`);
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 1 - (v / max) * (H - 4)).toFixed(1)}`);
   return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[34px] w-full" aria-hidden="true">
       <polygon points={`0,${H} ${pts.join(" ")} ${W},${H}`} style={{ fill: "var(--accent-soft)" }} />
-      <polyline points={pts.join(" ")} fill="none" strokeWidth={1.4} style={{ stroke: "var(--accent)" }} />
+      <polyline points={pts.join(" ")} fill="none" strokeWidth={1.5} vectorEffect="non-scaling-stroke" style={{ stroke: "var(--accent-c)" }} />
     </svg>
   );
 }
 
-function Meter({ label, value, sub, wide }: { label: string; value: React.ReactNode; sub?: React.ReactNode; wide?: boolean }) {
+function Stat({ label, value, unit }: { label: string; value: React.ReactNode; unit?: React.ReactNode }) {
   return (
-    <div className={`lt-meter ${wide ? "wide" : ""}`}>
-      <div className="eyebrow">{label}</div>
-      <div className="v num">{value}</div>
-      {sub && <div className="s">{sub}</div>}
+    <div className="min-w-0">
+      <div className="text-xs text-ink-3">{label}</div>
+      <div className="mt-0.5 font-mono text-[19px] font-medium tracking-[-0.01em] tabular-nums">
+        {value}
+        {unit && <small className="ml-1 font-sans text-[11px] font-normal text-ink-3">{unit}</small>}
+      </div>
     </div>
   );
 }
@@ -98,45 +107,33 @@ function TurnView({ t, now }: { t: Turn; now: number }) {
   const live = active(t);
   const v = speed(t, now);
   return (
-    <div className="lt-turn">
-      <div className="lt-prompt">
-        <span className="caret">›</span>
-        <Markdown text={t.prompt} className="txt" />
+    <div className="flex flex-col gap-3">
+      <div className="ml-auto max-w-[85%] rounded-xl rounded-br-md bg-s3 px-3.5 py-2.5 text-[13.5px]">
+        <Markdown text={t.prompt} />
       </div>
-      <div className="lt-answer">
-        <div className="lt-who">
-          <span className={`ring ${STATUS[t.status].ring}`} />
-          <span className="mono">{t.model}</span>
+      <div className="min-w-0">
+        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+          {live ? <IconLoader2 size={12} className="animate-spin text-ink-3" /> : <i className={cn("size-1.5 rounded-full", STATUS[t.status].dot)} />}
+          <span className="font-mono text-ink-2">{t.model}</span>
           {t.status === "done" || t.status === "stopped" ? (
-            <span className="muted num">
-              {ms(t.firstMs)} first · {v == null ? "–" : `${Math.round(v)} tok/s`} · {fmtTokens(outTokens(t))} tok · {ms(t.doneAt && t.sent ? t.doneAt - t.sent : null)}
-              {t.cost > 0 ? ` · ${money(t.cost)}` : ""}
+            <span className="font-mono text-ink-3 tabular-nums">
+              <Join items={[`${ms(t.firstMs) || "no"} first token`, v == null ? "" : `${Math.round(v)} tok/s`, `${fmtTokens(outTokens(t))} tok`, ms(t.doneAt && t.sent ? t.doneAt - t.sent : null), t.cost > 0 && money(t.cost)]} />
             </span>
           ) : (
-            <span className="muted">{t.retry ? `retrying: ${t.retry}` : STATUS[t.status].label}…</span>
+            <span className="text-ink-3">{t.retry ? `Retrying: ${t.retry}` : STATUS[t.status].label}</span>
           )}
         </div>
         {thinking.length > 0 && (
-          <details className="lt-think" open={live && !text}>
-            <summary>
-              thinking <span className="num">· {fmtTokens(Math.round(thinking.reduce((a, p) => a + p.text.length, 0) / 4))} tok</span>
+          <details className="group mb-2 rounded-lg border border-line-2 bg-s2/50" open={live && !text}>
+            <summary className="cursor-pointer list-none px-3 py-1.5 text-xs text-ink-3 select-none hover:text-ink [&::-webkit-details-marker]:hidden">
+              Thinking <Sep /> <span className="font-mono">{fmtTokens(Math.round(thinking.reduce((a, p) => a + p.text.length, 0) / 4))} tok</span>
             </summary>
-            <div className="body">{thinking.map((p) => p.text).join("\n\n")}</div>
+            <div className="max-h-64 overflow-y-auto border-t border-line-2 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-ink-3">{thinking.map((p) => p.text).join("\n\n")}</div>
           </details>
         )}
-        {text ? (
-          <div className={live ? "lt-streaming" : ""}>
-            <Markdown text={text} />
-          </div>
-        ) : live ? (
-          <div className="lt-wait">
-            <i />
-            <i />
-            <i />
-          </div>
-        ) : null}
-        {t.tools.length > 0 && <div className="lt-note">Tried to call {[...new Set(t.tools)].join(", ")}; refused, live tests are text only.</div>}
-        {t.error && <div className="lt-err">{t.error}</div>}
+        {text ? <Markdown text={text} /> : null}
+        {t.tools.length > 0 && <div className="mt-2 text-xs text-ink-3">Tried to call {[...new Set(t.tools)].join(", ")}; refused, live tests are text only.</div>}
+        {t.error && <div className="mt-2 rounded-lg border border-critical/40 bg-critical/10 px-3 py-2 text-[13px] text-critical">{t.error}</div>}
       </div>
     </div>
   );
@@ -145,6 +142,8 @@ function TurnView({ t, now }: { t: Turn; now: number }) {
 export function LiveTest({ model: initial, models, onClose }: { model: string; models: string[]; onClose: () => void }) {
   const [model, setModel] = useState(initial);
   const [variant, setVariant] = useState("");
+  // "" = the provider's default key, a key id, or "none" to call without a key.
+  const [keyChoice, setKeyChoice] = useState("");
   const [session, setSession] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -157,12 +156,6 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
   const cur = turns[turns.length - 1];
   const busy = active(cur);
 
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    box.current?.focus();
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
 
   const patch = (id: string, f: (t: Turn) => Turn) => setTurns((ts) => ts.map((t) => (t.id === id ? f(t) : t)));
 
@@ -259,11 +252,11 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
     stick.current = true;
     setTurns((ts) => [
       ...ts,
-      { id, prompt, model: variant ? `${model} · ${variant}` : model, status: "waiting", queued: Date.now(), sent: null, firstMs: null, firstAt: null, doneAt: null, parts: [], out: null, cost: 0, error: null, retry: null, tools: [], rates: [] },
+      { id, prompt, model: variant ? `${model}, ${variant}` : model, status: "waiting", queued: Date.now(), sent: null, firstMs: null, firstAt: null, doneAt: null, parts: [], out: null, cost: 0, error: null, retry: null, tools: [], rates: [] },
     ]);
     setInput("");
     try {
-      const r = await api.livePrompt({ model, variant: variant || undefined, text: prompt, session: session ?? undefined, turn: id });
+      const r = await api.livePrompt({ model, variant: variant || undefined, text: prompt, session: session ?? undefined, turn: id, key: keyChoice || undefined });
       setSession(r.session);
     } catch (e: any) {
       patch(id, (t) => ({ ...t, status: "error", error: e.message ?? String(e), doneAt: Date.now() }));
@@ -288,130 +281,141 @@ export function LiveTest({ model: initial, models, onClose }: { model: string; m
   const totals = turns.reduce((a, t) => ({ cost: a.cost + t.cost, out: a.out + (t.status === "done" ? outTokens(t) : 0) }), { cost: 0, out: 0 });
 
   return (
-    <div className="sheet-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Live test">
-        <header>
-          <div className="min-w-0 flex-1">
-            <div className="eyebrow">Live test</div>
-            <ModelSelect value={model} onChange={setModel} compact />
-          </div>
-          <button className="btn btn-sm" onClick={reset} disabled={!turns.length}>
-            New chat
-          </button>
-          <button className="btn btn-sm" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </header>
+    <Sheet onOpenChange={(o) => !o && onClose()} title="Live test">
+      <header className="flex h-14 shrink-0 items-center gap-1.5 border-b border-line-2 pr-3 pl-3.5">
+        <div className="min-w-0 flex-1">
+          <ModelSelect value={model} onChange={(m) => (setModel(m), setKeyChoice(""))} compact />
+        </div>
+        <Button size="sm" variant="ghost" onClick={reset} disabled={!turns.length}>
+          <IconMessagePlus {...IC_SM} />
+          New chat
+        </Button>
+        <DialogClose aria-label="Close" className="inline-flex size-8 cursor-pointer items-center justify-center rounded-lg text-ink-3 hover:bg-s3 hover:text-ink">
+          <IconX {...IC_SM} />
+        </DialogClose>
+      </header>
 
-        <div className="lt-think-row">
-          <span className="eyebrow">Thinking</span>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-line-2 px-5 py-2.5">
+        <span className="inline-flex items-center gap-2.5">
+          <span className="text-xs text-ink-3">Key</span>
+          <KeySelect
+            model={model}
+            value={keyChoice}
+            onChange={(k) => {
+              setKeyChoice(k);
+              // Another key means another opencode; the next message starts a new chat.
+              setSession(null);
+            }}
+          />
+        </span>
+        <span className="inline-flex min-w-0 items-center gap-2.5">
+          <span className="text-xs text-ink-3">Thinking</span>
           <ThinkingSelect model={model} value={variant} onChange={setVariant} />
-        </div>
+        </span>
+      </div>
 
-        <div className="lt-meters">
-          <Meter
-            label="Status"
-            value={
-              <span className="flex items-center gap-2">
-                <span className={`ring ${cur ? STATUS[cur.status].ring : "idle"}`} />
-                <span style={{ fontFamily: "var(--font-sans)", fontSize: 13 }}>{cur ? STATUS[cur.status].label : "ready"}</span>
-              </span>
-            }
-            sub={cur && busy ? `${ms(now - cur.queued)} elapsed` : turns.length ? `${turns.length} message${turns.length === 1 ? "" : "s"} in this chat` : "nothing sent yet"}
-          />
-          <Meter label="First token" value={ms(cur?.firstMs ?? (cur?.status === "waiting" && cur.sent ? Math.max(0, now - cur.sent) : null))} sub={cur?.firstMs == null && busy ? "waiting…" : "time to first output"} />
-          <Meter
-            label="Output speed"
-            wide
-            value={
-              <span className="flex items-end gap-3">
-                <span>
-                  {v == null ? "–" : Math.round(v)}
-                  <small> tok/s{cur && cur.out == null && v != null ? " ~" : ""}</small>
-                </span>
-                <Spark values={cur?.rates ?? []} />
-              </span>
-            }
-          />
-          <Meter label="Output" value={cur ? `${fmtTokens(outTokens(cur))}` : "–"} sub={cur?.out == null && busy ? "estimated" : "tokens"} />
-          <Meter label="Cost" value={totals.cost > 0 ? money(totals.cost) : cur ? "$0" : "–"} sub="this chat" />
+      <div className="shrink-0 border-b border-line-2 px-5 pt-3.5">
+        <div className="flex items-center gap-2 text-[12.5px]">
+          {busy ? <IconLoader2 size={13} className="animate-spin text-ink-3" /> : <i className={cn("size-2 rounded-full", cur ? STATUS[cur.status].dot : "bg-ink-4")} />}
+          <span className={cur?.status === "error" ? "text-critical" : "text-ink-2"}>{cur ? (cur.retry ? `Retrying: ${cur.retry}` : STATUS[cur.status].label) : "Ready"}</span>
+          <span className="ml-auto font-mono text-[11.5px] text-ink-4">{cur && busy ? `${ms(now - cur.queued)}` : turns.length ? `${turns.length} message${turns.length === 1 ? "" : "s"}` : keyChoice === "none" ? "no key" : ""}</span>
         </div>
+        <div className="mt-3 grid grid-cols-4 gap-4">
+          <Stat label="First token" value={<Val v={ms(cur?.firstMs ?? (cur?.status === "waiting" && cur.sent ? Math.max(0, now - cur.sent) : null))} />} />
+          <Stat label="Output speed" value={v == null ? <Nil /> : Math.round(v)} unit={`tok/s${cur && cur.out == null && v != null ? " ~" : ""}`} />
+          <Stat label="Output" value={cur ? fmtTokens(outTokens(cur)) : <Nil />} unit={cur ? "tok" : undefined} />
+          <Stat label="Cost" value={totals.cost > 0 ? money(totals.cost) : cur ? "$0" : <Nil />} />
+        </div>
+        <div className="-mx-5 mt-2.5">
+          <SpeedArea values={cur?.rates ?? []} />
+        </div>
+      </div>
 
-        <div
-          className="lt-log"
-          ref={scroller}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-          }}
-        >
-          {turns.length === 0 ? (
-            <div className="lt-empty">
-              <div className="big">
-                Ask <span className="mono">{model}</span> anything
-              </div>
-              <div className="muted">Answers stream in live, timed to the millisecond. Pick a starter or type your own.</div>
-              <div className="lt-presets">
-                {PRESETS.map((p) => (
-                  <button key={p.label} className="btn btn-sm" onClick={() => void sendText(p.text)}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+        }}
+      >
+        {turns.length === 0 ? (
+          <div className="mx-auto flex min-h-full max-w-[560px] flex-col justify-center gap-4 py-4">
+            <div>
+              <div className="text-[17px] font-medium">Try {model.split("/").slice(1).join("/")}</div>
+              <div className="mt-1 text-[13px] text-ink-3">Answers stream in live, timed to the millisecond. Pick a starter or type your own.</div>
             </div>
-          ) : (
-            turns.map((t) => <TurnView key={t.id} t={t} now={now} />)
-          )}
-        </div>
-
-        <form
-          className="lt-compose"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void sendText(input);
-          }}
-        >
-          {turns.length > 0 && (
-            <div className="lt-presets small">
+            <div className="grid gap-2 sm:grid-cols-2">
               {PRESETS.map((p) => (
-                <button key={p.label} type="button" className="chip" disabled={busy} onClick={() => void sendText(p.text)}>
-                  {p.label}
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => void sendText(p.text)}
+                  className="flex cursor-pointer flex-col gap-1 rounded-xl border border-line-2 bg-s1 px-3.5 py-3 text-left hover:border-line hover:bg-s2"
+                >
+                  <span className="text-[13px] font-medium text-ink">{p.label}</span>
+                  <span className="line-clamp-2 text-xs text-ink-3">{p.text.replace(/```[\s\S]*?```/g, " ").replace(/\s+/g, " ")}</span>
                 </button>
               ))}
             </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-7">
+            {turns.map((t) => (
+              <TurnView key={t.id} t={t} now={now} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <form
+        className="shrink-0 border-t border-line-2 px-5 pt-3 pb-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void sendText(input);
+        }}
+      >
+        {turns.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {PRESETS.map((p) => (
+              <button key={p.label} type="button" disabled={busy} onClick={() => void sendText(p.text)} className="h-6 cursor-pointer rounded-md border border-line-2 bg-transparent px-2 text-xs text-ink-3 hover:text-ink disabled:cursor-default disabled:opacity-40">
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2 rounded-xl border border-line bg-[color-mix(in_srgb,var(--bg)_70%,var(--s1))] p-1.5 pl-3.5 focus-within:border-[color-mix(in_srgb,var(--accent-c)_65%,var(--line))] focus-within:shadow-[0_0_0_3px_var(--accent-soft)]">
+          <textarea
+            ref={box}
+            data-autofocus
+            rows={Math.min(8, Math.max(1, input.split("\n").length))}
+            placeholder={busy ? "Answering" : turns.length ? "Follow up" : "Type a prompt"}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void sendText(input);
+              }
+            }}
+            aria-label="Prompt"
+            className="min-h-8 flex-1 resize-none self-center border-0 bg-transparent py-1.5 text-[13.5px] text-ink outline-none placeholder:text-ink-4"
+          />
+          {busy ? (
+            <Button size="sm" icon variant="danger" onClick={stop} disabled={!session} aria-label="Stop" title="Stop">
+              <IconPlayerStopFilled size={13} />
+            </Button>
+          ) : (
+            <Button size="sm" icon variant="primary" type="submit" disabled={!input.trim()} aria-label="Send" title="Send (Enter)">
+              <IconArrowUp {...IC_SM} />
+            </Button>
           )}
-          <div className="row">
-            <span className="caret">›</span>
-            <textarea
-              ref={box}
-              rows={Math.min(8, Math.max(1, input.split("\n").length))}
-              placeholder={busy ? "answering…" : turns.length ? "Follow up…" : "Type a prompt"}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  void sendText(input);
-                }
-              }}
-              aria-label="Prompt"
-            />
-            {busy ? (
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => void stop()} disabled={!session}>
-                ■ Stop
-              </button>
-            ) : (
-              <button type="submit" className="btn btn-sm btn-primary" disabled={!input.trim()}>
-                Send <kbd>⏎</kbd>
-              </button>
-            )}
-          </div>
-          <div className="foot">
-            <span>Throwaway opencode · no files · tool calls refused</span>
-            <span>Each message is a real API call{totals.out ? ` · ${fmtTokens(totals.out)} tokens out so far` : ""}</span>
-          </div>
-        </form>
-      </aside>
-    </div>
+        </div>
+        <div className="mt-2 flex justify-between gap-3 text-[11.5px] text-ink-4">
+          <Join items={["Throwaway opencode", "no files", "tool calls refused"]} />
+          <span className="max-sm:hidden">Each message is a real API call{totals.out ? `, ${fmtTokens(totals.out)} tokens out` : ""}</span>
+        </div>
+      </form>
+    </Sheet>
   );
 }
