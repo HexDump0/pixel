@@ -24,6 +24,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
+import { navigate } from "../lib/router.tsx";
 import { act, canPause, canResume, canStop, openRun } from "../lib/actions.ts";
 import { keys, queryClient } from "../lib/query.ts";
 import { reloadRuns } from "../lib/runs.ts";
@@ -54,6 +55,7 @@ export function runMenuItems(r: Run): MenuEntry[] {
     "-",
     { label: "Autopilot", checked: !!r.autopilot, icon: <span />, hint: r.autopilot ? "continues when idle" : "off", onSelect: () => act.autopilot(r) },
     { label: "Model and thinking", icon: <IconBrain {...IC_SM} />, hint: r.model.split("/").slice(1).join("/"), onSelect: () => openModelDialog(r.id) },
+    { label: "Proxy", icon: r.proxy_id ? <IconWorld {...IC_SM} /> : <IconWorldOff {...IC_SM} />, hint: <ProxyName id={r.proxy_id} />, sub: () => useProxyItems(r) },
     { label: "Rename", icon: <IconPencil {...IC_SM} />, onSelect: () => (openRun(r.id), setTimeout(() => startRename(r.id), 50)) },
     { label: "Terminal", icon: <IconTerminal2 {...IC_SM} />, onSelect: () => openRun(r.id, "terminal") },
     { label: "Download transcript", icon: <IconDownload {...IC_SM} />, onSelect: () => location.assign(api.transcriptUrl(r.id)), disabled: !hasSession },
@@ -164,7 +166,19 @@ export function useRunKeyName(run: Run) {
 
 /** The run's proxy as a clickable value: another proxy applies from the next model call. */
 export function ProxyMenu({ run, children }: { run: Run; children: React.ReactNode }) {
-  const list = useProxies().data?.proxies ?? [];
+  return <Menu align="start" items={useProxyItems(run)} trigger={children} />;
+}
+
+/** Name of a run's proxy, for the menu hint ("none" without one). */
+function ProxyName({ id }: { id: string | null }) {
+  const p = useProxies().data?.proxies.find((x) => x.id === id);
+  return <>{!id ? "none" : (p?.name ?? "")}</>;
+}
+
+/** Entries to pick a run's proxy: none, or one of them with where it comes out. */
+function useProxyItems(run: Run): MenuEntry[] {
+  const q = useProxies();
+  const list = q.data?.proxies ?? [];
   const pick = (id: string | null, msg: string) =>
     api.setRunProxy(run.id, id).then(
       () => (toast(msg), reloadRuns()),
@@ -174,6 +188,7 @@ export function ProxyMenu({ run, children }: { run: Run; children: React.ReactNo
     { head: "Model calls go through" },
     { label: "No proxy", checked: !run.proxy_id, icon: <IconWorldOff {...IC_SM} />, hint: "direct", onSelect: () => void pick(null, "Model calls now go straight to the provider") },
     ...list.map((p) => ({ label: p.name, checked: p.id === run.proxy_id, icon: <IconWorld {...IC_SM} />, hint: exitOf(p), onSelect: () => void pick(p.id, `Model calls now go through ${p.name}`) })),
+    ...(q.data && !list.length ? ["-" as const, { label: "Add a proxy", icon: <span />, hint: "Models page", onSelect: () => navigate("/models#proxies") }] : []),
   ];
-  return <Menu align="start" items={items} trigger={children} />;
+  return items;
 }

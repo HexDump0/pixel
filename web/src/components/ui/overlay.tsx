@@ -3,7 +3,7 @@ import * as DM from "@radix-ui/react-dropdown-menu";
 import * as D from "@radix-ui/react-dialog";
 import * as T from "@radix-ui/react-tooltip";
 import * as P from "@radix-ui/react-popover";
-import { IconArrowLeft, IconCheck, IconChevronDown, IconX } from "@tabler/icons-react";
+import { IconArrowLeft, IconCheck, IconChevronDown, IconChevronRight, IconX } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import { cn } from "../../lib/cn.ts";
 import { IC_SM, IC_XS } from "./bits.tsx";
@@ -18,6 +18,8 @@ export interface MenuItem {
   disabled?: boolean;
   danger?: boolean;
   checked?: boolean;
+  /** Opens a submenu with these entries. Called while the submenu renders, so it may use hooks (data loads when it opens). */
+  sub?: () => MenuEntry[];
 }
 export type MenuEntry = MenuItem | "-" | { head: ReactNode } | null | false;
 
@@ -35,25 +37,55 @@ export function Menu({ trigger, items, align = "end", className }: { trigger: Re
           sideOffset={6}
           collisionPadding={12}
           onClick={(e) => e.stopPropagation()}
-          className={cn("z-[880] max-h-[70vh] min-w-60 overflow-y-auto rounded-xl border border-line bg-s2 p-1.5 shadow-pop", className)}
+          className={cn(menuPanel, className)}
         >
-          {items.map((it, i) => {
-            if (!it) return null;
-            if (it === "-") return <DM.Separator key={i} className="my-1 h-px bg-line-2" />;
-            if ("head" in it) return <DM.Label key={i} className="px-2.5 pt-1.5 pb-1 pl-8 text-xs text-ink-3">{it.head}</DM.Label>;
-            return (
-              <DM.Item key={i} disabled={it.disabled} onSelect={it.onSelect} className={cn(itemClass, it.danger && "text-critical [&>svg]:text-critical")}>
-                {it.checked ? <IconCheck {...IC_SM} className="text-accent" /> : (it.icon ?? <span />)}
-                <span className="truncate">{it.label}</span>
-                {it.hint ? <span className="max-w-48 truncate font-mono text-xs text-ink-3">{it.hint}</span> : <span />}
-              </DM.Item>
-            );
-          })}
+          <MenuEntries items={items} />
         </DM.Content>
       </DM.Portal>
     </DM.Root>
   );
 }
+
+const menuPanel = "z-[880] max-h-[70vh] min-w-60 overflow-y-auto rounded-xl border border-line bg-s2 p-1.5 shadow-pop";
+
+function MenuEntries({ items }: { items: MenuEntry[] }) {
+  return (
+    <>
+      {items.map((it, i) => {
+        if (!it) return null;
+        if (it === "-") return <DM.Separator key={i} className="my-1 h-px bg-line-2" />;
+        if ("head" in it) return <DM.Label key={i} className="px-2.5 pt-1.5 pb-1 pl-8 text-xs text-ink-3">{it.head}</DM.Label>;
+        const lead = it.checked ? <IconCheck {...IC_SM} className="text-accent" /> : (it.icon ?? <span />);
+        const hint = it.hint ? <span className="max-w-48 truncate font-mono text-xs text-ink-3">{it.hint}</span> : null;
+        if (it.sub)
+          return (
+            <DM.Sub key={i}>
+              <DM.SubTrigger disabled={it.disabled} className={cn(itemClass, "grid-cols-[16px_1fr_auto_auto] data-[state=open]:bg-s3")}>
+                {lead}
+                <span className="truncate">{it.label}</span>
+                {hint ?? <span />}
+                <IconChevronRight {...IC_XS} className="text-ink-3" />
+              </DM.SubTrigger>
+              <DM.Portal>
+                <DM.SubContent sideOffset={6} alignOffset={-6} collisionPadding={12} onClick={(e) => e.stopPropagation()} className={menuPanel}>
+                  <SubEntries get={it.sub} />
+                </DM.SubContent>
+              </DM.Portal>
+            </DM.Sub>
+          );
+        return (
+          <DM.Item key={i} disabled={it.disabled} onSelect={it.onSelect} className={cn(itemClass, it.danger && "text-critical [&>svg]:text-critical")}>
+            {lead}
+            <span className="truncate">{it.label}</span>
+            {hint ?? <span />}
+          </DM.Item>
+        );
+      })}
+    </>
+  );
+}
+
+const SubEntries = ({ get }: { get: () => MenuEntry[] }) => <MenuEntries items={get()} />;
 
 // ---- select ----
 
