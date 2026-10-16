@@ -128,6 +128,7 @@ export const api = {
   report: (id: string) => request<{ content: string | null }>("GET", `${r(id)}/report`),
   findings: (o: { run?: string; untriaged?: boolean } = {}) => request<Finding[]>("GET", `/findings${q({ run: o.run, untriaged: o.untriaged ? 1 : undefined })}`),
   runFindings: (id: string) => request<Finding[]>("GET", `${r(id)}/findings`),
+  findingLlm: (id: string, fid: string) => request<{ text: string; expires: number | null }>("GET", `${r(id)}/findings/${encodeURIComponent(fid)}/llm`),
   findingEvents: (id: string, finding?: string) => request<FindingEvent[]>("GET", `${r(id)}/findings/events${q({ finding })}`),
   allFindingEvents: (since?: number, limit = 200) => request<FindingEvent[]>("GET", `/findings/events${q({ since, limit })}`),
   setVerdict: (id: string, finding: string, verdict: Verdict | null, note?: string | null) => request<Finding>("POST", `${r(id)}/findings/${encodeURIComponent(finding)}/verdict`, { verdict, note }),

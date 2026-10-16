@@ -7,6 +7,7 @@ import { config } from "../src/config.ts";
 import { workbasePath } from "../src/knowledge.ts";
 import { checkFindings, findingCounts, findingEvents, listFindings, parseReadme, setVerdict } from "../src/findings.ts";
 import { dispatch } from "../src/api/router.ts";
+import { serveShare } from "../src/findingShare.ts";
 import "../src/api/index.ts";
 import { controls, createRun, startWatchdog, stopWatchdog } from "../src/runs/index.ts";
 import { seedTemplates } from "../src/templates.ts";
@@ -130,6 +131,52 @@ describe("findings sync", () => {
     expect((await call("GET", `/runs/${run.id}/findings/events`)).body[0]).toMatchObject({ action: "verdict", changes: { verdict: [null, "not_bug"] } });
     const runs = (await call("GET", "/runs")).body;
     expect(runs.find((r: any) => r.id === run.id).findings).toMatchObject({ total: 1, untriaged: 0 });
+  });
+});
+
+describe("copy for LLM", () => {
+  test("one text with the README, the PoC and small files inline, and a signed link to all of them", async () => {
+    const run = makeRun("fd-llm");
+    const dir = join(workbasePath(run.id), "findings/F2-iccp-overflow");
+    mkdirSync(join(dir, "logs"), { recursive: true });
+    writeFileSync(join(dir, "poc.py"), "print('```boom```')\n");
+    writeFileSync(join(dir, "crash.bin"), Buffer.from([0, 1, 2, 3]));
+    writeFileSync(join(dir, "logs/asan.txt"), "ERROR: AddressSanitizer: heap-buffer-overflow\n");
+    write(run.id, "F2-iccp-overflow", { state: "confirmed", severity: "high", location: "pngrutil.c:1184", poc: "poc.py" }, "# Heap overflow in iCCP\n\nRead past the end.\n");
+    checkFindings(run);
+
+    const brief = async () => {
+      const res = await dispatch(new Request(`http://pixel.test/api/runs/${run.id}/findings/F2/llm`), new URL(`http://pixel.test/api/runs/${run.id}/findings/F2/llm`));
+      return (await res.json()).text as string;
+    };
+    const text = await brief();
+    expect(text).toContain("# F2: Heap overflow in iCCP");
+    expect(text).toContain("- Location: pngrutil.c:1184");
+    expect(text).toContain("state: confirmed"); // the README verbatim, header included
+    expect(text).toContain("````\nprint('```boom```')\n````"); // a fence the file can't close
+    expect(text).toContain("### logs/asan.txt");
+    expect(text).toContain("- crash.bin (4 B)");
+    expect(text).toContain("'http://pixel.test/api/share/F2.tar.gz'");
+    expect(text).not.toMatch(/share\/[^'\s]*pxf_/); // the token is never in a URL
+    const token = /PIXEL_TOKEN='(pxf_[\w-]+)'/.exec(text)![1];
+    expect(db.query("SELECT COUNT(*) AS n FROM share_tokens WHERE hash = ?").get(token)).toEqual({ n: 0 }); // stored hashed
+
+    const get = (path: string, t: string | null = token) => serveShare(new Request(`http://pixel.test${path}`, { headers: t ? { authorization: `Bearer ${t}` } : {} }), path);
+    expect((await get("/api/share/F2.tar.gz", null)).status).toBe(401);
+    expect((await get("/api/share/F2.tar.gz", token.slice(0, -2) + "xx")).status).toBe(401);
+    expect((await get("/api/share/F1.tar.gz")).status).toBe(403); // another finding
+    expect((await get("/api/share/F2/files/../../TRIAGE.md")).status).toBe(404); // only the finding's own files
+    expect(await (await get("/api/share/F2/files/logs/asan.txt")).text()).toContain("heap-buffer-overflow");
+
+    const files = await new Bun.Archive(await (await get("/api/share/F2.tar.gz")).blob()).files();
+    expect([...files.keys()].sort()).toEqual(["F2/README.md", "F2/crash.bin", "F2/logs/asan.txt", "F2/poc.py"]);
+    expect(await files.get("F2/logs/asan.txt")!.text()).toContain("heap-buffer-overflow");
+
+    // Each copy gets its own token; an expired one stops working.
+    const other = /PIXEL_TOKEN='(pxf_[\w-]+)'/.exec(await brief())![1];
+    expect(other).not.toBe(token);
+    db.query("UPDATE share_tokens SET expires = 0").run();
+    expect((await get("/api/share/F2.tar.gz")).status).toBe(401);
   });
 });
 

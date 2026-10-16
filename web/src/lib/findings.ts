@@ -54,6 +54,18 @@ export const isOpen = (f: Finding) => !f.verdict && !f.removed_at && f.state !==
 /** Untriaged first, then by severity, then newest. */
 export const byPriority = (a: Finding, b: Finding) => Number(!!a.verdict) - Number(!!b.verdict) || sevRank(a) - sevRank(b) || b.updated - a.updated;
 
+/**
+ * Copy the finding as one markdown text for another model: README, PoC and small files inline, and a new
+ * token (a week, this finding only) with the commands to download all its files. The text is passed to the clipboard as a promise so Safari still
+ * counts the click as the gesture.
+ */
+export async function copyForLlm(f: Pick<Finding, "run_id" | "id">) {
+  const text = api.findingLlm(f.run_id, f.id).then((b) => b.text);
+  if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })]);
+  } else await navigator.clipboard.writeText(await text);
+}
+
 export function useSetVerdict() {
   return useMutation({
     mutationFn: ({ f, verdict, note }: { f: Finding; verdict: Verdict | null; note?: string | null }) => api.setVerdict(f.run_id, f.id, verdict, note),

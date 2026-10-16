@@ -198,6 +198,17 @@ CREATE TABLE IF NOT EXISTS finding_events (
 );
 CREATE INDEX IF NOT EXISTS finding_events_run ON finding_events(run_id, at);
 CREATE INDEX IF NOT EXISTS finding_events_at ON finding_events(at);
+
+-- "Copy for LLM" download tokens: each lets its holder download one finding's files until it expires.
+CREATE TABLE IF NOT EXISTS share_tokens (
+  hash       TEXT PRIMARY KEY,                   -- sha256 of the token; the token itself is only in the copied text
+  run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  finding_id TEXT NOT NULL,
+  created    INTEGER NOT NULL,
+  expires    INTEGER NOT NULL,
+  used_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS share_tokens_finding ON share_tokens(run_id, finding_id);
 `);
 
 // Columns added after the first release: add them to existing databases.

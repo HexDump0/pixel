@@ -8,6 +8,7 @@ import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseF
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
 import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } from "../findings.ts";
+import { llmBrief, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, nextKey, setFailover } from "../runs/keys.ts";
@@ -140,6 +141,11 @@ post("/runs/:id/findings/:fid/verdict", async ({ req, params: { id, fid } }) => 
   mustRun(id);
   const b = await readJson<{ verdict?: Verdict | null; note?: string | null }>(req);
   return setVerdict(id, fid, b.verdict ?? null, b.note ?? null);
+});
+/** The finding as one markdown text for another model, with a signed link to its files. */
+get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid } }) => {
+  mustRun(id);
+  return llmBrief(id, fid, originOf(req));
 });
 get("/findings", ({ query }) =>
   listFindings({ run: query.get("run") ?? undefined, untriaged: query.get("untriaged") === "1", severity: query.get("severity") ?? undefined }),

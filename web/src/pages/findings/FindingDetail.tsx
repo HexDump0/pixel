@@ -3,10 +3,10 @@
  * D duplicate). Verdicts go to TRIAGE.md for later agents; nothing is sent to the run.
  */
 import { useEffect, useState } from "react";
-import { IconAlertTriangle, IconFileCode, IconFileText, IconFolder } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCopy, IconFileCode, IconFileText, IconFolder } from "@tabler/icons-react";
 import { Markdown } from "../../components/Markdown.tsx";
 import { cn } from "../../lib/cn.ts";
-import { STATE_WORD, useFindingEvents, useSetVerdict, VERDICTS, verdictLabel } from "../../lib/findings.ts";
+import { copyForLlm, STATE_WORD, useFindingEvents, useSetVerdict, VERDICTS, verdictLabel } from "../../lib/findings.ts";
 import { runName } from "../../lib/fleet.ts";
 import { age } from "../../lib/health.ts";
 import { openRun } from "../../lib/actions.ts";
@@ -96,6 +96,10 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
             {f.path && f.poc.startsWith(f.path.replace(/README\.md$/, "")) ? f.poc.slice(f.path.length - "README.md".length) : f.poc}
           </Button>
         )}
+        <Button size="xs" variant="ghost" onClick={() => copyForLlm(f)} done="Copied for an LLM" title="The README, PoC and small files as one text, with a token to download the rest">
+          <IconCopy {...IC_XS} />
+          Copy for LLM
+        </Button>
         {run?.report_ready ? (
           <Button size="xs" variant="ghost" onClick={() => openRun(f.run_id, "report")}>
             <IconFileText {...IC_XS} />

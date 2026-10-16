@@ -14,6 +14,7 @@ import { startBackupSchedule } from "./backup.ts";
 import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
 import { startFindingsWatch, stopFindingsWatch } from "./findings.ts";
+import { serveShare } from "./findingShare.ts";
 import dashboard from "../../web/index.html";
 import { liveShutdown } from "./liveTest.ts";
 
@@ -48,6 +49,7 @@ const server = Bun.serve<SocketData>({
     if (!url.pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
     const auth = await handleAuth(req, url);
     if (auth) return auth;
+    if (req.method === "GET" && url.pathname.startsWith("/api/share/")) return serveShare(req, url.pathname);
     if (!isAuthed(req)) return Response.json({ error: "login required" }, { status: 401 });
 
     if (url.pathname === "/api/ws") {

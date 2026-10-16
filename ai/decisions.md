@@ -205,3 +205,8 @@
 - **Not doing for now** (user, after the ideas list): per-project knowledge across runs (the prompt points agents at the workbases and they explore on their own, as now), restart notes (a continue goes into the same opencode session, which keeps its context), logging the human's messages to the workbase, a shared lessons file ("maybe later"), Pixel re-running PoCs.
 - **PROGRESS.md code removed**: `progress.ts`, its table, `runs.progress_at` and its routes.
 - **Transcript, Files, Terminal, Machine redesigned** (user: improve them, and "show some syntax highlighting for markdown files and other stuff"). Highlighting with highlight.js (core + a fixed language set, colours from the theme tokens). Timeline left as is for now.
+
+## 2026-10-16 (copy for LLM)
+
+- **"Copy for LLM" on each finding** (user: copy everything about the vuln, the PoC and a way to download the other files, to paste into a local LLM and have it double-check the finding). One markdown text: target, state, severity, location, verdict, the README verbatim, the PoC and small text files inline, the rest listed, download commands, and a short "check it independently, then look for variants" task.
+- **Downloads need a token in the copied text, not a signed URL** (user: "I need to have a token inside the copied stuff for the agent, and it could only download those files using that token"). A new random token per copy, kept only as a hash, scoped to that one finding's files, sent as `Authorization: Bearer`, expiring after a week. No way to revoke one early yet.
