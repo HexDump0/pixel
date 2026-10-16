@@ -7,7 +7,6 @@ import { getSettings } from "../settings.ts";
 import { publish } from "../bus.ts";
 import { runtime } from "../runtime/index.ts";
 import { workbasePath, writeIndex, writeTriage } from "../knowledge.ts";
-import { dropRunIndex } from "../search.ts";
 import { clientFor, credsStale, mustRun, mustSession, restartOpencode as restartWithCurrentKeys, setRun, setStatus, timeline } from "./state.ts";
 import { unwatch, watch } from "./events.ts";
 import { finish, sendPrompt } from "./lifecycle.ts";
@@ -203,7 +202,6 @@ export async function deleteRun(id: string, deleteWorkbase: boolean) {
   if (deleteWorkbase) {
     rmSync(workbasePath(id), { recursive: true, force: true });
     rmSync(join(config.historyDir, `${id}.git`), { recursive: true, force: true });
-    dropRunIndex(id);
   }
   rmSync(join(config.transcriptsDir, `${id}.json`), { force: true });
   writeIndex();

@@ -77,7 +77,7 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 - **⌘K / Ctrl+K** anywhere: jump to runs and pages, pause/resume/continue/message the run you're looking at, search all workbases.
 - **Activity**: every tool call and every action Pixel took across the fleet, live and filterable.
 - **Models**: live provider health (time to first token, output tok/s, errors, rate limits and retries, tokens and requests per minute against limits you enter) and a leaderboard of every model across all runs (finish rate, median time, tokens and cost per run, real-findings rate from triage, cost per real finding), plus a speed test that sends the same prose prompt to the models you pick and compares first token and output speed.
-- **Knowledge**: full-text search over all workbases, `INDEX.md`, and a graph of which agents read which other workbases.
+- **Knowledge**: search over all workbases (ripgrep, run when you search), `INDEX.md`, and a graph of which agents read which other workbases.
 - **Looking at the UI without agents**: `PIXEL_DATA=/tmp/pixel-demo bun server/test/seed-demo.ts`, then start Pixel with the same `PIXEL_DATA`, `PIXEL_RUNTIME=local` and `PIXEL_DETACHED=1` (no reattaching or recovering runs).
 - **CLI**: `bun run cli -- run <repo> --wait`, `ls`, `show`, `log`, `msg`, `continue`, `triage`, … (`PIXEL_URL`, `PIXEL_PASSWORD`).
 

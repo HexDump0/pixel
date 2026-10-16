@@ -7,7 +7,6 @@ import { authEnabled, isAuthed, login, logoutCookie } from "./auth.ts";
 import { feedData, terminalData, websocket, type SocketData } from "./live.ts";
 import { reattach, startWatchdog, stopWatchdog } from "./runs/index.ts";
 import { seedTemplates } from "./templates.ts";
-import { indexWorkbases } from "./search.ts";
 import { snapshotWorkbase } from "./history.ts";
 import { writeIndex } from "./knowledge.ts";
 import { startBackupSchedule } from "./backup.ts";
@@ -77,15 +76,6 @@ startFleet();
 startFindingsWatch();
 startBackupSchedule();
 
-/** Full-text index of the workbases, for dashboard search. */
-setTimeout(() => indexWorkbases(), 2000);
-setInterval(() => {
-  try {
-    indexWorkbases();
-  } catch (e) {
-    console.error("indexing failed", e);
-  }
-}, 60_000);
 
 /** Git snapshots of active workbases every `historyIntervalMin`. */
 let lastHistory = 0;

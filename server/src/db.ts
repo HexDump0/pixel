@@ -148,14 +148,9 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS files_index (
-  run_id TEXT NOT NULL,
-  path   TEXT NOT NULL,
-  mtime  INTEGER NOT NULL,
-  size   INTEGER NOT NULL,
-  PRIMARY KEY (run_id, path)
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, content, tokenize = 'porter unicode61');
+-- Workbase search index, replaced by ripgrep on demand (2026-10-16, search.ts).
+DROP TABLE IF EXISTS files_fts;
+DROP TABLE IF EXISTS files_index;
 
 -- PROGRESS.md versions, from before findings replaced it (2026-10-15).
 DROP TABLE IF EXISTS progress;

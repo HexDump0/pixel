@@ -119,7 +119,7 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
             ))}
           </tbody>
         </table>
-        {wbs.data && !shown.length && <Empty>No workbases indexed yet (indexing runs every minute).</Empty>}
+        {wbs.data && !shown.length && <Empty>No workbases yet.</Empty>}
       </div>
     </div>
   );

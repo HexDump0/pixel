@@ -6,7 +6,7 @@ import { config } from "../config.ts";
 import { db, listRuns } from "../db.ts";
 import { defaultSettings, getSettings, saveSettings, type Settings } from "../settings.ts";
 import { runtime } from "../runtime/index.ts";
-import { search } from "../search.ts";
+import { search, workbaseSizes } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
 import { outcomeText, verdictCounts } from "../knowledge.ts";
 import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
@@ -21,28 +21,25 @@ import { get, post, put, readJson } from "./router.ts";
 get("/search", ({ query }) => search(query.get("q") ?? "", Number(query.get("limit") ?? 50)));
 get("/crossreads", () => crossReadGraph());
 
-get("/workbases", () => {
+get("/workbases", async () => {
   const runs = new Map(listRuns().map((r) => [r.id, r]));
   const verdicts = verdictCounts();
-  return db
-    .query<{ run_id: string; n: number; bytes: number; last: number }, []>("SELECT run_id, COUNT(*) AS n, SUM(size) AS bytes, MAX(mtime) AS last FROM files_index GROUP BY run_id")
-    .all()
-    .map((f) => {
-      const r = runs.get(f.run_id);
-      return {
-        run: f.run_id,
-        files: f.n,
-        bytes: f.bytes,
-        last: f.last,
-        repo: r?.repo ?? null,
-        language: r?.language ?? null,
-        status: r?.status ?? null,
-        verdict: outcomeText(verdicts[f.run_id]) ?? r?.triage_verdict ?? null,
-        started_at: r?.started_at ?? null,
-        model: r?.model ?? null,
-        orphan: !r,
-      };
-    });
+  return [...(await workbaseSizes())].map(([id, f]) => {
+    const r = runs.get(id);
+    return {
+      run: id,
+      files: f.files,
+      bytes: f.bytes,
+      last: f.last,
+      repo: r?.repo ?? null,
+      language: r?.language ?? null,
+      status: r?.status ?? null,
+      verdict: outcomeText(verdicts[id]) ?? r?.triage_verdict ?? null,
+      started_at: r?.started_at ?? null,
+      model: r?.model ?? null,
+      orphan: !r,
+    };
+  });
 });
 
 get("/workbases/index", () => {
@@ -122,7 +119,6 @@ get("/system", async () => {
     activeRuns: runs.filter((r) => ["preparing", "running", "recovering"].includes(r.status)).length,
     backup: backupStatus(),
     dbBytes: Bun.file(config.dbPath).size,
-    indexedBytes: db.query<{ b: number | null }, []>("SELECT SUM(size) AS b FROM files_index").get()?.b ?? 0,
   };
 });
 post("/backup", () => runBackup());

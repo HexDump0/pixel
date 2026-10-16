@@ -5,7 +5,7 @@ import { config } from "../src/config.ts";
 import { addVersion, createTemplate, render } from "../src/templates.ts";
 import { detectLanguage, safeWorkbasePath } from "../src/knowledge.ts";
 import { recordCrossReads, crossReadsFor } from "../src/crossreads.ts";
-import { indexWorkbases, search } from "../src/search.ts";
+import { search, workbaseSizes } from "../src/search.ts";
 import { repoName } from "../src/runs/create.ts";
 import { db } from "../src/db.ts";
 
@@ -59,13 +59,21 @@ describe("cross-reads", () => {
 });
 
 describe("search", () => {
-  test("indexes workbase files and finds them", () => {
+  test("finds files containing every term, with marked snippets, skipping .git", async () => {
     const dir = join(config.workbasesDir, "search-run");
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(join(dir, "findings", "F1-chunk"), { recursive: true });
+    mkdirSync(join(dir, ".git"), { recursive: true });
     writeFileSync(join(dir, "notes.md"), "The png_read_chunk length check is missing.");
-    indexWorkbases();
-    const hits = search("png_read_chunk");
-    expect(hits[0]?.run_id).toBe("search-run");
-    expect(hits[0]?.snippet).toContain("[[");
+    writeFileSync(join(dir, "findings", "F1-chunk", "README.md"), "Heap overflow in PNG_READ_CHUNK when the length is huge.");
+    writeFileSync(join(dir, "other.md"), "png_read_chunk only");
+    writeFileSync(join(dir, ".git", "x"), "png_read_chunk length");
+    const hits = await search("png_read_chunk length");
+    expect(hits.map((h) => h.path).sort()).toEqual(["findings/F1-chunk/README.md", "notes.md"]);
+    expect(hits.every((h) => h.run_id === "search-run")).toBe(true);
+    expect(hits.find((h) => h.path === "notes.md")!.snippet).toBe("The [[png_read_chunk]] [[length]] check is missing.");
+    expect(await search("   ")).toEqual([]);
+    expect(await search("no-such-text-anywhere")).toEqual([]);
+    const size = (await workbaseSizes()).get("search-run")!;
+    expect(size.files).toBe(3);
   });
 });

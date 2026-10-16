@@ -216,5 +216,4 @@ export interface SystemInfo {
   activeRuns: number;
   backup: { running: boolean; last?: { ts: number; ok: boolean; output: string } };
   dbBytes: number;
-  indexedBytes: number;
 }

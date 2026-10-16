@@ -30,7 +30,7 @@ export function SystemPage() {
           hint={s.committedMemoryGiB > memTotalGiB - 1.5 ? "over budget: stop or delete some machines" : `of ~${(memTotalGiB - 1.5).toFixed(0)} GiB available`}
         />
         <Stat label="Data disk free" value={s.host.disk ? bytes(s.host.disk.free) : "–"} hint={s.host.disk ? `of ${bytes(s.host.disk.total)} · ${s.host.dataDir}` : undefined} />
-        <Stat label="Database" value={bytes(s.dbBytes)} hint={`${bytes(s.indexedBytes)} of workbase files indexed`} />
+        <Stat label="Database" value={bytes(s.dbBytes)} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Runtime">

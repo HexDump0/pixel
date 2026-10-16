@@ -206,7 +206,7 @@ async function system() {
     db: {
       bytes: Bun.file(config.dbPath).size,
       walBytes: Bun.file(`${config.dbPath}-wal`).size,
-      rows: Object.fromEntries(["runs", "sessions", "messages", "parts", "timeline", "metrics", "llm_calls", "provider_events", "files_index"].map((t) => [t, rowCount(t)])),
+      rows: Object.fromEntries(["runs", "sessions", "messages", "parts", "timeline", "metrics", "llm_calls", "provider_events"].map((t) => [t, rowCount(t)])),
     },
   };
 }

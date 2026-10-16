@@ -31,7 +31,7 @@ Proxmox node (32 GB)
     │     ├── web dashboard ── your control panel
     │     ├── run manager ──── creates VMs, drives opencode, watchdog
     │     ├── event store ──── SQLite: runs, templates, events, triage
-    │     ├── knowledge ────── INDEX.md, search index, git history of workbases
+    │     ├── knowledge ────── INDEX.md, search, git history of workbases
     │     ├── notifier ─────── ntfy / Telegram
     │     └── backups ──────── restic, off-server
     │        talks to: Incus (unix socket), opencode in each VM (HTTP + event stream)
@@ -73,7 +73,7 @@ Proxmox node (32 GB)
 - **opencode driver**: official SDK; sessions, messages, abort, event stream, transcript export, permission auto-approve.
 - **Run manager + watchdog**: run state machine, automatic recovery (section 6).
 - **Event store**: every message, tool call, todo, token count into SQLite, pushed live to the dashboard.
-- **Knowledge**: INDEX.md, run.json, TRIAGE.md, full-text index, git snapshots of workbases (outside the agent's view), cross-read tracking.
+- **Knowledge**: INDEX.md, run.json, TRIAGE.md, search (ripgrep on demand), git snapshots of workbases (outside the agent's view), cross-read tracking.
 - **Notifier**: done, stopped, needs attention.
 - **Backups**: restic snapshots of `/srv/pixel` (workbases, SQLite, templates) to off-server storage.
 
@@ -130,7 +130,7 @@ Templates are versioned; each run records which version it used.
 | Workbase history | Git snapshots outside the agent's view (files over ~1 MB skipped) |
 | Runs, templates, triage notes, settings | SQLite (WAL) |
 | Events and transcripts | SQLite + `opencode export` JSON at end of run |
-| Dashboard search | SQLite FTS5, fed by a file watcher |
+| Dashboard search | ripgrep over the workbases when you search (was SQLite FTS5 until 2026-10-16) |
 | Targets, builds, corpora | VM disk only; gone when the VM is deleted |
 | Backups | restic, off-server |
 
