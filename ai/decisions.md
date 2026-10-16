@@ -210,3 +210,7 @@
 
 - **"Copy for LLM" on each finding** (user: copy everything about the vuln, the PoC and a way to download the other files, to paste into a local LLM and have it double-check the finding). One markdown text: target, state, severity, location, verdict, the README verbatim, the PoC and small text files inline, the rest listed, download commands, and a short "check it independently, then look for variants" task.
 - **Downloads need a token in the copied text, not a signed URL** (user: "I need to have a token inside the copied stuff for the agent, and it could only download those files using that token"). A new random token per copy, kept only as a hash, scoped to that one finding's files, sent as `Authorization: Bearer`, expiring after a week. No way to revoke one early yet.
+
+## 2026-10-16 (dashboard speed)
+
+- **Make the dashboard fast with several tabs open** (user: prod "feels really really slow" with multiple tabs). Cause: every token update broadcast a `run` message, every tab refetched `/api/fleet` within 1.5 s, and each snapshot scanned and JSON-parsed the whole `parts` table several times per run (no run index; one `LIKE` over every tool call's JSON), synchronously on Bun's one thread. Fix: `tool_calls` table kept by triggers, one shared snapshot per second, fewer `run` broadcasts and client refetches, hidden tabs idle. Synthetic check (8 runs × 2,500 calls): about 470 ms → 7 ms per snapshot. Done on top of the redesign (user: build on the redesign from now on; it's a complete overhaul).

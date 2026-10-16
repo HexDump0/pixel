@@ -3,7 +3,7 @@
  * their finding) and a viewer (markdown rendered, code highlighted with line numbers, images shown, binaries
  * as a hex peek), with the file's own history from the snapshots and editing. Used on run pages and in Knowledge.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { IconChevronDown, IconChevronRight, IconDownload, IconFile, IconFileCode, IconFileText, IconFolder, IconHistory, IconPencil, IconPhoto, IconRefresh } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
@@ -307,9 +307,14 @@ export function WorkbaseBrowser({ runId, path, className }: { runId: string; pat
     setOpen((o) => new Set([...o, ...ancestors(path)]));
   }, [path]);
   const refresh = () => void root.refetch();
-  // Pick up new files when the run writes its report or finishes.
+  // Pick up new files when the run writes its report or finishes (not on every token update).
+  const runState = useRef<string | null>(null);
   useLive(runId, (m) => {
-    if (m.type === "run" || m.type === "findings") void root.refetch();
+    if (m.type === "findings") return void root.refetch();
+    if (m.type !== "run") return;
+    const state = `${m.data.status}|${m.data.report_ready}`;
+    if (runState.current !== null && runState.current !== state) void root.refetch();
+    runState.current = state;
   });
 
   const findings = useMemo(() => new Map((findingsQ.data ?? []).filter((f) => f.path?.endsWith("/README.md")).map((f) => [f.path!.slice(0, -"/README.md".length), f])), [findingsQ.data]);

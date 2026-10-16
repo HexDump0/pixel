@@ -23,10 +23,29 @@ function refetchSoon(ms = 1500) {
 const patchRun = (id: string, fn: (r: FleetRun) => FleetRun) =>
   queryClient.setQueryData<FleetSnapshot>(keys.fleet, (s) => (s ? { ...s, runs: s.runs.map((r) => (r.id === id ? fn(r) : r)) } : s));
 
+/** Fields of a run the snapshot is built from; a "run" message that changes none of them (token totals, cost) needs no refetch. */
+const shapeOf = (r: Record<string, unknown>) => `${r.status}|${r.agent_status}|${r.label}|${r.hue}|${r.session_id}`;
+const shapes = new Map<string, string>();
+
+// A hidden tab skips the per-second patches (they re-render the whole Wall) and catches up when shown.
+let missed = false;
+if (typeof document !== "undefined")
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !missed) return;
+    missed = false;
+    void queryClient.invalidateQueries({ queryKey: keys.fleet });
+  });
+
 onLive((m) => {
   const snap = queryClient.getQueryData<FleetSnapshot>(keys.fleet);
   if (m.type === "connected") return void queryClient.invalidateQueries({ queryKey: keys.fleet });
   if (!snap) return;
+  if (m.type === "run") {
+    const shape = shapeOf(m.data);
+    if (shapes.get(m.data.id) === shape) return;
+    shapes.set(m.data.id, shape);
+  }
+  if (document.hidden) return void (missed = true);
   if (m.type === "fleet.tick") {
     const tps: Record<string, number> = m.data.tps;
     // The server corrects recent seconds when a model call finishes; those runs get their whole window.

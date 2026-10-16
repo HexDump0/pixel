@@ -113,12 +113,9 @@ function cacheSavings(byModel: { provider: string; model: string; cacheRead: num
 function tools(since: number) {
   const rows = db
     .query<{ tool: string; n: number; errors: number; avgMs: number | null; running: number }, [number]>(
-      `SELECT tool, COUNT(*) AS n, SUM(st = 'error') AS errors, SUM(st IN ('running', 'pending')) AS running,
-         AVG(CASE WHEN e IS NOT NULL AND s IS NOT NULL THEN e - s END) AS avgMs
-       FROM (SELECT json_extract(data, '$.tool') AS tool, json_extract(data, '$.state.status') AS st,
-               json_extract(data, '$.state.time.start') AS s, json_extract(data, '$.state.time.end') AS e
-             FROM parts WHERE type = 'tool' AND updated_at >= ?)
-       WHERE tool IS NOT NULL GROUP BY tool ORDER BY n DESC`,
+      `SELECT tool, COUNT(*) AS n, SUM(status = 'error') AS errors, SUM(status IN ('running', 'pending')) AS running,
+         AVG(CASE WHEN ended IS NOT NULL THEN ended - started END) AS avgMs
+       FROM tool_calls WHERE updated_at >= ? AND tool IS NOT NULL GROUP BY tool ORDER BY n DESC`,
     )
     .all(since);
   return rows.map((r) => ({ ...r, kind: kindOf(r.tool) }));

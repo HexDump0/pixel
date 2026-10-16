@@ -211,36 +211,44 @@ export function stopFleet() {
 const HISTORY_MS = 30 * 60_000;
 const BUCKETS = 60;
 
-interface ToolRow {
+interface CallRow {
+  run_id: string;
   session_id: string;
-  data: string;
+  tool: string;
+  status: string | null;
+  started: number;
+  ended: number | null;
+  child: string | null;
+  interrupted: number;
+  args: string;
   updated_at: number;
 }
 
-const toolParts = (runId: string, since: number) =>
-  db.query<ToolRow, [string, number]>("SELECT session_id, data, updated_at FROM parts WHERE run_id = ? AND type = 'tool' AND updated_at >= ? ORDER BY updated_at").all(runId, since);
+/** Tool calls updated since `since`, oldest first (from tool_calls, which the parts triggers keep current). */
+const callsSince = (runId: string, since: number) =>
+  db.query<CallRow, [string, number]>("SELECT * FROM tool_calls WHERE run_id = ? AND updated_at >= ? ORDER BY updated_at").all(runId, since);
+
+/** A stored call as the dashboard shows it. */
+const callNow = (run: RunRow | undefined, c: CallRow): NonNullable<SubAgent["now"]> => {
+  const input = JSON.parse(c.args);
+  return { tool: c.tool, kind: kindOf(c.tool), text: describeCall(run, c.tool, { input, title: input.title }), ts: c.started, status: c.status ?? "completed" };
+};
 
 /** Tool calls of the last 15 minutes, for the tiles' agent lanes. */
-function recentTicks(runId: string, now: number): [string, number, Kind][] {
+function recentTicks(calls: CallRow[], now: number): [string, number, Kind][] {
   const from = now - 15 * 60_000;
-  return toolParts(runId, from).flatMap((p) => {
-    const part = JSON.parse(p.data);
-    const ts = part.state?.time?.start ?? p.updated_at;
-    return ts >= from ? [[p.session_id, ts, kindOf(part.tool)] as [string, number, Kind]] : [];
-  });
+  return calls.flatMap((c) => (c.started >= from ? [[c.session_id, c.started, kindOf(c.tool)] as [string, number, Kind]] : []));
 }
 
 /** 60 buckets of 30 s: how many tool calls started and which kind dominated; "alert" where Pixel had to recover. */
-function activityHistory(runId: string, now: number) {
+function activityHistory(runId: string, calls: CallRow[], now: number) {
   const from = now - HISTORY_MS;
   const size = HISTORY_MS / BUCKETS;
   const buckets = Array.from({ length: BUCKETS }, () => ({ n: 0, kinds: {} as Record<string, number>, alert: false }));
-  for (const p of toolParts(runId, from)) {
-    const part = JSON.parse(p.data);
-    const ts = part.state?.time?.start ?? p.updated_at;
-    const i = Math.floor((ts - from) / size);
+  for (const c of calls) {
+    const i = Math.floor((c.started - from) / size);
     if (i < 0 || i >= BUCKETS) continue;
-    const k = kindOf(part.tool);
+    const k = kindOf(c.tool);
     buckets[i].n++;
     buckets[i].kinds[k] = (buckets[i].kinds[k] ?? 0) + 1;
   }
@@ -260,36 +268,20 @@ interface SubAgent {
   started: number;
 }
 
-/** Latest tool call per session, for "what is it doing right now". */
-function latestCalls(run: RunRow) {
-  const out = new Map<string, SubAgent["now"]>();
-  const rows = db
-    .query<{ session_id: string; data: string }, [string]>(
-      `SELECT p.session_id, p.data FROM parts p
-       JOIN (SELECT session_id, MAX(updated_at) AS m FROM parts WHERE run_id = ?1 AND type = 'tool' GROUP BY session_id) l
-         ON l.session_id = p.session_id AND p.updated_at = l.m
-       WHERE p.run_id = ?1 AND p.type = 'tool'`,
-    )
-    .all(run.id);
-  for (const r of rows) {
-    const part = JSON.parse(r.data);
-    out.set(r.session_id, { tool: part.tool, kind: kindOf(part.tool), text: describeCall(run, part.tool, part.state), ts: part.state?.time?.start ?? 0, status: part.state?.status ?? "completed" });
-  }
-  return out;
+/** Latest tool call of a session, for "what is it doing right now". */
+function latestCall(run: RunRow, sessionId: string): SubAgent["now"] {
+  const c = db.query<CallRow, [string]>("SELECT * FROM tool_calls WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1").get(sessionId);
+  return c ? callNow(run, c) : null;
 }
 
 /** Subagents with their state, taken from the task calls that started (or resumed) them. */
-function subAgents(run: RunRow, calls: Map<string, SubAgent["now"]>): SubAgent[] {
+function subAgents(run: RunRow): SubAgent[] {
   const sessions = db
     .query<{ id: string; parent_id: string; title: string | null; created_at: number }, [string]>("SELECT id, parent_id, title, created_at FROM sessions WHERE run_id = ? AND parent_id IS NOT NULL ORDER BY created_at")
     .all(run.id);
   if (!sessions.length) return [];
-  const taskState = new Map<string, { status: string; interrupted: boolean }>();
-  for (const p of db.query<{ data: string }, [string]>("SELECT data FROM parts WHERE run_id = ? AND type = 'tool' AND data LIKE '%\"tool\":\"task\"%' ORDER BY updated_at").all(run.id)) {
-    const part = JSON.parse(p.data);
-    const child = part.state?.metadata?.sessionId ?? part.state?.input?.task_id;
-    if (child) taskState.set(child, { status: part.state.status, interrupted: part.state.metadata?.interrupted === true || /abort/i.test(part.state.error ?? "") });
-  }
+  const taskState = new Map<string, { status: string | null; interrupted: boolean }>();
+  for (const c of db.query<CallRow, [string]>("SELECT * FROM tool_calls WHERE run_id = ? AND child IS NOT NULL ORDER BY updated_at").all(run.id)) taskState.set(c.child!, { status: c.status, interrupted: !!c.interrupted });
   const live = ACTIVE.includes(run.status) && run.status !== "paused";
   return sessions.map((s) => {
     const t = taskState.get(s.id);
@@ -301,7 +293,7 @@ function subAgents(run: RunRow, calls: Map<string, SubAgent["now"]>): SubAgent[]
       parent: s.parent_id === run.session_id ? null : s.parent_id,
       title: (s.title ?? "subagent").replace(/\s*\(@\w+ subagent\)$/, ""),
       status,
-      now: calls.get(s.id) ?? null,
+      now: latestCall(run, s.id),
       started: s.created_at,
     };
   });
@@ -487,17 +479,37 @@ export interface FleetRun {
   machine: { name: string | null; pid: number | null; endpoint: string | null };
 }
 
-/** Everything the Runs page draws, for every run that isn't archived. */
-export async function fleetSnapshot() {
+/**
+ * Everything the Wall draws, for every run that isn't archived. Every open tab asks for this
+ * (on a timer and after run changes), so one snapshot is built per second at most and shared.
+ */
+let snapCache: { at: number; tick: number; value: Promise<FleetSnapshot> } | null = null;
+export function fleetSnapshot(): Promise<FleetSnapshot> {
+  const now = Date.now();
+  if (snapCache && snapCache.tick === tick && now - snapCache.at < 1000) return snapCache.value;
+  const t0 = performance.now();
+  const value = buildSnapshot();
+  snapCache = { at: now, tick, value };
+  value.then(
+    () => {
+      const ms = performance.now() - t0;
+      if (ms > 250) console.warn(`fleet snapshot took ${Math.round(ms)} ms`);
+    },
+    () => snapCache?.value === value && (snapCache = null),
+  );
+  return value;
+}
+
+async function buildSnapshot() {
   const now = Date.now();
   const runs = listRuns();
   const shown = runs.filter((r) => r.status !== "triaged" || now - (r.triaged_at ?? 0) < 86_400_000);
   const out: FleetRun[] = [];
   const series = outputSeries(new Set(shown.map((r) => r.id)), now);
   for (const r of shown) {
-    const calls = latestCalls(r);
-    const subs = subAgents(r, calls);
-    const rootNow = r.session_id ? (calls.get(r.session_id) ?? null) : null;
+    const calls = callsSince(r.id, now - HISTORY_MS);
+    const subs = subAgents(r);
+    const rootNow = r.session_id ? latestCall(r, r.session_id) : null;
     const working = subs.filter((s) => s.status === "running").length;
     const main =
       r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
@@ -510,11 +522,11 @@ export async function fleetSnapshot() {
       hue: r.hue,
       tps: rates.get(r.id)?.samples.map(Math.round) ?? [],
       tps30: series.get(r.id) ?? [],
-      ticks: recentTicks(r.id, now),
+      ticks: recentTicks(calls, now),
       todos: todos ? (JSON.parse(todos.data) as { status: string }[]).map((t) => t.status) : [],
       now: rootNow,
       agents: { main, subs },
-      activity: activityHistory(r.id, now),
+      activity: activityHistory(r.id, calls, now),
       cpu: ACTIVE.includes(r.status) ? (m?.cpu ?? null) : null,
       mem: { used: ACTIVE.includes(r.status) ? (m?.mem_used ?? null) : null, total: m?.mem_total ?? size.memoryGiB * 1024 ** 3 },
       disk: { used: m?.disk_used ?? null, total: m?.disk_total ?? size.diskGiB * 1024 ** 3 },
@@ -541,20 +553,16 @@ export function lanes(runId: string, minutes: number) {
   const sessions = db.query<{ id: string; parent_id: string | null; title: string | null }, [string]>("SELECT id, parent_id, title FROM sessions WHERE run_id = ? ORDER BY created_at").all(runId);
   const segs = new Map<string, [number, number, Kind][]>();
   const marks = new Map<string, [number, string][]>();
-  for (const p of toolParts(runId, from)) {
-    const part = JSON.parse(p.data);
-    const start = part.state?.time?.start;
-    if (!start) continue;
-    const done = part.state.status === "completed" || part.state.status === "error";
-    const end = done ? (part.state.time?.end ?? p.updated_at) : ACTIVE.includes(run.status) ? now : p.updated_at;
+  for (const c of callsSince(runId, from)) {
+    const done = c.status === "completed" || c.status === "error";
+    const end = done ? (c.ended ?? c.updated_at) : ACTIVE.includes(run.status) ? now : c.updated_at;
     if (end < from) continue;
-    const list = segs.get(p.session_id) ?? [];
-    list.push([Math.max(start, from), end, kindOf(part.tool)]);
-    segs.set(p.session_id, list);
+    const list = segs.get(c.session_id) ?? [];
+    list.push([Math.max(c.started, from), end, kindOf(c.tool)]);
+    segs.set(c.session_id, list);
     // A finished subagent gets a dot on its own lane where its task call ended.
-    const child = part.tool === "task" ? part.state?.metadata?.sessionId : null;
-    if (child && part.state.status === "completed") marks.set(child, [...(marks.get(child) ?? []), [end, "done"]]);
-    if (child && part.state.status === "error") marks.set(child, [...(marks.get(child) ?? []), [end, "interrupted"]]);
+    if (c.child && c.status === "completed") marks.set(c.child, [...(marks.get(c.child) ?? []), [end, "done"]]);
+    if (c.child && c.status === "error") marks.set(c.child, [...(marks.get(c.child) ?? []), [end, "interrupted"]]);
   }
   const pixel = db.query<{ ts: number; kind: string }, [string, number]>("SELECT ts, kind FROM timeline WHERE run_id = ? AND actor = 'pixel' AND kind IN ('recover', 'limit', 'continue') AND ts >= ?").all(runId, from);
   if (run.session_id) marks.set(run.session_id, [...(marks.get(run.session_id) ?? []), ...pixel.map((t) => [t.ts, t.kind] as [number, string])]);
@@ -573,26 +581,11 @@ export function lanes(runId: string, minutes: number) {
 /** Recent tool calls and Pixel actions across the fleet (or one run), newest first. */
 export function recentActivity(limit: number, runId?: string) {
   const since = Date.now() - 24 * 3_600_000;
-  const parts = db
-    .query<{ run_id: string; session_id: string; data: string; updated_at: number }, [number, string | null, string | null, number]>(
-      "SELECT run_id, session_id, data, updated_at FROM parts WHERE type = 'tool' AND updated_at >= ? AND (? IS NULL OR run_id = ?) ORDER BY updated_at DESC LIMIT ?",
-    )
-    .all(since, runId ?? null, runId ?? null, limit);
+  const rows = runId
+    ? db.query<CallRow, [string, number, number]>("SELECT * FROM tool_calls WHERE run_id = ? AND updated_at >= ? ORDER BY updated_at DESC LIMIT ?").all(runId, since, limit)
+    : db.query<CallRow, [number, number]>("SELECT * FROM tool_calls WHERE updated_at >= ? ORDER BY updated_at DESC LIMIT ?").all(since, limit);
   const runs = new Map(listRuns().map((r) => [r.id, r]));
-  const calls: Activity[] = parts.map((p) => {
-    const part = JSON.parse(p.data);
-    return {
-      run: p.run_id,
-      session: p.session_id,
-      agent: agentOf(p.session_id),
-      tool: part.tool,
-      kind: kindOf(part.tool),
-      text: describeCall(runs.get(p.run_id), part.tool, part.state),
-      status: part.state?.status ?? "completed",
-      ts: part.state?.time?.start ?? p.updated_at,
-      end: part.state?.time?.end ?? null,
-    };
-  });
+  const calls: Activity[] = rows.map((c) => ({ run: c.run_id, session: c.session_id, agent: agentOf(c.session_id), ...callNow(runs.get(c.run_id), c), end: c.ended }));
   const events = db
     .query<{ run_id: string; ts: number; actor: "pixel" | "user" | "agent"; kind: string; message: string }, [number, string | null, string | null, number]>(
       "SELECT run_id, ts, actor, kind, message FROM timeline WHERE ts >= ? AND (? IS NULL OR run_id = ?) AND kind NOT IN ('prepare', 'permission') ORDER BY ts DESC LIMIT ?",
@@ -601,7 +594,7 @@ export function recentActivity(limit: number, runId?: string) {
   return { calls, events };
 }
 
-export type FleetSnapshot = Awaited<ReturnType<typeof fleetSnapshot>>;
+export type FleetSnapshot = Awaited<ReturnType<typeof buildSnapshot>>;
 export type Lanes = NonNullable<ReturnType<typeof lanes>>;
 export type RecentActivity = ReturnType<typeof recentActivity>;
 
@@ -667,10 +660,9 @@ export function runSeries(runId: string, buckets = 120) {
   let sum = 0;
   const costCum = cost.map((c) => (sum += c));
   const kinds: Record<string, number[]> = {};
-  for (const p of db.query<{ data: string; updated_at: number }, [string]>("SELECT data, updated_at FROM parts WHERE run_id = ? AND type = 'tool'").all(runId)) {
-    const part = JSON.parse(p.data);
-    const k = kindOf(part.tool);
-    (kinds[k] ??= Array(buckets).fill(0))[at(part.state?.time?.start ?? p.updated_at)]++;
+  for (const c of db.query<{ tool: string; started: number }, [string]>("SELECT tool, started FROM tool_calls WHERE run_id = ?").all(runId)) {
+    const k = kindOf(c.tool);
+    (kinds[k] ??= Array(buckets).fill(0))[at(c.started)]++;
   }
   const marks = db
     .query<{ ts: number; kind: string; message: string }, [string]>(

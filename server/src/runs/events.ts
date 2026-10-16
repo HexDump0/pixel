@@ -102,7 +102,9 @@ function storeSession(runId: string, info: any) {
     t.tokens_cache += (k.cache?.read ?? 0) + (k.cache?.write ?? 0);
     t.cost += r.cost ?? 0;
   }
-  setRun(runId, t);
+  // Sessions update often without new tokens (title, status); only a real change goes out to every tab.
+  const run = getRun(runId);
+  if (!run || (Object.keys(t) as (keyof typeof t)[]).some((k) => run[k] !== t[k])) setRun(runId, t);
   publish(runId, "session", info);
 }
 

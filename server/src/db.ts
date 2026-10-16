@@ -219,6 +219,66 @@ for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "cred
 // Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
 if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
 
+// Messages by run (run detail's cache totals, a run's whole-life series); added 2026-10-16.
+db.exec("CREATE INDEX IF NOT EXISTS messages_run ON messages(run_id, created_at)");
+
+/*
+ * Tool calls: the few fields the dashboard needs from each tool part, kept in step with `parts` by
+ * triggers. Reading `parts` itself means parsing every call's full JSON (outputs included) and,
+ * without an index on run, scanning the whole table; the fleet snapshot did that several times
+ * per run for every open tab. `args` holds only the inputs describeCall() looks at.
+ */
+const hadToolCalls = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tool_calls'").get();
+db.exec(`
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id          TEXT PRIMARY KEY,               -- the part id
+  run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  session_id  TEXT NOT NULL,
+  message_id  TEXT NOT NULL,
+  tool        TEXT,
+  status      TEXT,
+  started     INTEGER NOT NULL,               -- state.time.start, else when the part was stored
+  ended       INTEGER,
+  child       TEXT,                           -- task calls: the subagent's session
+  interrupted INTEGER NOT NULL DEFAULT 0,
+  args        TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tool_calls_run ON tool_calls(run_id, updated_at);
+CREATE INDEX IF NOT EXISTS tool_calls_session ON tool_calls(session_id, updated_at);
+CREATE INDEX IF NOT EXISTS tool_calls_updated ON tool_calls(updated_at);
+CREATE INDEX IF NOT EXISTS tool_calls_child ON tool_calls(run_id, updated_at) WHERE child IS NOT NULL;
+`);
+/** The tool_calls row for parts row `p` (NEW in a trigger, the table alias in the backfill). */
+const toolCallRow = (p: string) => {
+  const j = (path: string) => `json_extract(${p}.data, '$.${path}')`;
+  const args = ["command", "description", "filePath", "offset", "pattern", "path", "url"].map((k) => `'${k}', substr(${j(`state.input.${k}`)}, 1, 2000)`).join(", ");
+  return `SELECT ${p}.id, ${p}.run_id, ${p}.session_id, ${p}.message_id, ${j("tool")}, ${j("state.status")},
+    COALESCE(${j("state.time.start")}, ${p}.updated_at), ${j("state.time.end")},
+    CASE ${j("tool")} WHEN 'task' THEN COALESCE(${j("state.metadata.sessionId")}, ${j("state.input.task_id")}) END,
+    COALESCE(${j("state.metadata.interrupted")} = 1, 0) OR COALESCE(${j("state.error")} LIKE '%abort%', 0),
+    json_object(${args}, 'title', substr(${j("state.title")}, 1, 2000)), ${p}.updated_at`;
+};
+// Recreated on every start so a change to toolCallRow reaches existing databases. Delete-then-insert rather than
+// INSERT OR REPLACE: an outer upsert's conflict policy would override the trigger's.
+db.exec(`
+DROP TRIGGER IF EXISTS tool_calls_insert;
+DROP TRIGGER IF EXISTS tool_calls_update;
+DROP TRIGGER IF EXISTS tool_calls_delete;
+CREATE TRIGGER tool_calls_insert AFTER INSERT ON parts WHEN NEW.type = 'tool' AND json_valid(NEW.data) BEGIN
+  DELETE FROM tool_calls WHERE id = NEW.id;
+  INSERT INTO tool_calls ${toolCallRow("NEW")};
+END;
+CREATE TRIGGER tool_calls_update AFTER UPDATE ON parts WHEN NEW.type = 'tool' AND json_valid(NEW.data) BEGIN
+  DELETE FROM tool_calls WHERE id = NEW.id;
+  INSERT INTO tool_calls ${toolCallRow("NEW")};
+END;
+CREATE TRIGGER tool_calls_delete AFTER DELETE ON parts WHEN OLD.type = 'tool' BEGIN
+  DELETE FROM tool_calls WHERE id = OLD.id;
+END;
+`);
+if (!hadToolCalls) db.exec(`INSERT OR REPLACE INTO tool_calls ${toolCallRow("p")} FROM parts p WHERE p.type = 'tool' AND json_valid(p.data)`);
+
 export type RunStatus =
   | "preparing"
   | "running"
