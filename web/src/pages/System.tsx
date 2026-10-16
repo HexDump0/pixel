@@ -7,6 +7,7 @@ import { toast } from "../components/Toast.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { Meter } from "../components/charts/Meter.tsx";
 import { Join, Nil } from "../components/ui/bits.tsx";
+import { CleanUpCard, PreUpgradeCard } from "./system/CleanUp.tsx";
 
 export function SystemPage() {
   const sys = useAsync(api.system, []);
@@ -51,6 +52,8 @@ export function SystemPage() {
           }
         />
       </div>
+      {s.preUpgrade && <PreUpgradeCard info={s.preUpgrade} onChanged={sys.reload} />}
+      <CleanUpCard onChanged={sys.reload} />
       <PixelHealthCard />
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Runtime">

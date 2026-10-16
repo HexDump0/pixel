@@ -1,9 +1,9 @@
 /** /api: knowledge (search, workbases, cross-reads), settings, system status, backups. */
-import { existsSync, readFileSync, statfsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { config } from "../config.ts";
-import { db, listRuns } from "../db.ts";
+import { db, listRuns, preUpgradeInfo, preUpgradePath } from "../db.ts";
 import { defaultSettings, getSettings, saveSettings, type Settings } from "../settings.ts";
 import { runtime } from "../runtime/index.ts";
 import { search, workbaseSizes } from "../search.ts";
@@ -17,7 +17,8 @@ import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
 import { stats } from "../stats.ts";
 import { healthSamples } from "../health.ts";
-import { get, post, put, readJson } from "./router.ts";
+import { compactDb, dbBytes, startMeasure, startTidy, tidyState } from "../tidy.ts";
+import { del, get, HttpError, post, put, readJson } from "./router.ts";
 
 // ---- knowledge ----
 
@@ -126,23 +127,34 @@ get("/system", async () => {
     activeRuns: runs.filter((r) => ["preparing", "running", "recovering"].includes(r.status)).length,
     backup: backupStatus(),
     // With the WAL, which holds recent writes until a checkpoint folds them into the file.
-    dbBytes: Bun.file(config.dbPath).size + Bun.file(`${config.dbPath}-wal`).size,
+    dbBytes: dbBytes(),
+    preUpgrade: preUpgradeInfo() ?? null,
   };
 });
 post("/backup", () => runBackup());
+
+get("/system/health", () => healthSamples());
 
 /**
  * SQLite never gives freed space back to the disk (archived transcripts, the old search index).
  * VACUUM rewrites the file; it blocks Pixel while it runs (seconds for a few hundred MB), so it's
  * a button, not a schedule. Live events wait in their sockets meanwhile.
  */
-get("/system/health", () => healthSamples());
+post("/system/compact", () => compactDb());
 
-post("/system/compact", () => {
-  const before = Bun.file(config.dbPath).size;
-  const t = Date.now();
-  db.exec("VACUUM");
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  return { before, after: Bun.file(config.dbPath).size, ms: Date.now() - t };
+// Clean-up (tidy.ts): measure, then apply the choices; both run in the background and the page polls the state.
+get("/system/tidy", () => tidyState());
+post("/system/tidy/measure", () => (startMeasure(), tidyState()));
+post("/system/tidy", async ({ req }) => (startTidy(await readJson(req)), tidyState()));
+
+// The copy of the database saved before the last upgrade (db.ts): download it, or remove it once all is well.
+get("/system/pre-upgrade.db", () => {
+  if (!existsSync(preUpgradePath)) throw new HttpError(404, "no copy");
+  return new Response(Bun.file(preUpgradePath), { headers: { "content-type": "application/vnd.sqlite3", "content-disposition": 'attachment; filename="pixel-pre-upgrade.db"' } });
+});
+del("/system/pre-upgrade", () => {
+  rmSync(preUpgradePath, { force: true });
+  db.query("DELETE FROM settings WHERE key = '_preUpgrade'").run();
+  return { ok: true };
 });
 get("/stats", ({ query }) => stats(Number(query.get("days") ?? 7), Number(query.get("tz") ?? 0)));

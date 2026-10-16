@@ -94,8 +94,8 @@ export async function archiveRun(runId: string) {
   return moved;
 }
 
-/** Runs that are finished, quiet for a week, and still have parts in the database. */
-function runsToArchive(now: number) {
+/** Runs that are finished, quiet for `quietMs`, and still have parts in the database. */
+export function runsToArchive(now: number, quietMs = ARCHIVE_AFTER_MS) {
   const active = ACTIVE_STATUSES.map(() => "?").join(", ");
   return db
     .query<{ id: string }, any[]>(
@@ -103,23 +103,29 @@ function runsToArchive(now: number) {
        WHERE r.status NOT IN (${active}) AND COALESCE(r.finished_at, r.last_activity, r.started_at, r.created_at) < ?
          AND EXISTS (SELECT 1 FROM sessions s JOIN parts p ON p.session_id = s.id WHERE s.run_id = r.id)`,
     )
-    .all(...ACTIVE_STATUSES, now - ARCHIVE_AFTER_MS)
+    .all(...ACTIVE_STATUSES, now - quietMs)
     .map((r) => r.id);
 }
 
-let running = false;
-export async function archiveOldRuns() {
-  if (running) return;
-  running = true;
-  try {
-    for (const id of runsToArchive(Date.now())) {
+// One pass at a time (the hourly one and the System page's clean-up): two writing the same file would clash.
+let queue: Promise<unknown> = Promise.resolve();
+
+/** Archive every run quiet for `quietMs` (a week by default); returns how many parts moved. */
+export function archiveOldRuns(quietMs = ARCHIVE_AFTER_MS, onRun?: (id: string, i: number, n: number) => void): Promise<number> {
+  const pass = queue.then(async () => {
+    const ids = runsToArchive(Date.now(), quietMs);
+    let total = 0;
+    for (const [i, id] of ids.entries()) {
+      onRun?.(id, i, ids.length);
       const t = Date.now();
       const n = await archiveRun(id).catch((e) => (console.error(`archiving ${id} failed`, e), 0));
       if (n) console.log(`archived ${n} transcript parts of ${id} in ${Date.now() - t} ms`);
+      total += n;
     }
-  } finally {
-    running = false;
-  }
+    return total;
+  });
+  queue = pass.catch(() => {});
+  return pass;
 }
 
 export function startArchiving() {

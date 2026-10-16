@@ -4,6 +4,8 @@ import type { Settings } from "../../../server/src/settings.ts";
 import type { AgentPaths } from "../../../server/src/runtime/types.ts";
 import type { ProcessInfo, ProcessKind } from "../../../server/src/runtime/procs.ts";
 import type { PixelHealth } from "../../../server/src/health.ts";
+import type { PreUpgrade } from "../../../server/src/db.ts";
+export type { TidyChoices, TidyFolder, TidyState } from "../../../server/src/tidy.ts";
 import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries } from "../../../server/src/fleet.ts";
 import type { FindingEvent, FindingRow, Verdict } from "../../../server/src/findings.ts";
 import type { Leaderboard, ProviderHealth } from "../../../server/src/providers.ts";
@@ -221,4 +223,5 @@ export interface SystemInfo {
   activeRuns: number;
   backup: { running: boolean; last?: { ts: number; ok: boolean; output: string } };
   dbBytes: number;
+  preUpgrade: PreUpgrade | null;
 }

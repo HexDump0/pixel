@@ -12,6 +12,8 @@ export const config = {
   /** Per-run directories (target, scratch, home) for the process runtimes (local, single). */
   machinesDir: join(dataDir, "machines"),
   transcriptsDir: join(dataDir, "transcripts"),
+  /** SQLite's temporary files (VACUUM's copy of the whole database): on the data disk, not a small /tmp. */
+  tmpDir: join(dataDir, "tmp"),
   dbPath: join(dataDir, "pixel.db"),
   templatesDir: resolve(import.meta.dir, "../../templates"),
   /** opencode plugins every agent gets (copied into its opencode config; baked into pixel-image for Incus). */
@@ -78,3 +80,4 @@ export const config = {
 for (const d of [config.dataDir, config.workbasesDir, config.historyDir, config.machinesDir, config.transcriptsDir]) {
   mkdirSync(d, { recursive: true });
 }
+mkdirSync(config.tmpDir, { recursive: true, mode: 0o700 });

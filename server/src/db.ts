@@ -1,8 +1,78 @@
 import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { config } from "./config.ts";
 
 export const db = new Database(config.dbPath, { create: true });
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+// VACUUM builds its copy of the database as a temporary file, by default in /tmp (a 512 MB tmpfs in compose.single.yaml).
+db.exec(`PRAGMA temp_store_directory = '${config.tmpDir.replace(/'/g, "''")}'`);
+
+/**
+ * Schema version (PRAGMA user_version). Bump it with any change below that drops or rewrites data: on the first
+ * start after an upgrade Pixel saves the database as it was to pre-upgrade.db (same disk, if there's room) before
+ * migrating. 1 = the redesign (2026-10-16), the first version that counts.
+ */
+const SCHEMA = 1;
+const hadRuns = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get();
+/** The schema version this database had when Pixel started (SCHEMA for a new one). */
+export const upgradedFrom = hadRuns ? db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version : SCHEMA;
+
+export const preUpgradePath = join(config.dataDir, "pre-upgrade.db");
+export interface PreUpgrade {
+  ts: number;
+  from: number;
+  bytes?: number;
+  /** Why no copy was made. */
+  skipped?: string;
+}
+let preUpgrade: PreUpgrade | undefined;
+
+function snapshotBeforeUpgrade() {
+  const ts = Date.now();
+  if (existsSync(preUpgradePath)) {
+    preUpgrade = { ts, from: upgradedFrom, skipped: "a copy from an earlier upgrade is still there" };
+    return;
+  }
+  const size = Bun.file(config.dbPath).size + Bun.file(`${config.dbPath}-wal`).size;
+  const fs = statfsSync(config.dataDir);
+  const free = fs.bavail * fs.bsize;
+  if (free < size * 1.1 + config.minFreeGiB * 1024 ** 3) {
+    preUpgrade = { ts, from: upgradedFrom, skipped: `not enough free disk (${Math.round(free / 1024 ** 2)} MB free, the database is ${Math.round(size / 1024 ** 2)} MB)` };
+    console.error(`Upgrading the database without a copy: ${preUpgrade.skipped}`);
+    return;
+  }
+  console.log(`Saving the database to ${preUpgradePath} before upgrading it`);
+  // Created empty first so the copy (settings, keys) is never readable by others, e.g. agents in the single runtime.
+  writeFileSync(preUpgradePath, "", { mode: 0o600 });
+  try {
+    db.exec(`VACUUM INTO '${preUpgradePath.replace(/'/g, "''")}'`);
+    preUpgrade = { ts, from: upgradedFrom, bytes: Bun.file(preUpgradePath).size };
+  } catch (e: any) {
+    rmSync(preUpgradePath, { force: true });
+    preUpgrade = { ts, from: upgradedFrom, skipped: `the copy failed: ${e.message}` };
+    console.error(`Upgrading the database without a copy: ${preUpgrade.skipped}`);
+  }
+}
+if (upgradedFrom < SCHEMA) snapshotBeforeUpgrade();
+
+/** PROGRESS.md versions (dropped below) go to each run's workbase, oldest first, so none are lost. */
+function exportProgressHistory() {
+  if (!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'progress'").get()) return;
+  const byRun = new Map<string, { ts: number; content: string }[]>();
+  for (const r of db.query<{ run_id: string; ts: number; content: string }, []>("SELECT run_id, ts, content FROM progress ORDER BY run_id, ts").iterate()) {
+    if (!byRun.has(r.run_id)) byRun.set(r.run_id, []);
+    byRun.get(r.run_id)!.push(r);
+  }
+  for (const [runId, versions] of byRun) {
+    const dir = join(config.workbasesDir, runId, ".pixel");
+    mkdirSync(dir, { recursive: true });
+    const text = versions.map((v) => `## ${new Date(v.ts).toISOString().replace("T", " ").slice(0, 16)} UTC\n\n${v.content.trim()}\n`).join("\n");
+    writeFileSync(join(dir, "progress-history.md"), `# PROGRESS.md history\n\nEvery version Pixel kept, oldest first.\n\n${text}`);
+  }
+  if (byRun.size) console.log(`PROGRESS.md history of ${byRun.size} runs written to their workbases (.pixel/progress-history.md)`);
+}
+exportProgressHistory();
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS runs (
@@ -327,6 +397,17 @@ CREATE TRIGGER model_calls_delete AFTER DELETE ON messages WHEN OLD.role = 'assi
 END;
 `);
 if (!hadModelCalls) db.exec(`INSERT OR REPLACE INTO model_calls ${modelCallRow("m")} FROM messages m WHERE m.role = 'assistant' AND json_valid(m.data) AND m.run_id IN (SELECT id FROM runs)`);
+
+db.exec(`PRAGMA user_version = ${SCHEMA}`);
+if (preUpgrade) db.query("INSERT INTO settings (key, value) VALUES ('_preUpgrade', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(preUpgrade));
+
+/** The copy saved before the last upgrade, or why there isn't one; undefined when Pixel never upgraded a database. */
+export function preUpgradeInfo(): PreUpgrade | undefined {
+  const row = db.query<{ value: string }, []>("SELECT value FROM settings WHERE key = '_preUpgrade'").get();
+  if (!row) return undefined;
+  const info: PreUpgrade = JSON.parse(row.value);
+  return info.bytes && !existsSync(preUpgradePath) ? undefined : info;
+}
 
 export type RunStatus =
   | "preparing"

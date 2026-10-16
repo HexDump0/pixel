@@ -1,5 +1,7 @@
 /** Typed client for the Pixel API. */
 import type {
+  TidyChoices,
+  TidyState,
   CrossReadEdge,
   FileContent,
   FileEntry,
@@ -230,5 +232,9 @@ export const api = {
   activity: (run?: string, limit = 200) => request<RecentActivity>("GET", `/activity${q({ run, limit })}`),
   backup: () => request<{ ok: boolean; output: string }>("POST", "/backup"),
   compactDb: () => request<{ before: number; after: number; ms: number }>("POST", "/system/compact"),
+  tidy: () => request<TidyState>("GET", "/system/tidy"),
+  tidyMeasure: () => request<TidyState>("POST", "/system/tidy/measure"),
+  tidyApply: (c: TidyChoices) => request<TidyState>("POST", "/system/tidy", c),
+  removePreUpgrade: () => request<{ ok: boolean }>("DELETE", "/system/pre-upgrade"),
   health: () => request<PixelHealth>("GET", "/system/health"),
 };
