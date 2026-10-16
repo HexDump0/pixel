@@ -5,7 +5,7 @@ import { liveAbort, livePrompt, liveStatus, modelVariants } from "../liveTest.ts
 import { cachedCatalog } from "../catalog.ts";
 import { effective } from "../modelOverrides.ts";
 import { getSettings, saveSettings } from "../settings.ts";
-import { getProxy, listProxies, parseProxyUrl, publicProxy, removeProxy, saveProxy, testProxy, testProxyUrl, type ProxyInput } from "../proxies.ts";
+import { getProxy, importProxies, listProxies, publicProxy, removeProxy, resolveProxyUrl, saveProxy, testProxy, testProxyUrl, withScheme, type ProxyInput } from "../proxies.ts";
 import { relayBase, upstreamBase } from "../relay.ts";
 import { addKey, connectedProviders, discoverModels, editKey, orderKeys, removeAccount, removeKey, saveAccount, testKey, type AccountInput, type KeyInput } from "../providerAccounts.ts";
 import { ACTIVE_STATUSES, db, listRuns } from "../db.ts";
@@ -120,8 +120,13 @@ get("/proxies", async () => {
     proxies: listProxies().map((p) => ({ ...publicProxy(p), runs: runs.filter((r) => r.proxy_id === p.id).map((r) => r.id) })),
   };
 });
-post("/proxies", async ({ req }) => publicProxy(saveProxy(await readJson<ProxyInput>(req))));
-put("/proxies/:id", async ({ req, params: { id } }) => publicProxy(saveProxy(await readJson<ProxyInput>(req), id)));
+post("/proxies", async ({ req }) => publicProxy(await saveProxy(await readJson<ProxyInput>(req))));
+post("/proxies/import", async ({ req }) => {
+  const b = await readJson<{ text?: string; scheme?: ProxyInput["scheme"] }>(req);
+  const r = await importProxies(b.text ?? "", b.scheme);
+  return { added: r.added.map(publicProxy), skipped: r.skipped };
+});
+put("/proxies/:id", async ({ req, params: { id } }) => publicProxy(await saveProxy(await readJson<ProxyInput>(req), id)));
 del("/proxies/:id", ({ params: { id } }) => {
   const p = getProxy(id);
   if (!p) throw new HttpError(404, `no proxy ${id}`);
@@ -137,9 +142,10 @@ post("/proxies/:id/test", async ({ params: { id } }) => testProxy(id, await offe
 post("/proxies/test", async ({ req }) => {
   const b = await readJson<ProxyInput & { id?: string }>(req);
   const old = b.id ? getProxy(b.id) : null;
-  const u = b.url?.trim() ? parseProxyUrl(b.url) : old ? new URL(old.url) : null;
+  let u = b.url?.trim() ? await resolveProxyUrl(b.url, b.scheme) : old ? new URL(old.url) : null;
   if (!u) throw new HttpError(400, "proxy address needed");
-  if (b.username !== undefined) u.username = encodeURIComponent(b.username.trim());
+  if (!b.url?.trim() && b.scheme && b.scheme !== "auto") u = withScheme(u, b.scheme);
+  if (b.username !== undefined && (b.username.trim() || !b.url?.trim() || !u.username)) u.username = encodeURIComponent(b.username.trim());
   if (b.password) u.password = encodeURIComponent(b.password);
   else if (old && !u.password) u.password = new URL(old.url).password;
   return testProxyUrl(u.toString().replace(/\/$/, ""), await offeredBases());

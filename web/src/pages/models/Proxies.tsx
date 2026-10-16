@@ -4,13 +4,13 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { IconAlertTriangle, IconDots, IconPencil, IconPlus, IconStar, IconStarFilled, IconTrash, IconWorld } from "@tabler/icons-react";
+import { IconAlertTriangle, IconDots, IconFileImport, IconPencil, IconPlus, IconStar, IconStarFilled, IconTrash, IconWorld } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
 import { keys } from "../../lib/query.ts";
 import { ago } from "../../lib/format.ts";
 import { cn } from "../../lib/cn.ts";
 import type { ProxyInput, ProxyTest, PublicProxy } from "../../lib/types.ts";
-import { Button, ErrorBox } from "../../components/ui.tsx";
+import { Button, ErrorBox, Segmented } from "../../components/ui.tsx";
 import { IC_SM, IC_XS, Join, Nothing, SectionHead } from "../../components/ui/bits.tsx";
 import { Dialog, Menu } from "../../components/ui/overlay.tsx";
 import { useProxies } from "../../components/ProxySelect.tsx";
@@ -18,6 +18,13 @@ import { toast } from "../../components/Toast.tsx";
 import { ms } from "./common.tsx";
 
 type Row = PublicProxy & { runs: string[] };
+type Scheme = NonNullable<ProxyInput["scheme"]>;
+const SCHEME_OPTIONS: [Scheme, string][] = [
+  ["auto", "Auto"],
+  ["http", "HTTP"],
+  ["https", "HTTPS"],
+  ["socks5", "SOCKS5"],
+];
 
 /** Exit IP, place and network from a test, and which provider APIs answered. */
 function TestResult({ t, compact }: { t: ProxyTest; compact?: boolean }) {
@@ -41,6 +48,7 @@ export function Proxies({ defaultProxy, onDefault }: { defaultProxy: string; onD
   const q = useProxies();
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Row | "new" | null>(null);
+  const [importing, setImporting] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const list = (q.data?.proxies ?? []) as Row[];
   const reload = () => qc.invalidateQueries({ queryKey: keys.proxies });
@@ -77,10 +85,16 @@ export function Proxies({ defaultProxy, onDefault }: { defaultProxy: string; onD
         meta="For model calls only; the agent's own traffic goes direct"
         right={
           list.length > 0 && (
-            <Button size="sm" onClick={() => setEdit("new")}>
-              <IconPlus {...IC_SM} />
-              Add proxy
-            </Button>
+            <span className="flex gap-1.5">
+              <Button size="sm" onClick={() => setImporting(true)}>
+                <IconFileImport {...IC_SM} />
+                Import
+              </Button>
+              <Button size="sm" onClick={() => setEdit("new")}>
+                <IconPlus {...IC_SM} />
+                Add proxy
+              </Button>
+            </span>
           )
         }
       />
@@ -98,6 +112,10 @@ export function Proxies({ defaultProxy, onDefault }: { defaultProxy: string; onD
           <Button size="sm" onClick={() => setEdit("new")}>
             <IconPlus {...IC_SM} />
             Add proxy
+          </Button>
+          <Button size="sm" onClick={() => setImporting(true)}>
+            <IconFileImport {...IC_SM} />
+            Import
           </Button>
         </Nothing>
       ) : (
@@ -175,6 +193,21 @@ export function Proxies({ defaultProxy, onDefault }: { defaultProxy: string; onD
           </div>
         </div>
       )}
+      {importing && (
+        <ImportDialog
+          onClose={() => setImporting(false)}
+          onImported={async (added) => {
+            void reload();
+            // Test each one, so the list shows where it comes out.
+            for (const p of added) {
+              setTesting(p.id);
+              await api.testProxy(p.id).catch(() => {});
+              void reload();
+            }
+            setTesting(null);
+          }}
+        />
+      )}
       {edit && (
         <ProxyDialog
           proxy={edit === "new" ? null : edit}
@@ -192,7 +225,8 @@ export function Proxies({ defaultProxy, onDefault }: { defaultProxy: string; onD
 function ProxyDialog({ proxy, onClose, onSaved }: { proxy: Row | null; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<Required<Omit<ProxyInput, "url">> & { url: string }>({
     name: proxy?.name ?? "",
-    url: proxy ? `${proxy.scheme}://${proxy.host}:${proxy.port}` : "",
+    url: proxy ? `${proxy.host}:${proxy.port}` : "",
+    scheme: (proxy?.scheme as Scheme) ?? "auto",
     username: proxy?.user ?? "",
     password: "",
     note: proxy?.note ?? "",
@@ -200,7 +234,13 @@ function ProxyDialog({ proxy, onClose, onSaved }: { proxy: Row | null; onClose: 
   const [result, setResult] = useState<ProxyTest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
-  const body = (): ProxyInput => ({ name: f.name, url: f.url, username: f.username, ...(f.password && { password: f.password }), note: f.note });
+  const setAddress = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const split = splitCredentials(e.target.value);
+    const url = split?.url ?? e.target.value;
+    const typed = /^(https?|socks5h?):\/\//i.exec(url.trim())?.[1].toLowerCase().replace("socks5h", "socks5") as Scheme | undefined;
+    setF({ ...f, ...split, url: url.replace(/^\w+:\/\//, ""), scheme: typed ?? f.scheme });
+  };
+  const body = (): ProxyInput => ({ name: f.name, url: f.url, scheme: f.scheme, username: f.username, ...(f.password && { password: f.password }), note: f.note });
 
   const test = async () => {
     setError(null);
@@ -227,7 +267,7 @@ function ProxyDialog({ proxy, onClose, onSaved }: { proxy: Row | null; onClose: 
       onOpenChange={(o) => !o && onClose()}
       size="md"
       title={proxy ? `Edit ${proxy.name}` : "Add proxy"}
-      description="HTTP or HTTPS proxy. Its password stays in Pixel; agents only reach it through Pixel's relay."
+      description="HTTP, HTTPS or SOCKS5 proxy. Its password stays in Pixel; agents only reach it through Pixel's relay."
       footer={
         <>
           <Button variant="ghost" className="mr-auto" onClick={test} disabled={!f.url.trim()}>
@@ -246,9 +286,14 @@ function ProxyDialog({ proxy, onClose, onSaved }: { proxy: Row | null; onClose: 
       <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
         <label className="label col-span-full">
           <span>Address</span>
-          <input className="input font-mono" value={f.url} onChange={set("url")} placeholder="http://host:8080" spellCheck={false} autoComplete="off" />
-          <span>http:// or https://, with the port. user:password@ in it works too.</span>
+          <input className="input font-mono" value={f.url} onChange={setAddress} placeholder="host:8080" spellCheck={false} autoComplete="off" />
+          <span>Host and port. Pasting host:port:user:password or user:password@host:port fills in the username and password.</span>
         </label>
+        <div className="label col-span-full">
+          <span>Protocol</span>
+          <Segmented label="Protocol" value={f.scheme} onChange={(scheme) => setF({ ...f, scheme })} options={SCHEME_OPTIONS} className="self-start" />
+          <span>{f.scheme === "auto" ? "Pixel asks the proxy what it speaks when you test or add it." : f.scheme === "socks5" ? "Pixel bridges model calls to it on its own side." : null}</span>
+        </div>
         <label className="label">
           <span>Username</span>
           <input className="input font-mono" value={f.username} onChange={set("username")} placeholder="none" autoComplete="off" />
@@ -271,6 +316,84 @@ function ProxyDialog({ proxy, onClose, onSaved }: { proxy: Row | null; onClose: 
           <TestResult t={result} />
           {result.ok && <span className="mt-1 block text-xs text-ink-3">First answer in {ms(result.ms)}</span>}
         </div>
+      )}
+    </Dialog>
+  );
+}
+
+/** host:port:user:password, user:password:host:port or [scheme://]user:password@host:port: the address and its credentials apart. */
+function splitCredentials(v: string): { url: string; username: string; password: string } | null {
+  const t = v.trim();
+  const at = /^(https?:\/\/)?([^:/@]+):(.*)@([^@/]+)$/.exec(t);
+  if (at) {
+    const d = (x: string) => {
+      try {
+        return decodeURIComponent(x);
+      } catch {
+        return x;
+      }
+    };
+    return { url: `${at[1] ?? "http://"}${at[4]}`, username: d(at[2]), password: d(at[3]) };
+  }
+  if (t.includes("://") || t.includes("@")) return null;
+  const p = t.split(":");
+  if (p.length >= 4 && /^\d+$/.test(p[1])) return { url: `http://${p[0]}:${p[1]}`, username: p[2], password: p.slice(3).join(":") };
+  if (p.length === 4 && /^\d+$/.test(p[3])) return { url: `http://${p[2]}:${p[3]}`, username: p[0], password: p[1] };
+  return null;
+}
+
+/** Many proxies pasted at once, one per line; each is tested after it's added. */
+function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported: (added: PublicProxy[]) => void }) {
+  const [text, setText] = useState("");
+  const [scheme, setScheme] = useState<Scheme>("auto");
+  const [skipped, setSkipped] = useState<{ line: number; reason: string }[]>([]);
+  const lines = text.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length;
+  const save = async () => {
+    const r = await api.importProxies(text, scheme);
+    if (r.added.length) toast(`Added ${r.added.length} prox${r.added.length === 1 ? "y" : "ies"}; testing ${r.added.length === 1 ? "it" : "them"}`);
+    onImported(r.added);
+    if (r.skipped.length) setSkipped(r.skipped);
+    else onClose();
+  };
+  return (
+    <Dialog
+      onOpenChange={(o) => !o && onClose()}
+      size="md"
+      title="Import proxies"
+      description="One per line: host:port:user:password as proxy sellers list them, user:password@host:port, or with a scheme like socks5://user:password@host:port."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {skipped.length ? "Close" : "Cancel"}
+          </Button>
+          {!skipped.length && (
+            <Button variant="primary" onClick={save} disabled={!lines}>
+              Import{lines > 1 ? ` ${lines}` : ""}
+            </Button>
+          )}
+        </>
+      }
+    >
+      {skipped.length > 0 ? (
+        <div className="text-[13px]">
+          <p className="mt-0 mb-2">Not imported:</p>
+          <ul className="m-0 list-none p-0 text-ink-2">
+            {skipped.map((x) => (
+              <li key={x.line}>
+                Line {x.line}: {x.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <>
+          <textarea className="input min-h-40 w-full resize-y py-2 font-mono text-[12.5px]" value={text} onChange={(e) => setText(e.target.value)} placeholder="45.41.128.10:8001:user:password" spellCheck={false} autoComplete="off" autoFocus />
+          <div className="label">
+            <span>Protocol</span>
+            <Segmented label="Protocol" value={scheme} onChange={setScheme} options={SCHEME_OPTIONS} className="self-start" />
+            <span>{scheme === "auto" ? "Pixel asks each proxy what it speaks; a scheme written in a line wins." : "For every line, whatever is written in it."}</span>
+          </div>
+        </>
       )}
     </Dialog>
   );

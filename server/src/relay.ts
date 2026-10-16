@@ -15,6 +15,7 @@ import { getRun } from "./db.ts";
 import { getSettings, getSecret } from "./settings.ts";
 import { accountBaseURL } from "./providerAccounts.ts";
 import { getProxy, recordUse } from "./proxies.ts";
+import { fetchProxy } from "./socks.ts";
 
 export const runSubject = (runId: string) => `r.${runId}`;
 export const proxySubject = (proxyId: string) => `p.${proxyId}`;
@@ -96,7 +97,7 @@ export async function handleRelay(req: Request): Promise<Response> {
   for (const h of HOP) headers.delete(h);
   let res: Response;
   try {
-    res = await fetch(target, { method: req.method, headers, body, redirect: "manual", signal: req.signal, ...(proxy && { proxy: proxy.url }) });
+    res = await fetch(target, { method: req.method, headers, body, redirect: "manual", signal: req.signal, ...(proxy && { proxy: await fetchProxy(proxy.url) }) });
   } catch (e: any) {
     if (req.signal.aborted) return new Response(null, { status: 499 });
     const message = e?.name === "TimeoutError" ? "timed out" : `${e?.code && e.code !== e.message ? `${e.code}: ` : ""}${e?.message ?? e}`;

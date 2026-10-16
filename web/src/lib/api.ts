@@ -220,6 +220,7 @@ export const api = {
   livePrompt: (body: { model: string; variant?: string; text: string; session?: string; turn: string; key?: string; proxy?: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
   proxies: () => request<{ defaultProxy: string; relay: string; unrelayable: string[]; proxies: (PublicProxy & { runs: string[] })[] }>("GET", "/proxies"),
   addProxy: (body: ProxyInput) => request<PublicProxy>("POST", "/proxies", body),
+  importProxies: (text: string, scheme?: ProxyInput["scheme"]) => request<{ added: PublicProxy[]; skipped: { line: number; reason: string }[] }>("POST", "/proxies/import", { text, scheme }),
   editProxy: (id: string, body: ProxyInput) => request<PublicProxy>("PUT", `/proxies/${encodeURIComponent(id)}`, body),
   removeProxy: (id: string) => request<{ runs: string[] }>("DELETE", `/proxies/${encodeURIComponent(id)}`),
   testProxy: (id: string) => request<ProxyTest>("POST", `/proxies/${encodeURIComponent(id)}/test`),

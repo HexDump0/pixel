@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { db } from "../src/db.ts";
 import { cachedCatalog, catalogProviders } from "../src/catalog.ts";
 import { agentCredentials, removeAccount, saveAccount } from "../src/providerAccounts.ts";
-import { getProxy, listProxies, parseProxyUrl, publicProxy, removeProxy, saveProxy, testProxyUrl } from "../src/proxies.ts";
+import { connect, createServer, type Socket } from "node:net";
+import { getProxy, importProxies, listProxies, parseProxyUrl, proxyLineToUrl, publicProxy, removeProxy, saveProxy, testProxyUrl } from "../src/proxies.ts";
+import { detectProxyScheme, fetchProxy } from "../src/socks.ts";
 import { handleRelay, proxySubject, relayBase, relayUrl, runSubject } from "../src/relay.ts";
 
 // A provider that echoes what it got, and an HTTP proxy that remembers what went through it.
@@ -17,6 +19,7 @@ const seen: { url: string; auth: string | null }[] = [];
 const proxy = Bun.serve({
   port: 0,
   fetch: (r) => {
+    if (r.method === "CONNECT") return new Response(null, { status: 502 });
     seen.push({ url: r.url, auth: r.headers.get("proxy-authorization") });
     return fetch(r.url, { method: r.method, headers: r.headers, body: r.body });
   },
@@ -43,7 +46,7 @@ beforeAll(async () => {
       { id: "gpt", name: "GPT", family: null, context: 1000, output: 100, costIn: 0, costOut: 0, costCacheRead: null, tools: true, reasoning: false, openWeights: false, released: null, status: null, api: null, npm: null },
     ],
   });
-  proxyId = saveProxy({ name: "Test proxy", url: `http://127.0.0.1:${proxy.port}`, username: "u", password: "p@ss" }).id;
+  proxyId = (await saveProxy({ name: "Test proxy", url: `http://127.0.0.1:${proxy.port}`, username: "u", password: "p@ss" })).id;
 });
 afterAll(() => {
   cachedCatalog()!.delete("zenlike");
@@ -55,7 +58,8 @@ afterAll(() => {
 
 describe("proxies", () => {
   test("addresses are checked and passwords never shown", () => {
-    expect(() => parseProxyUrl("socks5://h:1080")).toThrow(/SOCKS/);
+    expect(parseProxyUrl("socks5h://h:1080").toString()).toBe("socks5://h:1080");
+    expect(() => parseProxyUrl("socks4://h:1080")).toThrow(/SOCKS4/);
     expect(() => parseProxyUrl("ftp://h")).toThrow();
     expect(parseProxyUrl("10.0.0.2:3128").toString()).toBe("http://10.0.0.2:3128/");
     const p = publicProxy(getProxy(proxyId)!);
@@ -63,10 +67,10 @@ describe("proxies", () => {
     expect(JSON.stringify(p)).not.toContain("p%40ss");
   });
 
-  test("an edit without a password keeps the stored one", () => {
-    saveProxy({ name: "Renamed", url: `http://127.0.0.1:${proxy.port}`, username: "u" }, proxyId);
+  test("an edit without a password keeps the stored one", async () => {
+    await saveProxy({ name: "Renamed", url: `http://127.0.0.1:${proxy.port}`, username: "u" }, proxyId);
     expect(new URL(getProxy(proxyId)!.url).password).toBe("p%40ss");
-    saveProxy({ name: "Test proxy" }, proxyId);
+    await saveProxy({ name: "Test proxy" }, proxyId);
   });
 });
 
@@ -90,7 +94,7 @@ describe("relay", () => {
     expect(forged.status).toBe(403);
     expect((await call(proxySubject(proxyId), "nowhere", "/x", "m")).status).toBe(502);
     expect((await call(proxySubject("px_gone"), "lab", "/chat/completions", "m1")).status).toBe(502);
-    const dead = saveProxy({ name: "Dead", url: "http://127.0.0.1:1" });
+    const dead = await saveProxy({ name: "Dead", url: "http://127.0.0.1:1" });
     const res = await call(proxySubject(dead.id), "lab", "/chat/completions", "m1");
     expect(res.status).toBe(502);
     expect((await res.json()).error.message).toContain("Dead");
@@ -121,5 +125,90 @@ describe("relay", () => {
     const t = await testProxyUrl("http://127.0.0.1:1", []);
     expect(t.ok).toBe(false);
     expect(t.error).toBeTruthy();
+  });
+});
+
+// A SOCKS5 server with a username and password, like the ones proxy sellers hand out.
+const socksSeen: string[] = [];
+const socks = createServer((c: Socket) => {
+  let stage = 0;
+  c.once("data", function step(d: Buffer) {
+    if (stage === 0) {
+      stage = 1;
+      c.write(Buffer.from([5, 2]));
+    } else if (stage === 1) {
+      const user = d.subarray(2, 2 + d[1]).toString();
+      const pass = d.subarray(3 + d[1], 3 + d[1] + d[2 + d[1]]).toString();
+      if (user !== "su" || pass !== "s:pw") return void c.end(Buffer.from([1, 1]));
+      stage = 2;
+      c.write(Buffer.from([1, 0]));
+    } else {
+      const host = d.subarray(5, 5 + d[4]).toString();
+      const port = d.readUInt16BE(5 + d[4]);
+      socksSeen.push(`${host}:${port}`);
+      const out = connect(port, host, () => {
+        c.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+        c.pipe(out).pipe(c);
+      });
+      out.on("error", () => c.destroy());
+      return;
+    }
+    c.once("data", step);
+  });
+});
+let socksPort = 0;
+
+describe("SOCKS5 and pasted proxies", () => {
+  beforeAll(() => new Promise<void>((r) => socks.listen(0, "127.0.0.1", () => ((socksPort = (socks.address() as any).port), r()))));
+  afterAll(() => void socks.close());
+
+  test("seller lines become URLs", () => {
+    expect(proxyLineToUrl("45.41.128.10:8001:dc_x:_9w:k")).toBe("http://dc_x:_9w%3Ak@45.41.128.10:8001");
+    expect(proxyLineToUrl("user:pw:h.example:3128")).toBe("http://user:pw@h.example:3128");
+    expect(proxyLineToUrl("http://u:p@h:1")).toBe("http://u:p@h:1");
+  });
+
+  test("detects what a proxy speaks", async () => {
+    expect(await detectProxyScheme("127.0.0.1", socksPort)).toBe("socks5");
+    expect(await detectProxyScheme("127.0.0.1", proxy.port!)).toBe("http");
+    const closed = createServer();
+    await new Promise<void>((r) => closed.listen(0, "127.0.0.1", r));
+    const port = (closed.address() as any).port;
+    closed.close();
+    expect(await detectProxyScheme("127.0.0.1", port)).toBeNull();
+  });
+
+  test("imports pasted lines, detecting each one's protocol", async () => {
+    const r = await importProxies(`127.0.0.1:${socksPort}:su:s:pw\n# comment\n\nnot a proxy::\n127.0.0.1:${socksPort}:su:s:pw`);
+    expect(r.added.map((p) => new URL(p.url).protocol)).toEqual(["socks5:"]);
+    expect(r.skipped.map((x) => x.line)).toEqual([4, 5]);
+    const id = r.added[0].id;
+
+    // A model call through it (http:// target: absolute-form through the bridge).
+    socksSeen.length = 0;
+    const res = await call(proxySubject(id), "lab", "/chat/completions", "m1");
+    expect(res.status).toBe(200);
+    expect((await res.json()).path).toBe("/v1/chat/completions");
+    expect(socksSeen).toEqual([`127.0.0.1:${upstream.port}`]);
+    removeProxy(id);
+  });
+
+  test("the bridge tunnels CONNECT and refuses anyone without its secret", async () => {
+    const via = new URL(await fetchProxy(`socks5://su:s%3Apw@127.0.0.1:${socksPort}`));
+    const talk = (auth: string, then?: string) =>
+      new Promise<string>((resolve) => {
+        const s = connect(Number(via.port), "127.0.0.1", () => s.write(`CONNECT 127.0.0.1:${upstream.port} HTTP/1.1\r\nProxy-Authorization: Basic ${Buffer.from(auth).toString("base64")}\r\n\r\n`));
+        let got = "";
+        s.on("data", (d) => {
+          got += d.toString();
+          if (then && got.includes("established") && !got.includes("path")) s.write(then);
+          if (!then || got.includes("path")) s.end();
+        });
+        s.on("close", () => resolve(got));
+      });
+    expect(await talk(`${via.username}:wrong`)).toContain("407");
+    const got = await talk(`${via.username}:${via.password}`, `GET /tunnel HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    expect(got).toContain("200 Connection established");
+    expect(got).toContain('"path":"/tunnel"');
   });
 });
