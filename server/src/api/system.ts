@@ -10,7 +10,7 @@ import { search, workbaseSizes } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
 import { outcomeText, verdictCounts } from "../knowledge.ts";
 import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
-import { notify } from "../notify.ts";
+import { notify, notifyStatus } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
 import { stats } from "../stats.ts";
@@ -81,6 +81,7 @@ post("/github/check", () => checkGithub());
 post("/settings/test-notify", async () => ({
   results: await notify("test", "Pixel test notification", "If you can read this, notifications work.", config.publicUrl || undefined),
 }));
+get("/settings/notify-status", () => notifyStatus());
 
 function validateThinking(v: unknown) {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("thinkingLevels must be an object");

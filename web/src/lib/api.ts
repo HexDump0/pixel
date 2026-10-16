@@ -27,6 +27,8 @@ import type {
   RunDetail,
   SearchHit,
   Settings,
+  NotifyStatus,
+  Sent,
   SystemInfo,
   Stats,
   Template,
@@ -182,7 +184,8 @@ export const api = {
   saveGithub: (body: { token?: string; mcp?: boolean; toolsets?: string }) => request<GithubInfo>("PUT", "/github", body),
   checkGithub: () =>
     request<{ login: string; kind: string; scopes: string[] | null; writeScopes: string[]; rateLimit: number | null; rateRemaining: number | null }>("POST", "/github/check"),
-  testNotify: () => request<{ results: string[] }>("POST", "/settings/test-notify"),
+  testNotify: () => request<{ results: Sent[] }>("POST", "/settings/test-notify"),
+  notifyStatus: () => request<NotifyStatus>("GET", "/settings/notify-status"),
   system: () => request<SystemInfo>("GET", "/system"),
   stats: (days = 7) => request<Stats>("GET", `/stats${q({ days, tz: -new Date().getTimezoneOffset() })}`),
   fleet: () => request<FleetSnapshot>("GET", "/fleet"),
