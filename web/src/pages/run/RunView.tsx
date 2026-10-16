@@ -47,7 +47,6 @@ import { TranscriptTab } from "./TranscriptTab.tsx";
 import { TimelineTab } from "./TimelineTab.tsx";
 import { TerminalTab } from "./TerminalTab.tsx";
 import { MachineTab } from "./MachineTab.tsx";
-import { RunInfo } from "./RunInfo.tsx";
 
 type TabId = "overview" | "findings" | "report" | "transcript" | "files" | "timeline" | "terminal" | "machine";
 const TABS: { id: TabId; label: string; Icon: typeof IconBug }[] = [
@@ -168,24 +167,19 @@ export function RunView({ id }: { id: string }) {
       body = <ReportTab run={run} onOpenFinding={(f) => go("findings", f)} />;
       break;
     case "transcript":
-      body = <Pad><TranscriptTab detail={d} /></Pad>;
+      body = <TranscriptTab key={d.run.session_id ?? id} detail={d} />;
       break;
     case "files":
-      body = <Pad><WorkbaseBrowser runId={id} path={sub ?? undefined} /></Pad>;
+      body = <WorkbaseBrowser runId={id} path={sub ?? undefined} />;
       break;
     case "timeline":
       body = <Pad><TimelineTab runId={id} /></Pad>;
       break;
     case "terminal":
-      body = <Pad><TerminalTab detail={d} /></Pad>;
+      body = <TerminalTab detail={d} />;
       break;
     case "machine":
-      body = (
-        <Pad>
-          <MachineTab detail={d} onChange={() => void detail.refetch()} />
-          <RunInfo detail={d} />
-        </Pad>
-      );
+      body = <MachineTab detail={d} onChange={() => void detail.refetch()} />;
       break;
     default:
       body = (
@@ -235,7 +229,7 @@ export function RunView({ id }: { id: string }) {
             {focus ? <IconArrowsDiagonalMinimize2 {...IC_SM} /> : <IconArrowsDiagonal {...IC_SM} />}
           </Button>
         </div>
-        <div className={cn("min-h-0", tab === "overview" || tab === "findings" ? "overflow-hidden max-lg:overflow-y-auto" : "overflow-y-auto")}>{body}</div>
+        <div className={cn("min-h-0", tab === "overview" || tab === "findings" ? "overflow-hidden max-lg:overflow-y-auto" : tab === "transcript" || tab === "files" || tab === "terminal" ? "overflow-hidden max-md:overflow-y-auto" : "overflow-y-auto")}>{body}</div>
         {run.status !== "triaged" && <Composer run={run} />}
       </section>
     </main>

@@ -37,7 +37,6 @@ export const VERDICTS: { v: Verdict; key: string; label: string; hint: string }[
   { v: "real", key: "r", label: "Real", hint: "Goes in the write-up" },
   { v: "not_bug", key: "n", label: "Not a bug", hint: "False positive or out of scope" },
   { v: "duplicate", key: "d", label: "Duplicate", hint: "Known, or same as another finding" },
-  { v: "needs_work", key: "w", label: "Needs work", hint: "Send it back to the agent" },
 ];
 export const verdictLabel = (v: string | null | undefined) => VERDICTS.find((x) => x.v === v)?.label ?? "";
 

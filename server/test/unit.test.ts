@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../src/config.ts";
-import { render } from "../src/templates.ts";
+import { addVersion, createTemplate, render } from "../src/templates.ts";
 import { detectLanguage, safeWorkbasePath } from "../src/knowledge.ts";
 import { recordCrossReads, crossReadsFor } from "../src/crossreads.ts";
 import { indexWorkbases, search } from "../src/search.ts";
@@ -17,6 +17,17 @@ describe("templates", () => {
     const body = "start\n{{#if prev}}\nprev: {{prev}}\n{{/if}}\nend";
     expect(render(body, { prev: "/w/old" })).toBe("start\nprev: /w/old\nend");
     expect(render(body, { prev: null })).toBe("start\nend");
+  });
+  test("Pixel's sections expand with their variables; unknown ones are refused", () => {
+    const out = render("Intro\n\n{{> findings}}\n\n{{> report}}\n", { workbase: "/wb" });
+    expect(out).toContain("## Findings");
+    expect(out).toContain("`/wb/findings/F<n>-<short-name>/README.md`");
+    expect(out).toContain("Write your final report to `/wb/REPORT.md`");
+    expect(out).not.toContain("{{");
+    expect(render("{{> environment}}", { target: "/t", repo: "r", ref: null, previous_workbase: null })).not.toContain("follow-up");
+    expect(() => render("{{> nope}}", {})).toThrow(/unknown section \{\{> nope\}\}/);
+    createTemplate("parts-test", "parts-test", "{{> findings}}");
+    expect(() => addVersion("parts-test", "{{> findngs}}")).toThrow(/unknown section/);
   });
 });
 

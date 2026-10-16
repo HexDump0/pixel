@@ -17,26 +17,8 @@ import { OpencodeClient } from "./opencode.ts";
 
 // ---- what a tool call is doing ----
 
-export type Kind = "shell" | "read" | "edit" | "task" | "web" | "other";
-
-const KINDS: Record<string, Kind> = {
-  bash: "shell",
-  read: "read",
-  grep: "read",
-  glob: "read",
-  list: "read",
-  lsp: "read",
-  edit: "edit",
-  write: "edit",
-  patch: "edit",
-  multiedit: "edit",
-  apply_patch: "edit",
-  todowrite: "edit",
-  task: "task",
-  webfetch: "web",
-  websearch: "web",
-};
-export const kindOf = (tool: string): Kind => KINDS[tool] ?? "other";
+import { kindOf, type Kind } from "./kinds.ts";
+export { kindOf, type Kind };
 
 /** One-line description of a tool call, e.g. `make -j4` or `src/ini.c:118`. */
 export function describeCall(run: RunRow | undefined, tool: string, state: any): string {

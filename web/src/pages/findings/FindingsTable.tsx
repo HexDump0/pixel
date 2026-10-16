@@ -13,7 +13,7 @@ function VerdictCell({ f, isNew }: { f: Finding; isNew?: boolean }) {
   const v = f.verdict;
   const text = v ? verdictLabel(v).toLowerCase() : isNew ? "new" : f.removed_at ? "removed" : STATE_WORD[f.state];
   return (
-    <span className={cn("justify-self-end text-[12.5px] whitespace-nowrap text-ink-3", v === "real" && "text-good", v === "needs_work" && "text-warning", !v && isNew && "text-accent")}>{text}</span>
+    <span className={cn("justify-self-end text-[12.5px] whitespace-nowrap text-ink-3", v === "real" && "text-good", !v && isNew && "text-accent")}>{text}</span>
   );
 }
 

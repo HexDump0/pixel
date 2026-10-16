@@ -7,16 +7,17 @@
  *   PIXEL_DATA=/tmp/pixel-demo bun server/test/seed-demo.ts
  *   PIXEL_DATA=/tmp/pixel-demo PIXEL_DETACHED=1 PIXEL_RUNTIME=local bun server/src/index.ts
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 if (!process.env.PIXEL_DATA) throw new Error("set PIXEL_DATA to a scratch directory");
 process.env.PIXEL_RUNTIME ??= "local";
 
 const { db, addTimeline } = await import("../src/db.ts");
+const { config } = await import("../src/config.ts");
 const { workbasePath, ensureWorkbase } = await import("../src/knowledge.ts");
 const { syncFindings, setVerdict } = await import("../src/findings.ts");
-const { seedTemplates } = await import("../src/templates.ts");
+const { seedTemplates, render } = await import("../src/templates.ts");
 
 seedTemplates();
 const S = 1000;
@@ -61,6 +62,10 @@ function run(o: {
   todos?: [string, string][];
   question?: { text: string; options: string[]; at: number };
   findings?: any[];
+  /** what the agent says now and then (generic remarks otherwise) */
+  notes?: string[];
+  /** your messages to the agent: [time, text] */
+  messages?: [number, string][];
   timeline?: [number, "pixel" | "user" | "agent", string, string][];
 }) {
   const size = JSON.stringify({ cpu: 4, memoryGiB: 8, diskGiB: 60 });
@@ -87,6 +92,13 @@ function run(o: {
     agentSession.set(a, sid);
     sessions.push({ id: sid, parent: root, title: `${a.title} (@general subagent)`, started: a.started });
   }
+  // The prompt the run was started with, as the root session's first message.
+  const promptText = render(readFileSync(join(import.meta.dir, "../../templates/audit.md"), "utf8"), {
+    target: `/workspace/${o.repo.split("/").pop()}`, repo: o.repo, ref: o.ref ?? "main", commit: "3f9c2a7", workbase: "/workbase", workbases: "/workbases", scratch: "/scratch", disk_gib: "60",
+    machine: "4 CPUs and 8 GB of memory; you are root.", previous_workbase: null,
+  });
+  userMessage(o.id, root, o.started, promptText);
+  for (const [at, text] of o.messages ?? []) userMessage(o.id, root, at, text);
   let costTotal = 0;
   const tokTotal = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
   const perSession = new Map<string, { cost: number; tokens: typeof tokTotal }>();
@@ -112,16 +124,19 @@ function run(o: {
       const mid = uid("msg");
       const info = { id: mid, sessionID: sid, role: "assistant", time: { created, completed }, providerID: "anthropic", modelID: "claude-opus-4-5", tokens, cost };
       db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, ?, ?, 'assistant', ?, ?)").run(mid, o.id, sid, JSON.stringify(info), created);
+      if (rnd() < 0.15) addPart(o.id, sid, mid, created + S, { type: "reasoning", text: pick(THOUGHTS) });
+      if (rnd() < (sid === root ? 0.3 : 0.15)) addPart(o.id, sid, mid, created + 2 * S, { type: "text", text: pick(o.notes ?? REMARKS) });
       const [tool, input] = a.tools[Math.floor(rnd() * a.tools.length)];
       const ts = completed - 2 * S;
       const pid = uid("prt");
-      const state = { status: completed >= now - 3 * S && !a.done ? "running" : "completed", input, output: "ok", title: tool, metadata: {}, time: { start: ts, end: ts + 1500 } };
+      const running = completed >= now - 3 * S && !a.done;
+      const state = running ? { status: "running", input, title: titleOf(tool, input), metadata: {}, time: { start: ts } } : toolState(tool, input, ts, 1500);
       db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, 'tool', ?, ?)").run(pid, o.id, sid, mid, JSON.stringify({ id: pid, sessionID: sid, messageID: mid, type: "tool", tool, callID: uid("call"), state }), ts + 1500);
       if (recent && rnd() > 0.5) {
         const [tool2, input2] = a.tools[Math.floor(rnd() * a.tools.length)];
         const p2 = uid("prt");
         const ts2 = created + dur / 2;
-        db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, 'tool', ?, ?)").run(p2, o.id, sid, mid, JSON.stringify({ id: p2, sessionID: sid, messageID: mid, type: "tool", tool: tool2, callID: uid("call"), state: { status: "completed", input: input2, output: "ok", title: tool2, metadata: {}, time: { start: ts2, end: ts2 + 900 } } }), ts2 + 900);
+        db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, 'tool', ?, ?)").run(p2, o.id, sid, mid, JSON.stringify({ id: p2, sessionID: sid, messageID: mid, type: "tool", tool: tool2, callID: uid("call"), state: toolState(tool2, input2, ts2, 900) }), ts2 + 900);
       }
       acc.cost += cost;
       acc.tokens.input += tokens.input;
@@ -149,7 +164,7 @@ function run(o: {
     if (sid === root) continue;
     const pid = uid("prt");
     const st = a.done ? "completed" : "running";
-    db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, 'tool', ?, ?)").run(pid, o.id, root, uid("msg"), JSON.stringify({ id: pid, sessionID: root, type: "tool", tool: "task", state: { status: st, input: { description: a.title }, metadata: { sessionId: sid }, time: { start: a.started, end: a.done ? a.until : undefined } } }), a.started);
+    db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, 'tool', ?, ?)").run(pid, o.id, root, uid("msg"), JSON.stringify({ id: pid, sessionID: root, type: "tool", tool: "task", state: { status: st, input: { description: a.title, subagent_type: "general" }, title: a.title, output: a.done ? `Done: ${a.title}. Build is in /scratch/build-asan; \`make check\` passes with ASan and UBSan, no reports.` : undefined, metadata: { sessionId: sid }, time: { start: a.started, end: a.done ? a.until : undefined } } }), a.started);
   }
   if (o.todos) db.query("INSERT INTO todos (session_id, run_id, data) VALUES (?, ?, ?)").run(root, o.id, JSON.stringify(o.todos.map(([status, content], i) => ({ id: String(i), content, status, priority: "medium" }))));
   if (o.question) {
@@ -162,24 +177,104 @@ function run(o: {
   addTimeline(o.id, "user", "created", `Run created: ${o.repo}, ${o.model ?? "anthropic/claude-opus-4-5"}, template audit v1`, undefined, o.started - 2 * M);
   for (const [ts, actor, kind, msg] of o.timeline ?? []) addTimeline(o.id, actor, kind, msg, undefined, ts);
   // memory use for the fleet's memory bar
-  if (["running", "recovering", "paused"].includes(o.status))
-    db.query("INSERT INTO metrics (run_id, ts, cpu, mem_used, mem_total, disk_used, disk_total) VALUES (?, ?, ?, ?, ?, ?, ?)").run(o.id, now - 10 * S, 40 + rnd() * 50, (1 + rnd() * 2.5) * 1024 ** 3, 8 * 1024 ** 3, 12 * 1024 ** 3, 60 * 1024 ** 3);
+  // Machine samples every 2 minutes over the run's life (the Machine tab's charts); the last one feeds the fleet's memory bar.
+  if (o.started && o.status !== "failed") {
+    const ins = db.query("INSERT INTO metrics (run_id, ts, cpu, mem_used, mem_total, disk_used, disk_total, workbase_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    const stop = ["running", "recovering", "paused"].includes(o.status) ? now - 10 * S : end;
+    const step = Math.max(2 * M, (stop - o.started) / 150);
+    let mem = 0.8;
+    for (let t = o.started + step, i = 0; t <= stop; t += step, i++) {
+      const f = (t - o.started) / Math.max(1, stop - o.started);
+      mem = Math.min(7.6, Math.max(0.6, mem + (rnd() - 0.45) * 0.35 + (o.ooms && f > 0.6 && f < 0.7 ? 0.8 : 0)));
+      ins.run(o.id, t, 25 + rnd() * 55 + (f > 0.3 ? 15 : 0), mem * 1024 ** 3, 8 * 1024 ** 3, (4 + f * 14 + rnd() * 0.3) * 1024 ** 3, 60 * 1024 ** 3, Math.round((40 + f * 900 + i * 3) * 1024));
+    }
+  }
   if (o.report) writeFileSync(join(workbasePath(o.id), "REPORT.md"), o.report);
   if (o.findings) {
-    const file = { version: 1, next: o.findings.length + 1, findings: o.findings };
-    mkdirSync(workbasePath(o.id), { recursive: true });
-    writeFileSync(join(workbasePath(o.id), "FINDINGS.json"), JSON.stringify(file, null, 2));
-    syncFindings(db.query<any, [string]>("SELECT * FROM runs WHERE id = ?").get(o.id), JSON.stringify(file));
+    // Each finding's states in time order, as the agent would have written its README.
+    const row = db.query<any, [string]>("SELECT * FROM runs WHERE id = ?").get(o.id);
+    const steps = o.findings.flatMap((f: DemoFinding) => f.states.map(([at, state], i) => ({ f, at, state, last: i === f.states.length - 1 }))).sort((a: any, b: any) => a.at - b.at);
+    for (const { f, at, state, last } of steps) {
+      const dir = join(workbasePath(o.id), "findings", f.folder);
+      mkdirSync(dir, { recursive: true });
+      const head = { state, severity: f.severity, location: f.location, class: f.class, poc: last ? f.poc : undefined };
+      const text = `---\n${Object.entries(head).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n")}\n---\n# ${f.title}\n\n${last ? f.body : f.body.split("\n\n")[0] + "\n"}`;
+      writeFileSync(join(dir, "README.md"), text);
+      utimesSync(join(dir, "README.md"), at / 1000, at / 1000);
+      if (last && f.poc) writeFileSync(join(dir, f.poc), pocBytes(f.poc));
+      syncFindings(row, "ses_main");
+      snapshot(o.id, at);
+    }
   }
 }
 
-const iso = (t: number) => new Date(t).toISOString();
-function finding(id: string, title: string, state: string, severity: string | null, at: number, extra: Record<string, unknown> = {}, history?: any[]) {
-  return {
-    id, title, state, ...(severity && { severity }), summary: (extra.summary as string) ?? title, location: extra.location, poc: extra.poc, class: extra.class,
-    created: iso(at), updated: iso(history?.at(-1)?.at ? Date.parse(history.at(-1).at) : at), by: "ses_main", removed: extra.removed ?? null,
-    history: history ?? [{ at: iso(at), by: "ses_main", action: "add", changes: {} }],
-  };
+/** A workbase history snapshot at `at`, like history.ts makes every few minutes, so the Files tab has history. */
+function snapshot(runId: string, at: number) {
+  const env = { ...process.env, GIT_AUTHOR_NAME: "pixel", GIT_AUTHOR_EMAIL: "pixel@localhost", GIT_COMMITTER_NAME: "pixel", GIT_COMMITTER_EMAIL: "pixel@localhost", GIT_AUTHOR_DATE: `@${Math.floor(at / 1000)}`, GIT_COMMITTER_DATE: `@${Math.floor(at / 1000)}` };
+  const git = (...args: string[]) => Bun.spawnSync(["git", `--git-dir=${join(config.historyDir, `${runId}.git`)}`, `--work-tree=${workbasePath(runId)}`, ...args], { env, stdout: "ignore", stderr: "ignore" });
+  git("init", "--quiet");
+  git("add", "--all");
+  git("commit", "--quiet", "--no-verify", "-m", "snapshot");
+}
+/** A small binary PoC (a PNG-looking header for .png, otherwise some bytes). */
+function pocBytes(name: string) {
+  const head = name.endsWith(".png") ? [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52] : [...new TextEncoder().encode(name.endsWith(".xml") ? "<a><a><a><a><a>" : "- [[[[[[[[[[[[[[")];
+  return new Uint8Array([...head, ...Array.from({ length: 200 }, (_, i) => (i * 37 + 11) & 0xff)]);
+}
+function userMessage(runId: string, sid: string, at: number, text: string) {
+  const mid = uid("msg");
+  db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, ?, ?, 'user', ?, ?)").run(mid, runId, sid, JSON.stringify({ id: mid, sessionID: sid, role: "user", time: { created: at } }), at);
+  addPart(runId, sid, mid, at, { type: "text", text });
+}
+function addPart(runId: string, sid: string, mid: string, at: number, part: Record<string, unknown>) {
+  const pid = uid("prt");
+  db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(pid, runId, sid, mid, part.type as string, JSON.stringify({ id: pid, sessionID: sid, messageID: mid, ...part }), at);
+}
+const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+const REMARKS = [
+  "The build works with ASan and UBSan. Next: map every place a length from the input sizes an allocation.",
+  "That path checks the length before the copy, so it's fine. Moving on to the next handler.",
+  "The fuzzer has been flat for a while. I'll seed it with a few hand-made inputs that reach the deeper states.",
+  "Two candidates so far:\n\n1. the header copy happens before the size check\n2. a count multiplied by an entry size with no overflow check\n\nI'll try to reproduce the first one.",
+  "Confirmed with a minimal input:\n\n```c\n/* the length comes straight from the chunk */\nmemcpy(profile, data, 132);   /* before length >= 132 is checked */\n```\n\nWriting it up in the finding folder.",
+];
+const THOUGHTS = [
+  "The declared length sizes the buffer, but the header copy uses a constant. If the length can be smaller than the constant, that's a read past the end. Need to check whether anything earlier rejects short lengths.",
+  "The crash is in the error path, so it only matters if an attacker can reach it with a valid prefix. The fuzzer did, so yes.",
+  "Better to fuzz this function in isolation than through the whole decoder; the decoder spends most of its time on CRCs.",
+];
+const titleOf = (tool: string, input: Record<string, unknown>) => String(tool === "bash" ? input.command : (input.filePath ?? input.description ?? input.pattern ?? tool));
+const C_LINES = ["   if (length < 132)", "      return png_chunk_error(png_ptr, \"profile too short\");", "   profile = png_malloc(png_ptr, length);", "   memcpy(profile, data, 132);", "   for (i = 0; i < nentries; i++)", "      entries[i].red = png_get_uint_16(p);"];
+/** A finished tool call with output that looks like the tool's. A few shell calls fail. */
+function toolState(tool: string, input: Record<string, unknown>, start: number, took: number) {
+  const base = { input, title: titleOf(tool, input), metadata: {} as Record<string, unknown>, time: { start, end: start + took } };
+  const cmd = String(input.command ?? "");
+  if (tool === "bash") {
+    if (rnd() < 0.05) return { ...base, status: "error", error: `${cmd.split(" ")[0]}: exit status 1\nerror: unknown option '-j'\n` };
+    const out = /make|cmake|ninja/.test(cmd)
+      ? "[ 12%] Building C object CMakeFiles/png.dir/pngrutil.c.o\n[ 25%] Building C object CMakeFiles/png.dir/pngread.c.o\n[100%] Linking C static library libpng16.a\n[100%] Built target png"
+      : /fuzz|harness/.test(cmd)
+        ? "INFO: Seed: 4104127123\n#2097152\tpulse  cov: 1873 ft: 6211 corp: 412/88Kb exec/s: 69905 rss: 412Mb\n#4194304\tpulse  cov: 1881 ft: 6240 corp: 418/90Kb exec/s: 69905 rss: 418Mb"
+        : /grep|rg/.test(cmd)
+          ? "pngrutil.c:1150:   png_inflate(png_ptr, png_ptr->chunk_name, 1, &size);\npngrutil.c:1184:   memcpy(profile, data, 132);\npngrutil.c:1650:   nentries = data_length / entry_size;"
+          : "";
+    return { ...base, status: "completed", output: out };
+  }
+  if (tool === "read") return { ...base, status: "completed", output: `<file>\n${C_LINES.map((l, i) => `${String(1180 + i).padStart(5, "0")}| ${l}`).join("\n")}\n</file>` };
+  if (tool === "edit") {
+    const f = String(input.filePath ?? "file.c");
+    base.metadata.diff = `--- a/${f}\n+++ b/${f}\n@@ -40,6 +40,9 @@\n static size_t mutate(uint8_t *data, size_t size, size_t max)\n {\n-   return LLVMFuzzerMutate(data, size, max);\n+   /* keep the declared profile length small */\n+   if (size > 12) data[11] = data[11] & 0x1f;\n+   return LLVMFuzzerMutate(data, size, max);\n }`;
+    return { ...base, status: "completed", output: "Edit applied successfully." };
+  }
+  return { ...base, status: "completed", output: "" };
+}
+
+type DemoFinding = { folder: string; title: string; severity: string | null; location?: string; poc?: string; class?: string; body: string; states: [number, string][] };
+/** A demo finding: `states` are [time, state] in order (default: just `state` at `at`); the PoC appears with the last one. */
+function finding(id: string, title: string, state: string, severity: string | null, at: number, extra: { location?: string; poc?: string; class?: string; summary?: string; more?: string } = {}, states?: [number, string][]): DemoFinding {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 4).join("-");
+  const body = [extra.summary ?? title, extra.more, extra.poc && `## Reproduce\n\n\`\`\`\n./harness ${extra.poc}\n\`\`\``].filter(Boolean).join("\n\n") + "\n";
+  return { folder: `${id}-${slug}`, title, severity, location: extra.location, poc: extra.poc, class: extra.class, body, states: states ?? [[at, state]] };
 }
 
 const sh = (command: string): [string, Record<string, unknown>] => ["bash", { command }];
@@ -188,6 +283,7 @@ const ed = (filePath: string): [string, Record<string, unknown>] => ["edit", { f
 
 run({
   id: "libpng-2026-10-14", label: "libpng chunk parsing", repo: "https://github.com/pnggroup/libpng", status: "running", started: now - (3 * H + 21 * M), hue: 0, tps: 64, continues: 1,
+  messages: [[now - 75 * M, "Focus on iCCP first, zTXt can wait."]],
   agents: [
     { title: "main", started: now - (3 * H + 21 * M), tools: [["task", { description: "Fuzz the iCCP chunk handler" }], rd("pngrutil.c"), sh("grep -n png_inflate pngrutil.c")] },
     { title: "Build with ASan and UBSan", started: now - (3 * H + 12 * M), until: now - (2 * H + 40 * M), done: true, tools: [sh("cmake -DCMAKE_C_FLAGS=-fsanitize=address .."), sh("make -j4")] },
@@ -196,15 +292,15 @@ run({
   ],
   todos: [["completed", "Build with ASan and UBSan"], ["completed", "Map chunk handlers and their length checks"], ["in_progress", "Fuzz iCCP with a profile-length mutator"], ["in_progress", "Review the inflate window code"], ["pending", "Check zTXt and iTXt for the same pattern"], ["pending", "Write up the iCCP overflow with a minimal PoC"]],
   findings: [
-    finding("F1", "Heap overflow in iCCP decompression", "confirmed", "high", now - 52 * M, { location: "pngrutil.c:1184", poc: "poc/iccp-0041.png", class: "heap-buffer-overflow", summary: "The declared profile length sizes the buffer, but the 132-byte header is copied before anything checks that the length is at least 132. A 2.1 KB PNG declaring a 16-byte profile reads past the allocation." }, [
-      { at: iso(now - 52 * M), by: "ses_main", action: "add", changes: {} },
-      { at: iso(now - 10 * M), by: "ses_main", action: "update", changes: { state: ["suspected", "confirmed"], poc: [null, "poc/iccp-0041.png"] }, note: "Reproduced with the ASan build: heap-buffer-overflow READ of size 1" },
+    finding("F1", "Heap overflow in iCCP decompression", "confirmed", "high", now - 52 * M, { location: "pngrutil.c:1184", poc: "iccp-0041.png", class: "heap-buffer-overflow", summary: "The declared profile length sizes the buffer, but the 132-byte header is copied before anything checks that the length is at least 132. A 2.1 KB PNG declaring a 16-byte profile reads past the allocation.", more: "Reproduced with the ASan build: heap-buffer-overflow READ of size 1 in png_handle_iCCP. The fuzzer found it after 41 minutes with the profile-length mutator." }, [
+      [now - 52 * M, "suspected"],
+      [now - 10 * M, "confirmed"],
     ]),
     finding("F2", "sPLT entry count is not bounded by the chunk length", "suspected", "medium", now - 6 * M, { location: "pngrutil.c:1650", class: "integer-overflow", summary: "nentries comes from the chunk length divided by the entry size, but the multiplication for the allocation can wrap on 32-bit builds." }),
     finding("F3", "png_inflate trusts the declared profile length", "lead", null, now - 80 * M, { location: "pngrutil.c:1120" }),
-    finding("F4", "tRNS length checks hold on every path", "ruled_out", "low", now - 2 * H, { location: "pngrutil.c:1760" }, [
-      { at: iso(now - 2 * H), by: "ses_main", action: "add", changes: {} },
-      { at: iso(now - 95 * M), by: "ses_main", action: "update", changes: { state: ["lead", "ruled_out"] }, note: "png_handle_tRNS checks the length against the palette size before copying" },
+    finding("F4", "tRNS length checks hold on every path", "ruled_out", "low", now - 2 * H, { location: "pngrutil.c:1760", summary: "tRNS looked like it could copy more entries than the palette holds.", more: "## Why ruled out\n\npng_handle_tRNS checks the length against the palette size before copying, on both the progressive and the sequential reader." }, [
+      [now - 2 * H, "lead"],
+      [now - 95 * M, "ruled_out"],
     ]),
   ],
   timeline: [[now - (2 * H + 5 * M), "pixel", "continue", 'Agent went idle without REPORT.md; sending "continue your work" (1/3)']],
@@ -215,7 +311,7 @@ run({
   agents: [{ title: "main", started: now - (5 * H + 2 * M), until: now - 12 * M, tools: [rd("tinyxml2.cpp"), sh("./xmltest"), ed("fuzz/parse.cc")] }],
   question: { text: "I have two crashes in XMLDocument::Parse, both stack exhaustion from elements nested deeper than 25 000. Write them up, or skip stack exhaustion and keep looking for memory corruption?", options: ["Write both up, keep looking", "Skip stack exhaustion", "Stop and write the report"], at: now - 12 * M },
   todos: [["completed", "Build with sanitizers"], ["completed", "Fuzz XMLDocument::Parse"], ["in_progress", "Decide on the stack exhaustion crashes"]],
-  findings: [finding("F1", "Stack exhaustion on deeply nested elements", "confirmed", "low", now - 70 * M, { location: "tinyxml2.cpp:1093", poc: "poc/deep.xml", class: "stack-overflow" })],
+  findings: [finding("F1", "Stack exhaustion on deeply nested elements", "confirmed", "low", now - 70 * M, { location: "tinyxml2.cpp:1093", poc: "deep.xml", class: "stack-overflow" })],
 });
 
 run({
@@ -252,14 +348,14 @@ run({
   todos: [["completed", "Build with ASan"], ["completed", "Fuzz the parser"], ["completed", "Write the report"]],
   report: "# yaml-cpp audit\n\nTwo confirmed bugs, both reachable from `YAML::Load` on untrusted input.\n\n## F1: Null dereference on a merge key that aliases a scalar\n\n`<<: *a` where the anchor is a scalar reaches `NodeBuilder::OnMapEnd` with a null map node.\n\n```\n./util/parse poc/merge-scalar.yaml\n```\n\nConfirmed with ASan (SEGV on unknown address 0x000000000000).\n\n## F2: Unbounded recursion on nested flow sequences\n\n`YAML::Load` on 40 000 nested `[` overflows the stack. Denial of service only.\n",
   findings: [
-    finding("F1", "Null dereference on a merge key that aliases a scalar", "confirmed", "medium", now - (12 * H + 40 * M), { location: "nodebuilder.cpp:118", poc: "poc/merge-scalar.yaml", class: "null-deref" }),
-    finding("F2", "Unbounded recursion on nested flow sequences", "confirmed", "low", now - (13 * H + 30 * M), { location: "singledocparser.cpp:52", poc: "poc/deep-flow.yaml", class: "stack-overflow" }),
+    finding("F1", "Null dereference on a merge key that aliases a scalar", "confirmed", "medium", now - (12 * H + 40 * M), { location: "nodebuilder.cpp:118", poc: "merge-scalar.yaml", class: "null-deref" }),
+    finding("F2", "Unbounded recursion on nested flow sequences", "confirmed", "low", now - (13 * H + 30 * M), { location: "singledocparser.cpp:52", poc: "deep-flow.yaml", class: "stack-overflow" }),
   ],
   timeline: [[now - (12 * H + 8 * M), "pixel", "done", "REPORT.md written and the agent is idle: run done"]],
 });
 
 run({
-  id: "sqlite-fts5-2026-10-12", label: "sqlite fts5", repo: "https://github.com/sqlite/sqlite", status: "triaged", verdict: "partly real", started: now - (30 * H), finished: now - 23 * H, triagedAt: now - 20 * H, hue: 0, tps: 30,
+  id: "sqlite-fts5-2026-10-12", label: "sqlite fts5", repo: "https://github.com/sqlite/sqlite", status: "triaged", started: now - (30 * H), finished: now - 23 * H, triagedAt: now - 20 * H, hue: 0, tps: 30,
   agents: [{ title: "main", started: now - 30 * H, tools: [rd("ext/fts5/fts5_hash.c")], done: true }],
   report: "# sqlite fts5\n\nOne integer overflow that needs a 2 GB document.\n",
   findings: [finding("F1", "Integer overflow in fts5HashAddPoslistSize", "confirmed", "info", now - 23 * H, { location: "fts5_hash.c:212" })],

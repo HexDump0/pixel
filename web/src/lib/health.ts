@@ -57,7 +57,7 @@ export function health(r: Run, fleet?: FleetRun | null, limits = { maxOom: 3, ma
     case "done":
       return { s: "done", label: "Done", tone: "" };
     case "triaged":
-      return { s: "triaged", label: r.triage_verdict || "Triaged", tone: "" };
+      return { s: "triaged", label: r.findings?.outcome ?? r.triage_verdict ?? "Triaged", tone: "" };
   }
   if (r.agent_status === "idle" || fleet?.agents.main === "idle") return { s: "idle", label: "Idle", tone: "warn" };
   return { s: "running", label: elapsed(runtimeOf(r)), tone: "" };

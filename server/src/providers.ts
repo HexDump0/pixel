@@ -10,6 +10,7 @@
  * switching off tools breaks free and Go models.
  */
 import { db, getRun, listRuns } from "./db.ts";
+import { verdictCounts } from "./knowledge.ts";
 import { keyFor } from "./providerAccounts.ts";
 import { publish } from "./bus.ts";
 import { getSettings } from "./settings.ts";
@@ -219,10 +220,9 @@ export function health(minutes = 60) {
 
 // ---- leaderboard: every run, grouped by model ----
 
-const REAL = ["real findings", "partly real"];
-
 export function leaderboard() {
   const runs = listRuns();
+  const verdictsByRun = verdictCounts();
   const callStats = db
     .query<CallRow, []>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls")
     .all();
@@ -234,10 +234,17 @@ export function leaderboard() {
       const gaveUp = rs.filter((r) => ["stopped", "failed"].includes(r.status) && !r.report_ready);
       const closed = finished.length + gaveUp.length;
       const durations = finished.filter((r) => r.started_at && r.finished_at).map((r) => r.finished_at! - r.started_at!);
+      // Finding verdicts across the model's runs: how many of its findings held up.
       const verdicts: Record<string, number> = {};
-      for (const r of rs) if (r.triage_verdict) verdicts[r.triage_verdict] = (verdicts[r.triage_verdict] ?? 0) + 1;
-      const real = rs.filter((r) => r.triage_verdict && REAL.includes(r.triage_verdict)).length;
-      const triaged = rs.filter((r) => r.triage_verdict).length;
+      for (const r of rs) {
+        const v = verdictsByRun[r.id];
+        if (!v) continue;
+        for (const [sev, n] of Object.entries(v.realBySeverity)) verdicts[`real ${sev}`] = (verdicts[`real ${sev}`] ?? 0) + n;
+        if (v.not_bug) verdicts["not a bug"] = (verdicts["not a bug"] ?? 0) + v.not_bug;
+        if (v.duplicate) verdicts.duplicate = (verdicts.duplicate ?? 0) + v.duplicate;
+      }
+      const real = rs.reduce((a, r) => a + (verdictsByRun[r.id]?.real ?? 0), 0);
+      const triaged = rs.reduce((a, r) => a + (verdictsByRun[r.id] ? verdictsByRun[r.id].real + verdictsByRun[r.id].not_bug + verdictsByRun[r.id].duplicate : 0), 0);
       const cost = rs.reduce((a, r) => a + r.cost, 0);
       const tokens = rs.reduce((a, r) => a + r.tokens_in + r.tokens_out + r.tokens_reasoning, 0);
       const cs = callStats.filter((c) => `${c.provider}/${c.model}` === model);

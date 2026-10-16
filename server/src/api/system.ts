@@ -8,6 +8,7 @@ import { defaultSettings, getSettings, saveSettings, type Settings } from "../se
 import { runtime } from "../runtime/index.ts";
 import { search } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
+import { outcomeText, verdictCounts } from "../knowledge.ts";
 import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
 import { notify } from "../notify.ts";
 import { backupStatus, runBackup } from "../backup.ts";
@@ -22,6 +23,7 @@ get("/crossreads", () => crossReadGraph());
 
 get("/workbases", () => {
   const runs = new Map(listRuns().map((r) => [r.id, r]));
+  const verdicts = verdictCounts();
   return db
     .query<{ run_id: string; n: number; bytes: number; last: number }, []>("SELECT run_id, COUNT(*) AS n, SUM(size) AS bytes, MAX(mtime) AS last FROM files_index GROUP BY run_id")
     .all()
@@ -35,7 +37,7 @@ get("/workbases", () => {
         repo: r?.repo ?? null,
         language: r?.language ?? null,
         status: r?.status ?? null,
-        verdict: r?.triage_verdict ?? null,
+        verdict: outcomeText(verdicts[f.run_id]) ?? r?.triage_verdict ?? null,
         started_at: r?.started_at ?? null,
         model: r?.model ?? null,
         orphan: !r,

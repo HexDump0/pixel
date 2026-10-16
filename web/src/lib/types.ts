@@ -28,13 +28,16 @@ export interface SpeedTestRow {
   error: string | null;
 }
 
-/** Per run: findings that aren't leads, how many still need a verdict, by severity. */
+/** Per run: findings that aren't leads, how many still need a verdict, by severity; the result from the verdicts. */
 export interface FindingCounts {
   total: number;
   untriaged: number;
   confirmed: number;
   bySeverity: Record<string, number>;
   untriagedBySeverity: Record<string, number>;
+  real: number;
+  /** "2 real (1 high, 1 low)", "nothing real", or null before any verdict. */
+  outcome: string | null;
 }
 
 export type Run = PublicRun & {

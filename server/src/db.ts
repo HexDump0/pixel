@@ -157,18 +157,11 @@ CREATE TABLE IF NOT EXISTS files_index (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(run_id UNINDEXED, path, content, tokenize = 'porter unicode61');
 
--- Every distinct version of a run's PROGRESS.md (the agent's status notes for the human).
-CREATE TABLE IF NOT EXISTS progress (
-  run_id  TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  ts      INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  added   INTEGER NOT NULL DEFAULT 0,             -- lines added / removed vs the previous version
-  removed INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (run_id, ts)
-);
+-- PROGRESS.md versions, from before findings replaced it (2026-10-15).
+DROP TABLE IF EXISTS progress;
 
--- Findings recorded by the agent with the finding tools (opencode-plugins/findings.ts), synced from the
--- workbase's FINDINGS.json. The verdict columns are the human's and never come from the file.
+-- Findings the agent keeps in the workbase (findings/F<n>-name/README.md, see findings.ts), synced from
+-- those files. The verdict columns are the human's and never come from the files.
 CREATE TABLE IF NOT EXISTS findings (
   run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   id             TEXT NOT NULL,                  -- F1, F2, … per run
@@ -185,7 +178,7 @@ CREATE TABLE IF NOT EXISTS findings (
   removed_at     INTEGER,
   removed_reason TEXT,
   duplicate_of   TEXT,
-  verdict        TEXT,                           -- real | not_bug | duplicate | needs_work
+  verdict        TEXT,                           -- real | not_bug | duplicate (older rows: needs_work)
   verdict_note   TEXT,
   verdict_at     INTEGER,
   PRIMARY KEY (run_id, id)
@@ -208,10 +201,12 @@ CREATE INDEX IF NOT EXISTS finding_events_at ON finding_events(at);
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "progress_at", "INTEGER"], ["runs", "hue", "INTEGER"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
+// Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
+if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
 
 export type RunStatus =
   | "preparing"
@@ -251,8 +246,6 @@ export interface RunRow {
   key_id: string | null;
   /** 1 = move to the provider's next key when this one runs out or is rejected. */
   key_failover: number;
-  /** When PROGRESS.md last changed (as Pixel noticed it), null = never written. */
-  progress_at: number | null;
   /** Colour of the run on every chart and tile (0–5), picked at creation so runs live at the same time differ. */
   hue: number | null;
   size: string;

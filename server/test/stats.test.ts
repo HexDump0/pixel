@@ -6,9 +6,10 @@ const now = Date.now();
 const H = 3_600_000;
 
 const row = { repo: "x", model: "st/m", size: JSON.stringify({ cpu: 2, memoryGiB: 4, diskGiB: 20 }), runtime: "local" };
-db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at, started_at, finished_at, continues, triage_verdict) VALUES (?, ?, ?, ?, 'done', ?, ?, ?, ?, 3, 'real findings')").run(
+db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at, started_at, finished_at, continues) VALUES (?, ?, ?, ?, 'done', ?, ?, ?, ?, 3)").run(
   "st-1", row.repo, row.model, row.size, row.runtime, now - 5 * H, now - 5 * H, now - 3 * H,
 );
+db.query("INSERT INTO findings (run_id, id, state, severity, title, created, updated, verdict) VALUES ('st-1', 'F1', 'confirmed', 'high', 't', ?, ?, 'real')").run(now - 4 * H, now - 4 * H);
 db.query("INSERT INTO sessions (id, run_id, parent_id, created_at) VALUES ('st-root', 'st-1', NULL, ?), ('st-sub', 'st-1', 'st-root', ?)").run(now - 5 * H, now - 4 * H);
 const msg = db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, 'st-1', 'st-root', ?, ?, ?)");
 const call = (id: string, at: number, tokens: object, extra: object = {}) =>
@@ -47,7 +48,7 @@ describe("stats", () => {
     expect(week.series.length).toBe(28);
     expect(week.series.reduce((n, b) => n + b.calls, 0)).toBe(week.totals.calls);
     expect(week.tools.find((t) => t.tool === "st_tool")).toMatchObject({ n: 2, errors: 1, avgMs: 500, kind: "other" });
-    expect(week.runs.verdicts["real findings"]).toBeGreaterThanOrEqual(1);
+    expect(week.runs.verdicts.real).toBeGreaterThanOrEqual(1);
     expect(week.runs.agentMs).toBeGreaterThanOrEqual(2 * H);
     expect(week.system.checks.map((c) => c.name)).toContain("Data disk");
     expect(week.system.db.rows.messages).toBeGreaterThan(0);

@@ -1,6 +1,6 @@
 /** /api/templates: versioned prompt templates and live preview. */
 import { getSettings } from "../settings.ts";
-import { addVersion, createTemplate, getVersion, latestVersion, listTemplates, listVersions, render, TEMPLATE_VARIABLES } from "../templates.ts";
+import { addVersion, createTemplate, getVersion, latestVersion, listParts, listTemplates, listVersions, render, TEMPLATE_VARIABLES } from "../templates.ts";
 import { repoName, templateVars } from "../runs/index.ts";
 import { get, HttpError, post, readJson } from "./router.ts";
 
@@ -18,7 +18,7 @@ post("/templates", async ({ req }) => {
 get("/templates/:id", ({ params: { id } }) => {
   const versions = listVersions(id);
   if (!versions.length) throw new HttpError(404, `no template ${id}`);
-  return { versions, variables: TEMPLATE_VARIABLES };
+  return { versions, variables: TEMPLATE_VARIABLES, parts: listParts() };
 });
 post("/templates/:id/versions", async ({ req, params: { id } }) => {
   const b = await readJson(req);

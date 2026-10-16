@@ -1,30 +1,35 @@
 /**
- * Findings: what the agent records with the finding tools (opencode-plugins/findings.ts). The tools write
- * FINDINGS.json in the run's workbase; Pixel polls it like PROGRESS.md (one stat per live run, read on
- * change) and re-reads it as soon as a finding_* tool call completes. Each change in a finding's history
- * becomes a finding event (and a timeline entry). The human's verdicts are Pixel's own: they are written
- * back to .pixel/triage.json (which finding_list shows the agent) and to TRIAGE.md (for peer agents).
+ * Findings: one folder per finding in the run's workbase, written by the agent with its normal file
+ * tools (no plugin, no API): `findings/F3-short-name/README.md`, a few `key: value` header lines between
+ * `---` (state, severity, location, poc, class) then free markdown, with PoCs and logs next to it.
+ * Agents read each other's findings as plain files.
+ *
+ * Pixel polls `findings/` like it did PROGRESS.md (a readdir and one stat per finding per live run, read on
+ * change) and re-reads it as soon as a write or edit under findings/ completes. Changes of state, severity,
+ * title, location, PoC or class become finding events (and timeline entries). Pixel writes FINDINGS.md
+ * (an index for people and peer agents) and TRIAGE.md (the human's verdicts); it never writes findings/.
  */
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, normalize } from "node:path";
 import { ACTIVE_STATUSES, db, getRun, listRuns, type RunRow } from "./db.ts";
 import { publish } from "./bus.ts";
-import { workbasePath, writeTriage } from "./knowledge.ts";
+import { outcomeText, refreshRunFiles, verdictCounts, workbasePath, writeTriage } from "./knowledge.ts";
 import { timeline } from "./runs/state.ts";
 
 export const STATES = ["lead", "suspected", "confirmed", "ruled_out"] as const;
 export const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
-export const VERDICTS = ["real", "not_bug", "duplicate", "needs_work"] as const;
+export const VERDICTS = ["real", "not_bug", "duplicate"] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
-const VERDICT_WORDS: Record<Verdict, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
+const VERDICT_WORDS: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
 const STATE_WORDS: Record<string, string> = { lead: "lead", suspected: "suspected", confirmed: "confirmed", ruled_out: "ruled out" };
 
 /** Finished runs are still checked for a while, in case the last write landed just before the end. */
 const AFTER_FINISH_MS = 10 * 60_000;
-const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_BYTES = 1024 * 1024;
+const MAX_FINDINGS = 500;
 
-export const findingsPath = (runId: string) => join(workbasePath(runId), "FINDINGS.json");
+export const findingsDir = (runId: string) => join(workbasePath(runId), "findings");
 
 export interface FindingRow {
   run_id: string;
@@ -45,6 +50,10 @@ export interface FindingRow {
   verdict: Verdict | null;
   verdict_note: string | null;
   verdict_at: number | null;
+  /** The finding's README, relative to the workbase. */
+  path: string | null;
+  /** What Pixel couldn't read in the README (bad header, clashing number), shown on the finding. */
+  problem: string | null;
 }
 
 export interface FindingEvent {
@@ -58,42 +67,101 @@ export interface FindingEvent {
   session_id: string | null;
 }
 
-const str = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
-const time = (v: unknown, fallback: number) => {
-  const t = typeof v === "number" ? v : Date.parse(String(v));
-  return Number.isFinite(t) ? t : fallback;
-};
+const clip = (v: string | undefined, max: number) => (v?.trim() ? v.trim().slice(0, max) : null);
 
-/** A finding from the file, checked and cut to size; null if it isn't one. */
-function parseFinding(f: any, mtime: number) {
-  const id = typeof f?.id === "string" && /^F\d+$/.test(f.id) ? f.id : null;
-  const title = str(f?.title, 200);
-  if (!id || !title) return null;
+/** `---` header lines (`key: value`, `# comments` dropped, quotes stripped) and the markdown after them. */
+export function parseReadme(text: string) {
+  const fields: Record<string, string> = {};
+  const m = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!m) return { fields, body: text, header: false };
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^\s*([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+    if (!kv) continue;
+    const value = kv[2].replace(/(^|\s)#.*$/, "").trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+    fields[kv[1].toLowerCase()] = value;
+  }
+  return { fields, body: text.slice(m[0].length), header: true };
+}
+
+type Entry = { num: number; name: string; readme: string; rel: string; folder: string; mtime: number; size: number };
+
+/** The finding folders (or flat F3-name.md files) in findings/, lowest number first. */
+function listEntries(runId: string): Entry[] | null {
+  const dir = findingsDir(runId);
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const out: Entry[] = [];
+  for (const name of names.sort()) {
+    const m = /^f(\d{1,5})(?:\b|[-_ ]|$)/i.exec(name);
+    if (!m) continue;
+    const flat = name.toLowerCase().endsWith(".md");
+    const readme = flat ? join(dir, name) : join(dir, name, "README.md");
+    try {
+      const st = statSync(readme);
+      if (!st.isFile() || st.size > MAX_BYTES) continue;
+      out.push({ num: Number(m[1]), name, readme, rel: flat ? `findings/${name}` : `findings/${name}/README.md`, folder: flat ? "findings" : `findings/${name}`, mtime: Math.floor(st.mtimeMs), size: st.size });
+    } catch {
+      // a folder without README.md yet: skip until it has one
+    }
+    if (out.length >= MAX_FINDINGS) break;
+  }
+  return out.sort((a, b) => a.num - b.num || a.name.localeCompare(b.name));
+}
+
+/** A PoC path from the header, made relative to the workbase (relative paths are from the finding's folder). */
+function pocPath(poc: string | null, folder: string) {
+  if (!poc) return null;
+  if (isAbsolute(poc)) {
+    const i = poc.indexOf("/findings/");
+    return i >= 0 ? poc.slice(i + 1) : poc;
+  }
+  const p = normalize(poc.startsWith("findings/") ? poc : join(folder, poc));
+  return p.startsWith("..") ? poc : p;
+}
+
+const titleOf = (body: string, fallback: string) => /^#\s+(.+?)\s*#*\s*$/m.exec(body)?.[1] ?? fallback;
+
+function readEntry(e: Entry, id: string, previous: FindingRow | undefined, clash: string | null) {
+  const { fields, body, header } = parseReadme(readFileSync(e.readme, "utf8"));
+  const problems: string[] = [];
+  if (clash) problems.push(clash);
+  let state = fields.state?.toLowerCase().replace(/[\s-]+/g, "_");
+  if (!header) problems.push("no --- header at the top of the README");
+  else if (!state) problems.push("the header has no state");
+  else if (!(STATES as readonly string[]).includes(state)) problems.push(`state "${fields.state}" isn't one of lead, suspected, confirmed, ruled_out`);
+  if (!state || !(STATES as readonly string[]).includes(state)) state = previous?.state ?? "lead";
+  let severity: string | null = fields.severity?.toLowerCase() || null;
+  if (severity && !(SEVERITIES as readonly string[]).includes(severity)) {
+    problems.push(`severity "${fields.severity}" isn't one of ${SEVERITIES.join(", ")}`);
+    severity = previous?.severity ?? null;
+  }
+  const slugTitle = e.name.replace(/\.md$/i, "").replace(/^f\d+[-_ ]*/i, "").replace(/[-_]+/g, " ") || id;
+  const title = clip(titleOf(body, fields.title || slugTitle), 200)!;
+  const summary = body.replace(/^#\s+.+$/m, "").trim().slice(0, 20_000);
   return {
     id,
+    state,
+    severity,
     title,
-    state: (STATES as readonly string[]).includes(f.state) ? (f.state as string) : "lead",
-    severity: (SEVERITIES as readonly string[]).includes(f.severity) ? (f.severity as string) : null,
-    class: str(f.class, 100),
-    location: str(f.location, 300),
-    poc: str(f.poc, 500),
-    summary: str(f.summary, 4000) ?? "",
-    created: time(f.created, mtime),
-    updated: time(f.updated, mtime),
-    session_id: str(f.by, 100),
-    removed_at: f.removed ? time(f.removed.at, mtime) : null,
-    removed_reason: f.removed ? (str(f.removed.reason, 300) ?? "removed") : null,
-    duplicate_of: f.removed ? str(f.removed.duplicate_of, 20) : null,
-    history: Array.isArray(f.history) ? f.history : [],
+    class: clip(fields.class, 100),
+    location: clip(fields.location, 300),
+    poc: pocPath(clip(fields.poc, 500), e.folder),
+    summary,
+    path: e.rel,
+    problem: problems.join("; ") || null,
   };
 }
 
 const upsert = db.query(`
-  INSERT INTO findings (run_id, id, state, severity, title, class, location, poc, summary, created, updated, session_id, removed_at, removed_reason, duplicate_of)
-  VALUES ($run, $id, $state, $severity, $title, $class, $location, $poc, $summary, $created, $updated, $session_id, $removed_at, $removed_reason, $duplicate_of)
+  INSERT INTO findings (run_id, id, state, severity, title, class, location, poc, summary, created, updated, session_id, removed_at, removed_reason, duplicate_of, path, problem)
+  VALUES ($run, $id, $state, $severity, $title, $class, $location, $poc, $summary, $created, $updated, $session_id, NULL, NULL, NULL, $path, $problem)
   ON CONFLICT(run_id, id) DO UPDATE SET state = excluded.state, severity = excluded.severity, title = excluded.title, class = excluded.class,
-    location = excluded.location, poc = excluded.poc, summary = excluded.summary, created = excluded.created, updated = excluded.updated,
-    session_id = excluded.session_id, removed_at = excluded.removed_at, removed_reason = excluded.removed_reason, duplicate_of = excluded.duplicate_of`);
+    location = excluded.location, poc = excluded.poc, summary = excluded.summary, updated = excluded.updated, session_id = excluded.session_id,
+    removed_at = NULL, removed_reason = NULL, path = excluded.path, problem = excluded.problem`);
 const insertEvent = db.query(
   "INSERT OR IGNORE INTO finding_events (run_id, finding_id, at, action, changes, note, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
 );
@@ -112,7 +180,7 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
     case "remove":
       return `${e.finding_id} removed: ${title}${note}`;
     case "verdict":
-      return `${e.finding_id} triaged as ${e.changes?.verdict?.[1] ? VERDICT_WORDS[e.changes.verdict[1] as Verdict] : "untriaged"}: ${title}`;
+      return `${e.finding_id} triaged as ${e.changes?.verdict?.[1] ? VERDICT_WORDS[String(e.changes.verdict[1])] : "untriaged"}: ${title}`;
     default: {
       const st = e.changes?.state;
       if (st) return `${e.finding_id} ${STATE_WORDS[String(st[1])] ?? st[1]}: ${title}${note}`;
@@ -123,39 +191,73 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
   }
 }
 
-/** Store a run's FINDINGS.json. Returns the number of new events. */
-export function syncFindings(run: RunRow, text: string, mtime = Date.now()) {
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return 0;
-  }
-  if (!Array.isArray(data?.findings)) return 0;
-  const fresh: { event: FindingEvent; finding: FindingRow }[] = [];
+/** Fields whose changes are worth an event (summary edits happen all the time and only bump `updated`). */
+const TRACKED = ["state", "severity", "title", "location", "poc", "class"] as const;
+
+/** Read a run's findings/ into the table. Returns the number of new events. */
+export function syncFindings(run: RunRow, by: string | null = null) {
+  const entries = listEntries(run.id);
+  if (!entries) return 0; // no findings/ folder: nothing to do (and nothing to mark removed)
+  const before = new Map(db.query<FindingRow, [string]>("SELECT * FROM findings WHERE run_id = ?").all(run.id).map((r) => [r.id, r]));
+  const fresh: { event: FindingEvent; id: string }[] = [];
+  const event = (id: string, at: number, action: FindingEvent["action"], changes: Record<string, [unknown, unknown]> | null, note: string | null) => {
+    const json = changes && Object.keys(changes).length ? JSON.stringify(changes).slice(0, 8000) : null;
+    const res = insertEvent.run(run.id, id, at, action, json, note, by);
+    if (res.changes) fresh.push({ id, event: parseEvent({ seq: Number(res.lastInsertRowid), run_id: run.id, finding_id: id, at, action, changes: json, note, session_id: by }) });
+  };
+  let changed = false;
   db.transaction(() => {
+    // Two folders with the same number: the one Pixel already knows (else the first by name) keeps F<n>.
+    const byNum = new Map<number, Entry[]>();
+    for (const e of entries) byNum.set(e.num, [...(byNum.get(e.num) ?? []), e]);
     const seen = new Set<string>();
-    for (const raw of data.findings) {
-      const f = parseFinding(raw, mtime);
-      if (!f || seen.has(f.id)) continue;
-      seen.add(f.id);
-      const { history, ...row } = f;
-      upsert.run(Object.fromEntries(Object.entries({ run: run.id, ...row }).map(([k, v]) => [`$${k}`, v])) as any);
-      for (const h of history.slice(-500)) {
-        const action = ["add", "update", "remove"].includes(h?.action) ? h.action : "update";
-        const at = time(h?.at, f.updated);
-        const changes = h?.changes && typeof h.changes === "object" && Object.keys(h.changes).length ? JSON.stringify(h.changes).slice(0, 8000) : null;
-        const res = insertEvent.run(run.id, f.id, at, action, changes, str(h?.note, 2000), str(h?.by, 100));
-        if (res.changes) fresh.push({ event: parseEvent({ seq: Number(res.lastInsertRowid), run_id: run.id, finding_id: f.id, at, action, changes, note: str(h?.note, 2000), session_id: str(h?.by, 100) }), finding: getFinding(run.id, f.id)! });
+    for (const [num, group] of byNum) {
+      const plain = `F${num}`;
+      const owner = group.find((e) => before.get(plain)?.path === e.rel) ?? group[0];
+      for (const e of group) {
+        const id = e === owner ? plain : e.name.replace(/\.md$/i, "").slice(0, 60);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const prev = before.get(id);
+        const clash = e === owner ? null : `same number as ${owner.name}; rename this folder to a free number`;
+        let f;
+        try {
+          f = readEntry(e, id, prev, clash);
+        } catch (err) {
+          console.error(`finding ${run.id}/${e.name}`, err);
+          continue;
+        }
+        const live = prev && !prev.removed_at ? prev : undefined;
+        const changes: Record<string, [unknown, unknown]> = {};
+        if (live) for (const k of TRACKED) if ((live[k] ?? null) !== (f[k] ?? null)) changes[k] = [live[k] ?? null, f[k] ?? null];
+        const same = live && !Object.keys(changes).length && live.summary === f.summary && live.path === f.path && live.problem === f.problem;
+        if (same) continue;
+        changed = true;
+        const at = Math.max(e.mtime, (live?.updated ?? 0) + 1);
+        upsert.run({ $run: run.id, ...Object.fromEntries(Object.entries(f).map(([k, v]) => [`$${k}`, v])), $created: prev?.created ?? at, $updated: at, $session_id: by ?? prev?.session_id ?? null } as any);
+        if (!live) event(id, at, "add", null, prev ? "the folder is back" : null);
+        else if (Object.keys(changes).length) event(id, at, "update", changes, null);
       }
     }
-    // Findings deleted from the file by hand: keep them, marked removed.
-    const gone = db.query<{ id: string }, [string]>("SELECT id FROM findings WHERE run_id = ? AND removed_at IS NULL").all(run.id).filter((r) => !seen.has(r.id));
-    for (const g of gone) db.query("UPDATE findings SET removed_at = ?, removed_reason = 'deleted from FINDINGS.json' WHERE run_id = ? AND id = ?").run(Date.now(), run.id, g.id);
+    // Folders that went away: keep the finding, marked removed.
+    for (const r of before.values()) {
+      if (seen.has(r.id) || r.removed_at) continue;
+      changed = true;
+      const at = Math.max(Date.now(), r.updated + 1);
+      db.query("UPDATE findings SET removed_at = ?, removed_reason = 'folder deleted' WHERE run_id = ? AND id = ?").run(at, run.id, r.id);
+      event(r.id, at, "remove", null, "folder deleted");
+    }
   })();
+  if (changed) {
+    try {
+      writeFindingsIndex(run.id);
+    } catch (e) {
+      console.error(`FINDINGS.md for ${run.id}`, e);
+    }
+    publish("*", "findings", { run: run.id });
+  }
   fresh.sort((a, b) => a.event.at - b.event.at);
-  for (const { event, finding } of fresh) announce(run.id, event, finding);
-  if (fresh.length) publish("*", "findings", { run: run.id });
+  for (const { event, id } of fresh) announce(run.id, event, getFinding(run.id, id)!);
   return fresh.length;
 }
 
@@ -165,34 +267,30 @@ function announce(runId: string, event: FindingEvent, finding: FindingRow) {
   publish("*", "finding", { event, finding });
 }
 
-/** Last stat seen per run, so an unchanged file costs one stat per poll. */
-const seenStat = new Map<string, string>();
+/** Last listing seen per run (names, mtimes, sizes), so an unchanged folder costs a readdir and some stats. */
+const seenStamp = new Map<string, string>();
 
-/** Read FINDINGS.json if it changed since the last check. `force` skips the stat comparison. */
-export function checkFindings(run: RunRow, force = false) {
-  let st;
+/** Read findings/ if anything in it changed since the last check. `force` skips the comparison. */
+export function checkFindings(run: RunRow, force = false, by: string | null = null) {
+  const entries = listEntries(run.id);
+  if (!entries) return 0;
+  const stamp = entries.map((e) => `${e.name}:${e.mtime}:${e.size}`).join("|");
+  if (!force && seenStamp.get(run.id) === stamp) return 0;
+  seenStamp.set(run.id, stamp);
   try {
-    st = statSync(findingsPath(run.id));
-  } catch {
-    return 0;
-  }
-  if (!st.isFile() || st.size > MAX_BYTES) return 0;
-  const stamp = `${st.mtimeMs}:${st.size}`;
-  if (!force && seenStat.get(run.id) === stamp) return 0;
-  seenStat.set(run.id, stamp);
-  try {
-    return syncFindings(run, readFileSync(findingsPath(run.id), "utf8"), st.mtimeMs);
+    return syncFindings(run, by);
   } catch (e) {
     console.error(`findings ${run.id}`, e);
     return 0;
   }
 }
 
-/** Called for every tool part: a completed finding_* call means the file just changed. */
+/** Called for every tool part: a completed write or edit under findings/ means a finding just changed. */
 export function onToolPart(runId: string, part: any) {
-  if (part?.type !== "tool" || !String(part.tool ?? "").startsWith("finding_") || part.state?.status !== "completed") return;
+  if (part?.type !== "tool" || part.state?.status !== "completed" || part.tool === "read") return;
+  if (!/(^|\/)findings\/[Ff]\d/.test(JSON.stringify(part.state?.input ?? {}))) return;
   const run = getRun(runId);
-  if (run) checkFindings(run, true);
+  if (run) checkFindings(run, true, part.sessionID ?? null);
 }
 
 export function checkAllFindings() {
@@ -261,16 +359,18 @@ export function findingEvents(opts: { run?: string; finding?: string; since?: nu
     .map(parseEvent);
 }
 
-/** Per run: untriaged findings by severity, for the Wall (tiles, toolbar counts, To triage stat). */
+/** Per run: untriaged findings by severity (Wall tiles, toolbar counts, To triage stat), and the run's result from the verdicts. */
 export function findingCounts() {
   const rows = db
     .query<{ run_id: string; state: string; severity: string | null; verdict: string | null; n: number }, []>(
       "SELECT run_id, state, severity, verdict, COUNT(*) AS n FROM findings WHERE removed_at IS NULL GROUP BY run_id, state, severity, verdict",
     )
     .all();
-  const out: Record<string, { total: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number> }> = {};
+  type Counts = { total: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number>; real: number; outcome: string | null };
+  const out: Record<string, Counts> = {};
+  const blank = (): Counts => ({ total: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {}, real: 0, outcome: null });
   for (const r of rows) {
-    const c = (out[r.run_id] ??= { total: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {} });
+    const c = (out[r.run_id] ??= blank());
     if (r.state === "lead") continue; // leads are ideas, not findings to triage
     c.total += r.n;
     if (r.state === "confirmed") c.confirmed += r.n;
@@ -281,10 +381,15 @@ export function findingCounts() {
       c.untriagedBySeverity[sev] = (c.untriagedBySeverity[sev] ?? 0) + r.n;
     }
   }
+  for (const [run, v] of Object.entries(verdictCounts())) {
+    const c = (out[run] ??= blank());
+    c.real = v.real;
+    c.outcome = outcomeText(v);
+  }
   return out;
 }
 
-// ---- verdicts ----
+// ---- FINDINGS.md and verdicts ----
 
 function writeAtomic(path: string, text: string) {
   const tmp = `${path}.tmp-${process.pid}`;
@@ -292,21 +397,32 @@ function writeAtomic(path: string, text: string) {
   renameSync(tmp, path);
 }
 
-/** .pixel/triage.json: the verdicts, for finding_list. */
-export function writeVerdicts(runId: string) {
-  const rows = db
-    .query<{ id: string; verdict: string; verdict_note: string | null; verdict_at: number }, [string]>(
-      "SELECT id, verdict, verdict_note, verdict_at FROM findings WHERE run_id = ? AND verdict IS NOT NULL",
-    )
-    .all(runId);
-  const findings = Object.fromEntries(rows.map((r) => [r.id, { verdict: VERDICT_WORDS[r.verdict as Verdict] ?? r.verdict, note: r.verdict_note, at: new Date(r.verdict_at).toISOString() }]));
-  const dir = join(workbasePath(runId), ".pixel");
-  mkdirSync(dir, { recursive: true });
-  writeAtomic(join(dir, "triage.json"), JSON.stringify({ findings }, null, 2) + "\n");
+const STATE_ORDER = ["confirmed", "suspected", "lead", "ruled_out"];
+const cell = (s: string | null | undefined) => (s ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+
+/** FINDINGS.md at the workbase root: one line per finding, for people and peer agents. Pixel's file. */
+export function writeFindingsIndex(runId: string) {
+  const rows = listFindings({ run: runId }).sort((a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || Number(a.id.slice(1).split(/\D/)[0]) - Number(b.id.slice(1).split(/\D/)[0]));
+  const lines = [
+    "# Findings",
+    "",
+    "Written by Pixel from `findings/` (one folder per finding; its README.md has the details, PoCs sit next to it). The verdict is the human's triage; notes are in TRIAGE.md.",
+    "",
+  ];
+  if (!rows.length) lines.push("None yet.", "");
+  else {
+    lines.push("| Id | State | Severity | Title | Location | Verdict |", "|---|---|---|---|---|---|");
+    for (const f of rows) {
+      const link = f.path ? `[${cell(f.title)}](${f.path.replace(/ /g, "%20")})` : cell(f.title);
+      lines.push(`| ${f.id} | ${STATE_WORDS[f.state] ?? f.state} | ${f.severity ?? ""} | ${link} | ${cell(f.location)} | ${f.verdict ? VERDICT_WORDS[f.verdict] : ""} |`);
+    }
+    lines.push("");
+  }
+  writeAtomic(join(workbasePath(runId), "FINDINGS.md"), lines.join("\n"));
 }
 
 /** The human's verdict on one finding (null clears it). Returns the updated finding. */
-export async function setVerdict(runId: string, id: string, verdict: Verdict | null, note: string | null, send?: (runId: string, text: string) => Promise<unknown>) {
+export function setVerdict(runId: string, id: string, verdict: Verdict | null, note: string | null) {
   if (verdict !== null && !VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${VERDICTS.join(", ")}`);
   const before = getFinding(runId, id);
   if (!before) throw new Error(`no finding ${id}`);
@@ -318,17 +434,14 @@ export async function setVerdict(runId: string, id: string, verdict: Verdict | n
   announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "verdict", changes: JSON.stringify({ verdict: [before.verdict, verdict] }), note: cleanNote, session_id: null }), finding);
   publish("*", "findings", { run: runId });
   try {
-    writeVerdicts(runId);
+    writeFindingsIndex(runId);
     const run = getRun(runId);
     if (run) writeTriage(run);
+    refreshRunFiles(runId);
   } catch (e) {
     console.error(`writing verdicts for ${runId}`, e);
-  }
-  const run = getRun(runId);
-  if (verdict === "needs_work" && send && run && (run.status === "running" || run.status === "recovering")) {
-    await send(runId, `Triage on ${id} “${finding.title}”: needs more work.${cleanNote ? ` ${cleanNote}` : ""}`).catch((e) => console.error("needs-work message failed", e));
   }
   return finding;
 }
 
-export const verdictWord = (v: string) => VERDICT_WORDS[v as Verdict] ?? v;
+export const verdictWord = (v: string) => VERDICT_WORDS[v] ?? v;

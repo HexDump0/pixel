@@ -5,8 +5,8 @@
  *   "REPORT <path>"  write <path> then go idle
  *   "HANG"           stay busy forever
  *   "KEYCHECK"       a 402 "insufficient balance" error when any key in auth.json starts with "dead"
- *   "FINDING {json}" call a finding tool from opencode-plugins/findings.ts, one per line:
- *                    FINDING {"tool":"finding_add","args":{"title":"…","summary":"…"}}
+ *   "WRITE {json}"   write a file like the write tool does, one per line:
+ *                    WRITE {"path":"/…/findings/F1-x/README.md","content":"…"}
  *   anything else    reply and go idle (no report)
  * Synchronous `POST /session/:id/message` (the speed test) is scripted by model id instead:
  *   fake/fast    a ~300-token text answer
@@ -15,7 +15,6 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { Findings } from "../../opencode-plugins/findings.ts";
 
 const args = process.argv.slice(2);
 const port = Number(args[args.indexOf("--port") + 1]);
@@ -91,20 +90,12 @@ async function handlePrompt(sid: string, text: string) {
       return;
     }
   }
-  for (const m of text.matchAll(/^FINDING (\{.*\})$/gm)) {
+  for (const m of text.matchAll(/^WRITE (\{.*\})$/gm)) {
     const call = JSON.parse(m[1]);
-    const tools: any = (await Findings()).tool;
     const start = Date.now();
-    let output: string;
-    let status = "completed";
-    try {
-      output = await tools[call.tool].execute(call.args, { sessionID: sid, messageID: reply.info.id, agent: "build" });
-    } catch (e: any) {
-      status = "error";
-      output = e.message;
-    }
-    const state = status === "completed" ? { status, input: call.args, output, title: call.tool, metadata: {}, time: { start, end: Date.now() } } : { status, input: call.args, error: output, metadata: {}, time: { start, end: Date.now() } };
-    const part = { id: id("prt"), sessionID: sid, messageID: reply.info.id, type: "tool", tool: call.tool, callID: id("call"), state };
+    mkdirSync(dirname(call.path), { recursive: true });
+    writeFileSync(call.path, call.content);
+    const part = { id: id("prt"), sessionID: sid, messageID: reply.info.id, type: "tool", tool: "write", callID: id("call"), state: { status: "completed", input: { filePath: call.path, content: call.content }, output: "", title: call.path, metadata: {}, time: { start, end: Date.now() } } };
     reply.parts.push(part);
     emit("message.part.updated", { sessionID: sid, part });
   }

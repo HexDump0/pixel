@@ -34,11 +34,10 @@ export interface RunView {
 }
 
 export const TONE_BG: Record<string, string> = {
-  warn: "bg-[linear-gradient(var(--warn-tint),var(--warn-tint)),var(--s1)]",
-  bad: "bg-[linear-gradient(var(--bad-tint),var(--bad-tint)),var(--s1)]",
+  warn: "bg-s1 bg-[image:linear-gradient(var(--warn-tint),var(--warn-tint))]",
+  bad: "bg-s1 bg-[image:linear-gradient(var(--bad-tint),var(--bad-tint))]",
   "": "bg-s1",
 };
-
 export function buildView(run: Run, fleet: FleetRun | undefined, h: Health, all: Finding[], seen: number): RunView {
   const mine = all.filter((f) => f.run_id === run.id && !f.removed_at);
   const findings = mine.filter((f) => (f.state === "confirmed" || f.state === "suspected") && f.verdict !== "not_bug" && f.verdict !== "duplicate").sort(byPriority);
@@ -330,7 +329,7 @@ export function FinishedRow({ v, selected, onSelect }: { v: RunView; selected: b
           <Sev key={f.id} sev={sevOf(f)} done={!!f.verdict} />
         ))}
       </span>
-      <span className="min-w-0 truncate text-[12.5px] text-ink-3 max-lg:hidden">{r.status === "triaged" ? r.triage_verdict : ""}</span>
+      <span className="min-w-0 truncate text-[12.5px] text-ink-3 max-lg:hidden">{r.findings?.outcome ?? (r.status === "triaged" ? r.triage_verdict : "")}</span>
       <span className="text-right font-mono text-xs whitespace-nowrap text-ink-3 tabular-nums max-lg:hidden">{r.finished_at ? `${age(r.finished_at)} ago` : ""}</span>
       <span className="text-right font-mono text-xs text-ink-3 tabular-nums max-lg:hidden">{elapsed(runtimeOf(r))}</span>
       <span className="text-right font-mono text-xs text-ink-3 tabular-nums max-lg:hidden">{money(r.cost)}</span>

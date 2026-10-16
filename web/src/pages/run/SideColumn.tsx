@@ -240,6 +240,8 @@ function Facts({ detail }: { detail: RunDetail }) {
         {row("Machine", `${r.size.cpu} CPU · ${r.size.memoryGiB} GB`)}
         {row("Started", r.started_at ? `${age(r.started_at)} ago` : "–")}
         {r.parent_run && row("Follow-up of", <button type="button" className={factBtn} onClick={() => openRun(r.parent_run!)}>{r.parent_run}</button>)}
+        {detail.followUps.length > 0 && row("Follow-ups", <span className="flex flex-wrap gap-x-2">{detail.followUps.map((c) => <button key={c} type="button" className={factBtn} onClick={() => openRun(c)}>{c}</button>)}</span>)}
+        {detail.compare.filter((c) => c !== r.id).length > 0 && row("Compared", <span className="flex flex-wrap gap-x-2">{detail.compare.filter((c) => c !== r.id).map((c) => <button key={c} type="button" className={factBtn} onClick={() => openRun(c)}>{c}</button>)}</span>)}
       </dl>
     </section>
   );

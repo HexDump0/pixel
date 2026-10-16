@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
@@ -22,6 +22,7 @@ export function seedTemplates() {
 }
 
 export function createTemplate(id: string, name: string, body: string, note?: string) {
+  checkParts(body);
   const now = Date.now();
   db.query("INSERT INTO templates (id, name, created_at) VALUES (?, ?, ?)").run(id, name, now);
   db.query("INSERT INTO template_versions (template_id, version, body, note, created_at) VALUES (?, 1, ?, ?, ?)").run(id, body, note ?? null, now);
@@ -31,6 +32,7 @@ export function addVersion(id: string, body: string, note?: string) {
   const v = latestVersion(id);
   if (!v) throw new Error(`no template ${id}`);
   if (v.body === body) return v;
+  checkParts(body);
   const version = v.version + 1;
   db.query("INSERT INTO template_versions (template_id, version, body, note, created_at) VALUES (?, ?, ?, ?, ?)").run(id, version, body, note ?? null, Date.now());
   return getVersion(id, version)!;
@@ -62,9 +64,44 @@ export const listVersions = (id: string) =>
 
 export const TEMPLATE_VARIABLES = ["run", "repo", "ref", "commit", "target", "workbase", "workbases", "scratch", "disk_gib", "machine", "date", "model", "previous_workbase"];
 
-/** Tiny templating: {{var}} and {{#if var}}...{{/if}} (no nesting). */
+/**
+ * Sections Pixel owns (templates/parts/<name>.md): the conventions every template should share (environment,
+ * findings format, report), dropped into a template with `{{> name}}`. They ship with Pixel, so changing a
+ * convention changes every template. A run keeps the prompt it was sent, so old runs don't change with them.
+ */
+const partsDir = () => join(config.templatesDir, "parts");
+
+export function listParts() {
+  if (!existsSync(partsDir())) return [];
+  return readdirSync(partsDir())
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => ({ name: basename(f, ".md"), body: readFileSync(join(partsDir(), f), "utf8") }));
+}
+
+const PART = /\{\{>\s*([\w-]+)\s*\}\}/g;
+
+/** Section names a body uses that don't exist. */
+export function unknownParts(body: string) {
+  const known = new Set(listParts().map((p) => p.name));
+  return [...new Set([...body.matchAll(PART)].map((m) => m[1]).filter((n) => !known.has(n)))];
+}
+
+/** Throws (for a 400) when a body uses a section that doesn't exist. */
+export function checkParts(body: string) {
+  const bad = unknownParts(body);
+  if (bad.length) throw new Error(`unknown section ${bad.map((b) => `{{> ${b}}}`).join(", ")}; there are ${listParts().map((p) => `{{> ${p.name}}}`).join(", ") || "none"}`);
+}
+
+export function expandParts(body: string) {
+  checkParts(body);
+  const parts = new Map(listParts().map((p) => [p.name, p.body.replace(/\n+$/, "")]));
+  return body.replace(PART, (_, name) => parts.get(name)!);
+}
+
+/** Tiny templating: {{> section}}, {{var}} and {{#if var}}...{{/if}} (no nesting). */
 export function render(body: string, vars: Record<string, string | undefined | null>) {
-  let out = body.replace(/\{\{#if (\w+)\}\}\n?([\s\S]*?)\{\{\/if\}\}\n?/g, (_, k, inner) => (vars[k] ? inner : ""));
+  let out = expandParts(body).replace(/\{\{#if (\w+)\}\}\n?([\s\S]*?)\{\{\/if\}\}\n?/g, (_, k, inner) => (vars[k] ? inner : ""));
   out = out.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? String(vars[k] ?? "") : m));
   return out;
 }

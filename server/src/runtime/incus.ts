@@ -224,7 +224,7 @@ export class IncusRuntime implements Runtime {
   }
 
   private async pushCredentials(name: string, creds: Credentials, opencodePassword: string, workbase: string) {
-    // PIXEL_WORKBASE: where the finding tools keep FINDINGS.json.
+    // PIXEL_WORKBASE: the run's workbase, for plugins and scripts.
     const envFile = Object.entries({ ...creds.env, PIXEL_WORKBASE: workbase, OPENCODE_SERVER_PASSWORD: opencodePassword })
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join("\n");
@@ -232,6 +232,8 @@ export class IncusRuntime implements Runtime {
     // Plugins are baked into the image too; pushing them here keeps older images current.
     for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts")))
       await this.pushFile(name, `/root/.config/opencode/plugin/${f}`, readFileSync(join(config.opencodePluginsDir, f), "utf8"), "0644");
+    // The finding tools were dropped (2026-10-15); older images still have them baked in.
+    await this.mustExec(name, ["rm", "-f", "/root/.config/opencode/plugin/findings.ts"], "Removing old plugins");
     if (creds.authJson.trim()) {
       await this.mustExec(name, ["mkdir", "-p", "/root/.local/share/opencode"], "mkdir");
       await this.pushFile(name, "/root/.local/share/opencode/auth.json", creds.authJson);

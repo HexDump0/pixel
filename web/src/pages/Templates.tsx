@@ -39,6 +39,44 @@ function VersionDiff({ from, to }: { from: TemplateVersion; to: TemplateVersion 
   );
 }
 
+/** Pixel's own sections (templates/parts/), the same in every template that uses them. */
+function Sections({ parts }: { parts: { name: string; body: string }[] }) {
+  if (!parts.length) return null;
+  return (
+    <div className="mt-3 text-xs">
+      <div className="muted">Pixel's sections, kept up to date with Pixel; put one in with its tag:</div>
+      <div className="mt-1 flex flex-col gap-1">
+        {parts.map((p) => (
+          <details key={p.name}>
+            <summary className="cursor-pointer font-mono">{`{{> ${p.name}}}`}</summary>
+            <pre className="mt-1 max-h-[40vh] overflow-auto rounded border border-zinc-200 p-2 font-mono whitespace-pre-wrap dark:border-zinc-800">{p.body}</pre>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The prompt as an agent would get it, for an example run. */
+function PromptPreview({ body }: { body: string }) {
+  const [shown, setShown] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () =>
+    api.preview({ body }).then(
+      (r) => (setShown(r.prompt), setError(null)),
+      (e) => (setShown(null), setError((e as Error).message)),
+    );
+  return (
+    <div className="mt-3 text-xs">
+      <button className="text-accent hover:underline" onClick={() => (shown === null ? load() : setShown(null))}>
+        {shown === null ? "Show the full prompt" : "Hide the full prompt"}
+      </button>
+      <ErrorBox error={error} />
+      {shown !== null && <pre className="mt-1 max-h-[60vh] overflow-auto rounded border border-zinc-200 p-2 font-mono whitespace-pre-wrap dark:border-zinc-800">{shown}</pre>}
+    </div>
+  );
+}
+
 function TemplateEditor({ id }: { id: string }) {
   const t = useAsync(() => api.template(id), [id]);
   const versions = t.data?.versions ?? [];
@@ -98,6 +136,8 @@ function TemplateEditor({ id }: { id: string }) {
             <div className="mt-2 text-xs muted">
               Variables: {t.data?.variables.map((v) => `{{${v}}}`).join(" ")} · Conditionals: <code>{"{{#if var}}…{{/if}}"}</code>
             </div>
+            <Sections parts={t.data?.parts ?? []} />
+            <PromptPreview body={body} />
           </>
         )}
       </Card>

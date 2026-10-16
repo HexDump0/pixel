@@ -64,9 +64,10 @@ export async function snapshotWorkbase(runId: string, message = "snapshot") {
   return (await git(runId, ["rev-parse", "HEAD"])).out.trim();
 }
 
-export async function historyLog(runId: string, limit = 200) {
+/** Snapshots, newest first; with `path`, only those that changed that file or folder. */
+export async function historyLog(runId: string, limit = 200, path?: string) {
   if (!existsSync(gitDir(runId))) return [];
-  const r = await git(runId, ["log", `-n${limit}`, "--format=%H%x09%ct%x09%s", "--shortstat"]);
+  const r = await git(runId, ["log", `-n${limit}`, "--format=%H%x09%ct%x09%s", "--shortstat", ...(path ? ["--", path] : [])]);
   const entries: { commit: string; ts: number; message: string; stat: string }[] = [];
   for (const line of r.out.split("\n")) {
     const parts = line.split("\t");
@@ -76,8 +77,9 @@ export async function historyLog(runId: string, limit = 200) {
   return entries;
 }
 
-export async function historyShow(runId: string, commit: string) {
+/** What a snapshot changed (limited to `path` when given). */
+export async function historyShow(runId: string, commit: string, path?: string) {
   if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error("bad commit id");
-  const r = await git(runId, ["show", "--format=%H%n%ct%n%s", "--stat", "--patch", "--no-color", commit]);
+  const r = await git(runId, ["show", "--format=%H%n%ct%n%s", "--stat", "--patch", "--no-color", commit, ...(path ? ["--", path] : [])]);
   return r.out.slice(0, 2_000_000);
 }

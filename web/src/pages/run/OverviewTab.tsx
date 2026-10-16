@@ -1,7 +1,7 @@
 /**
  * Overview: what is happening and how it went, without repeating the Findings tab or the side column.
- * Now (each working agent's last tool calls, live), Story (the run's notable events, new ones marked),
- * Charts (the run's whole life). The agent's question, when it asks one, sits on top.
+ * Charts (the run's whole life), Story (the run's notable events, new ones marked), Now (each working
+ * agent's last tool calls, live). The agent's question, when it asks one, sits on top.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -295,9 +295,9 @@ export function OverviewTab({ detail, fleet, seen, onOpenFinding, onChange }: { 
       {pending.map((q) => (
         <QuestionCard key={q.id} runId={r.id} q={q} onDone={onChange} />
       ))}
-      <Now runId={r.id} fleet={fleet} rootSession={r.session_id} />
-      <Story runId={r.id} seen={seen} onOpenFinding={onOpenFinding} />
       <Charts detail={detail} fleet={fleet} />
+      <Story runId={r.id} seen={seen} onOpenFinding={onOpenFinding} />
+      <Now runId={r.id} fleet={fleet} rootSession={r.session_id} />
     </>
   );
 }

@@ -547,7 +547,7 @@ function Runs({ s }: { s: Stats }) {
           ["Continues sent", fmtInt(r.continues)],
           ["OOM restarts", fmtInt(r.oomRestarts)],
           ["Sessions in window", `${r.sessions} (${r.subagents} subagents)`],
-          ...Object.entries(r.verdicts).map(([k, v]) => [`Triaged: ${k}`, v] as [string, number]),
+          ...Object.entries(r.verdicts).map(([k, v]) => [`Findings triaged ${({ real: "real", not_bug: "not a bug", duplicate: "duplicate" } as Record<string, string>)[k] ?? k}`, v] as [string, number]),
         ]}
       />
     </div>

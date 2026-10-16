@@ -48,7 +48,8 @@ export function Wall() {
   const limits = useLimits();
   const seenRuns = useSeenRuns();
   const [lastLooked] = useLastLooked();
-  const [filter, setFilter] = usePref<FilterId>("wall.filter", "all");
+  // Opens on Running every time; the filter isn't remembered.
+  const [filter, setFilter] = useState<FilterId>("running");
   const [sort, setSort] = usePref<string>("wall.sort", "started");
   const [layout, setLayout] = usePref<"tiles" | "list">("wall.layout", "tiles");
   const [q, setQ] = useState("");

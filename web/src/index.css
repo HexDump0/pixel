@@ -1443,3 +1443,20 @@ svg.i {
   & a { color: var(--accent); }
 }
 
+
+/* Syntax highlighting (highlight.js classes), from the run and tool colours so it follows the theme. */
+.hljs-comment, .hljs-quote { color: var(--ink-3); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag { color: var(--k-task); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_, .hljs-template-tag, .hljs-code { color: var(--r0); }
+.hljs-number, .hljs-literal, .hljs-symbol { color: var(--r5); }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: var(--r1); }
+.hljs-type, .hljs-title.class_, .hljs-selector-class { color: var(--r3); }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-property, .hljs-params, .hljs-selector-attr { color: var(--ink-2); }
+.hljs-meta, .hljs-meta .hljs-keyword { color: var(--r4); }
+.hljs-meta .hljs-string { color: var(--r0); }
+.hljs-bullet, .hljs-punctuation { color: var(--ink-3); }
+.hljs-link { color: var(--accent); text-decoration: underline; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong, .hljs-section { font-weight: 600; }
+.hljs-addition { color: var(--good); }
+.hljs-deletion { color: var(--critical); }

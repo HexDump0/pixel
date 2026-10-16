@@ -94,9 +94,9 @@ One line pinned at the bottom (min 44 px). Quick messages ("What are you doing r
   2. *Story*: the run's notable events in time order: started, finding added / confirmed / ruled out / removed (with the agent's note), crashes and OOM recoveries, automatic continues, key failovers, your messages and answers, report written. This replaces the PROGRESS.md "since you looked" diff: entries since your last visit are marked.
   3. *Charts*: over the run's whole life: tok/s and cost, context use with continue/restart marks, tool calls per kind.
   The question card (when the agent asks) sits at the top of Overview.
-- **Findings**: the full list from the findings tool (see findings-tool.md): grouped by state (Confirmed, Suspected, Leads, Ruled out; removed ones hidden behind a toggle), each row severity · title · location · PoC · state · verdict; open a finding for its description, history of changes, links to the PoC file and the REPORT.md section; verdict buttons with keys (R real, N not a bug, D duplicate, W needs work) and a note. "Needs work" also messages the live agent. New/changed since you looked are marked.
+- **Findings**: the full list from the findings tool (see findings-tool.md): grouped by state (Confirmed, Suspected, Leads, Ruled out; removed ones hidden behind a toggle), each row severity · title · location · PoC · state · verdict; open a finding for its description, history of changes, links to the PoC file and the REPORT.md section; verdict buttons with keys (R real, N not a bug, D duplicate) and a note; verdicts never message the agent. New/changed since you looked are marked.
 - **Report — NEW.** REPORT.md rendered, once the run is done (`report_ready`). Before that the tab is disabled with a tooltip ("Written when the run finishes"), not an empty page. Finding ids mentioned in the report link to the findings. The run-level triage verdict and notes (today's ReportTab form, saved to TRIAGE.md) move here, under the report.
-- Transcript, Files, Timeline, Terminal, Machine: as today, restyled with the new tokens (mockup `shared.js` renderers show the intended look).
+- Transcript, Files, Terminal, Machine: redesigned 2026-10-15 (see design.md § dashboard for what each does). Timeline: as today, restyled with the new tokens.
 
 ## 5. Other pages
 

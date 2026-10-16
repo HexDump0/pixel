@@ -6,7 +6,7 @@ import { agentCredentials, keyFor, providerKeys } from "../providerAccounts.ts";
 import { publish } from "../bus.ts";
 import { runtime } from "../runtime/index.ts";
 import { detectLanguage, ensureWorkbase, refreshRunFiles, workbasePath } from "../knowledge.ts";
-import { getVersion, latestVersion, render } from "../templates.ts";
+import { checkParts, getVersion, latestVersion, render } from "../templates.ts";
 import { snapshotWorkbase } from "../history.ts";
 import { clientFor, credsHash, notifyRun, publicRun, setRun, setStatus, timeline } from "./state.ts";
 import { watch } from "./events.ts";
@@ -61,6 +61,7 @@ export function createRun(o: NewRun): RunRow {
   const size = typeof o.size === "object" ? o.size : s.sizePresets[o.size || s.defaultSize];
   if (!size) throw new Error(`unknown size preset ${o.size}`);
   if (o.parentRun && !getRun(o.parentRun)) throw new Error(`no run ${o.parentRun}`);
+  if (o.promptOverride) checkParts(o.promptOverride);
   const model = o.model || s.defaultModel;
   if (!model.includes("/")) throw new Error("model must look like provider/model");
   const id = o.name?.trim() ? o.name.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-") : newRunId(repo);

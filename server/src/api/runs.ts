@@ -7,7 +7,6 @@ import { clientFor, controls, createRun, isWatching, publicRun, syncTranscript, 
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
-import { progressDiff, progressOf, progressVersion } from "../progress.ts";
 import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } from "../findings.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, providerKeys, publicKey } from "../providerAccounts.ts";
@@ -127,7 +126,7 @@ get("/runs/:id/report", ({ params: { id } }) => {
   const p = reportPath(id);
   return { content: existsSync(p) ? readFileSync(p, "utf8") : null };
 });
-// ---- findings (opencode-plugins/findings.ts → FINDINGS.json → findings table) ----
+// ---- findings (workbase findings/F<n>-name/README.md → findings table) ----
 
 get("/runs/:id/findings", ({ params: { id } }) => {
   mustRun(id);
@@ -140,29 +139,13 @@ get("/runs/:id/findings/events", ({ params: { id }, query }) => {
 post("/runs/:id/findings/:fid/verdict", async ({ req, params: { id, fid } }) => {
   mustRun(id);
   const b = await readJson<{ verdict?: Verdict | null; note?: string | null }>(req);
-  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null, controls.sendMessage);
+  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null);
 });
 get("/findings", ({ query }) =>
   listFindings({ run: query.get("run") ?? undefined, untriaged: query.get("untriaged") === "1", severity: query.get("severity") ?? undefined }),
 );
 get("/findings/events", ({ query }) => findingEvents({ since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 200) }));
 
-get("/runs/:id/progress", ({ params: { id } }) => {
-  mustRun(id);
-  return progressOf(id);
-});
-/** PROGRESS.md at `to` (default latest) with changes since `from` (default the version before; 0 = nothing) marked. */
-get("/runs/:id/progress/diff", ({ params: { id }, query }) => {
-  mustRun(id);
-  const num = (k: string) => (query.has(k) ? Number(query.get(k)) : undefined);
-  return progressDiff(id, num("from"), num("to")) ?? { from: null, to: null, lines: [] };
-});
-get("/runs/:id/progress/:ts", ({ params: { id, ts } }) => {
-  mustRun(id);
-  const v = progressVersion(id, Number(ts));
-  if (!v) throw new HttpError(404, "no such version");
-  return v;
-});
 get("/runs/:id/vm", async ({ params: { id } }) => {
   const run = mustRun(id);
   const [state, opencode] = await Promise.all([runtime.vmState(run), run.endpoint ? clientFor(run).healthy() : false]);
@@ -183,9 +166,11 @@ put("/runs/:id/file", async ({ req, params: { id }, query }) => {
   writeWorkbaseFile(id, path, (await readJson<{ content: string }>(req)).content);
   addTimeline(id, "user", "file", `Edited ${path} in the workbase`);
 });
-get("/runs/:id/history", ({ params: { id } }) => historyLog(id));
+/** `path` (relative to the workbase) narrows the log and the patch to one file or folder. */
+const historyPath = (id: string, p: string | null) => (p ? (safeWorkbasePath(id, p), p.replace(/^\/+/, "")) : undefined);
+get("/runs/:id/history", ({ params: { id }, query }) => historyLog(id, 200, historyPath(id, query.get("path"))));
 post("/runs/:id/history", async ({ params: { id } }) => ({ commit: await snapshotWorkbase(id, "manual snapshot") }));
-get("/runs/:id/history/:commit", async ({ params: { id, commit } }) => ({ patch: await historyShow(id, commit) }));
+get("/runs/:id/history/:commit", async ({ params: { id, commit }, query }) => ({ patch: await historyShow(id, commit, historyPath(id, query.get("path"))) }));
 
 // ---- controls ----
 
@@ -235,7 +220,7 @@ post("/runs/:id/question/:qid", async ({ req, params: { id, qid } }) => {
 });
 post("/runs/:id/triage", async ({ req, params: { id } }) => {
   const b = await readJson(req);
-  return controls.triage(id, b.verdict ?? null, b.notes ?? null, !!b.markTriaged, !!b.keepVm);
+  return controls.triage(id, b.notes ?? null, !!b.markTriaged, !!b.keepVm);
 });
 post("/runs/:id/rerun", async ({ req, params: { id } }) => publicRun(controls.rerun(id, await readJson(req))));
 del("/runs/:id", ({ params: { id }, query }) => controls.deleteRun(id, query.get("workbase") === "1"));

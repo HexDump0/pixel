@@ -15,7 +15,5 @@
 - [ ] resume-subagents plugin: confirm live (user's opencode or first Pixel run) that after a stop the agent resumes the same child sessions via task_id. Re-check the experimental hook when bumping opencode.
 - [ ] Models page: optional cost-vs-findings scatter on the leaderboard (not built; needs triaged runs to be useful). Speed test UI, real-run check of health/leaderboard, and tests for providers.ts/fleet.ts were done 2026-10-11.
 - [ ] Speed test with paid providers (keys in Settings) untested; only the opencode free tier was run. Health's tokens/min counts uncached input + output + reasoning; check how your provider counts its TPM limit before relying on the meter.
-- [ ] Findings plugin: can a plugin in `~/.config/opencode/plugin/` import `@opencode-ai/plugin` (and zod) with no install step on the pinned opencode? If not, vendor it into the image. See `redesign/findings-tool.md`.
-- [ ] Run-level triage verdict once findings have their own verdicts: derive it from the findings (with an override) or keep asking for it? Leaderboard uses it today.
-- [ ] Overview tab content (Now / Story / Charts proposal in `redesign/spec.md`): mock and confirm with the user before building.
-- [ ] The user's own templates still ask for PROGRESS.md: give them the replacement text (in `redesign/findings-tool.md`) when the findings tool ships.
+- [ ] The user's own templates (in the live DB) still ask for PROGRESS.md: rewrite each as their own text plus `{{> environment}}`, `{{> findings}}`, `{{> report}}`, show the user the diff, apply only on a yes.
+- [ ] Findings as files: not yet tried with a real agent. Check that agents keep `state` current, pick free numbers, and that subagents write findings too.

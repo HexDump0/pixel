@@ -140,9 +140,9 @@ export const api = {
   file: (id: string, path: string) => request<FileContent>("GET", `${r(id)}/file${q({ path })}`),
   rawFileUrl: (id: string, path: string) => `/api${r(id)}/raw${q({ path })}`,
   saveFile: (id: string, path: string, content: string) => request("PUT", `${r(id)}/file${q({ path })}`, { content }),
-  history: (id: string) => request<HistoryEntry[]>("GET", `${r(id)}/history`),
+  history: (id: string, path?: string) => request<HistoryEntry[]>("GET", `${r(id)}/history${q({ path })}`),
   snapshotHistory: (id: string) => request<{ commit: string | null }>("POST", `${r(id)}/history`),
-  historyShow: (id: string, commit: string) => request<{ patch: string }>("GET", `${r(id)}/history/${commit}`),
+  historyShow: (id: string, commit: string, path?: string) => request<{ patch: string }>("GET", `${r(id)}/history/${commit}${q({ path })}`),
 
   /** Simple POST controls: continue, abort, pause, stop, done, retry, restart-opencode, reset-counters, sync. */
   control: (id: string, action: string, body: unknown = {}) => request("POST", `${r(id)}/${action}`, body),
@@ -154,12 +154,12 @@ export const api = {
   vmAction: (id: string, action: "start" | "stop" | "snapshot" | "restore", snapshot?: string) => request("POST", `${r(id)}/vm/${action}`, { snapshot }),
   deleteVm: (id: string) => request("DELETE", `${r(id)}/vm`),
   answer: (id: string, qid: string, answers: string[][] | null) => request("POST", `${r(id)}/question/${qid}`, answers ? { answers } : { reject: true }),
-  triage: (id: string, body: { verdict?: string | null; notes?: string | null; markTriaged?: boolean; keepVm?: boolean }) => request("POST", `${r(id)}/triage`, body),
+  triage: (id: string, body: { notes?: string | null; markTriaged?: boolean; keepVm?: boolean }) => request("POST", `${r(id)}/triage`, body),
   rerun: (id: string, body: { asFollowUp?: boolean; model?: string; templateVersion?: number }) => request<Run>("POST", `${r(id)}/rerun`, body),
   deleteRun: (id: string, workbase: boolean) => request("DELETE", `${r(id)}${q({ workbase: workbase ? 1 : undefined })}`),
 
   templates: () => request<Template[]>("GET", "/templates"),
-  template: (id: string) => request<{ versions: TemplateVersion[]; variables: string[] }>("GET", `/templates/${encodeURIComponent(id)}`),
+  template: (id: string) => request<{ versions: TemplateVersion[]; variables: string[]; parts: { name: string; body: string }[] }>("GET", `/templates/${encodeURIComponent(id)}`),
   createTemplate: (t: { id: string; name?: string; body: string; note?: string }) => request<TemplateVersion>("POST", "/templates", t),
   addTemplateVersion: (id: string, body: string, note?: string) => request<TemplateVersion>("POST", `/templates/${encodeURIComponent(id)}/versions`, { body, note }),
   preview: (input: { body: string; repo?: string; ref?: string; model?: string; size?: string; parentRun?: string; name?: string }) =>

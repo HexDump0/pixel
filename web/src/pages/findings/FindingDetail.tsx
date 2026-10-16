@@ -1,9 +1,10 @@
 /**
- * One finding: what the agent wrote, where, the PoC, its history, and your verdict (R real, N not a bug,
- * D duplicate, W needs work — "needs work" is also sent to the agent while the run is live).
+ * One finding: its README (findings/F<n>-name/ in the workbase), where, the PoC, its history, and your verdict (R real, N not a bug,
+ * D duplicate). Verdicts go to TRIAGE.md for later agents; nothing is sent to the run.
  */
 import { useEffect, useState } from "react";
-import { IconFileCode, IconFileText } from "@tabler/icons-react";
+import { IconAlertTriangle, IconFileCode, IconFileText, IconFolder } from "@tabler/icons-react";
+import { Markdown } from "../../components/Markdown.tsx";
 import { cn } from "../../lib/cn.ts";
 import { STATE_WORD, useFindingEvents, useSetVerdict, VERDICTS, verdictLabel } from "../../lib/findings.ts";
 import { runName } from "../../lib/fleet.ts";
@@ -33,11 +34,10 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
   const setVerdict = useSetVerdict();
   const [note, setNote] = useState(f.verdict_note ?? "");
   useEffect(() => setNote(f.verdict_note ?? ""), [f.run_id, f.id, f.verdict_note]);
-  const live = run && (run.status === "running" || run.status === "recovering");
 
   const choose = (v: (typeof VERDICTS)[number]["v"]) => setVerdict.mutate({ f, verdict: f.verdict === v ? null : v, note });
 
-  // R / N / D / W while this finding is open (not while typing).
+  // R / N / D while this finding is open (not while typing).
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest("input, textarea, select, [role=menu]")) return;
@@ -76,12 +76,24 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
           </div>
         )}
       </div>
-      <p className="m-0 max-w-[72ch] leading-relaxed whitespace-pre-wrap text-ink">{f.summary}</p>
+      {f.problem && (
+        <div className="flex items-start gap-2 text-[12.5px] text-warning">
+          <IconAlertTriangle {...IC_XS} className="mt-0.5 shrink-0" />
+          <span>Pixel couldn't read all of {f.path ?? "the README"}: {f.problem}</span>
+        </div>
+      )}
+      {f.summary && <Markdown text={f.summary} className="max-w-[72ch] leading-relaxed text-ink" />}
       <div className="flex flex-wrap gap-1.5">
+        {f.path && (
+          <Button size="xs" onClick={() => openRun(f.run_id, `files/${f.path}`)}>
+            <IconFolder {...IC_XS} />
+            {f.path.replace(/\/README\.md$/, "/")}
+          </Button>
+        )}
         {f.poc && (
           <Button size="xs" onClick={() => openRun(f.run_id, `files/${f.poc}`)}>
             <IconFileCode {...IC_XS} />
-            {f.poc}
+            {f.path && f.poc.startsWith(f.path.replace(/README\.md$/, "")) ? f.poc.slice(f.path.length - "README.md".length) : f.poc}
           </Button>
         )}
         {run?.report_ready ? (
@@ -94,8 +106,8 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
 
       {f.state !== "lead" && !f.removed_at && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-line-2 bg-s2 px-4 py-3.5">
-          <div className="text-[12.5px] text-ink-3">Your verdict · written to TRIAGE.md{live ? "; “needs work” is also sent to the agent" : ""}</div>
-          <div className="grid grid-cols-4 gap-1.5 max-md:grid-cols-2">
+          <div className="text-[12.5px] text-ink-3">Your verdict · written to TRIAGE.md</div>
+          <div className="grid grid-cols-3 gap-1.5 max-md:grid-cols-1">
             {VERDICTS.map((v) => (
               <button
                 key={v.v}
@@ -106,7 +118,6 @@ export function FindingDetail({ f, run, showRun = true }: { f: Finding; run?: Ru
                 className={cn(
                   "flex min-w-0 flex-col items-start gap-[3px] rounded-lg border border-line bg-s1 px-2.5 py-[9px] text-left text-ink hover:border-ink-4 aria-pressed:border-ink aria-pressed:bg-s3",
                   v.v === "real" && "aria-pressed:border-good",
-                  v.v === "needs_work" && "aria-pressed:border-warning",
                 )}
               >
                 <b className="flex w-full items-center gap-1.5 text-[13px] font-medium">

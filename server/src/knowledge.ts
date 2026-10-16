@@ -36,6 +36,41 @@ export function hasReport(runId: string) {
   }
 }
 
+const SEV_ORDER = ["critical", "high", "medium", "low", "info"];
+export interface VerdictCounts {
+  real: number;
+  not_bug: number;
+  duplicate: number;
+  realBySeverity: Record<string, number>;
+}
+
+/** The human's finding verdicts per run (removed findings left out): what a run's result is made of. */
+export function verdictCounts(runId?: string) {
+  const rows = db
+    .query<{ run_id: string; verdict: string; severity: string | null; n: number }, any[]>(
+      `SELECT run_id, verdict, severity, COUNT(*) AS n FROM findings WHERE verdict IS NOT NULL AND removed_at IS NULL ${runId ? "AND run_id = ?" : ""} GROUP BY run_id, verdict, severity`,
+    )
+    .all(...(runId ? [runId] : []));
+  const out: Record<string, VerdictCounts> = {};
+  for (const r of rows) {
+    const c = (out[r.run_id] ??= { real: 0, not_bug: 0, duplicate: 0, realBySeverity: {} });
+    if (r.verdict === "real") {
+      c.real += r.n;
+      const sev = r.severity ?? "info";
+      c.realBySeverity[sev] = (c.realBySeverity[sev] ?? 0) + r.n;
+    } else if (r.verdict === "not_bug" || r.verdict === "duplicate") c[r.verdict] += r.n;
+  }
+  return out;
+}
+
+/** A run's result in a few words, from its finding verdicts: "2 real (1 high, 1 low)", "nothing real", or null before any verdict. */
+export function outcomeText(c: VerdictCounts | undefined) {
+  if (!c || c.real + c.not_bug + c.duplicate === 0) return null;
+  if (!c.real) return "nothing real";
+  const sev = SEV_ORDER.filter((s) => c.realBySeverity[s]).map((s) => `${c.realBySeverity[s]} ${s}`);
+  return `${c.real} real (${sev.join(", ")})`;
+}
+
 /** .pixel/run.json: facts about the run, for the user and for other agents browsing workbases. */
 export function writeRunJson(run: RunRow) {
   const dir = join(workbasePath(run.id), ".pixel");
@@ -52,7 +87,7 @@ export function writeRunJson(run: RunRow) {
     started: run.started_at ? new Date(run.started_at).toISOString() : null,
     finished: run.finished_at ? new Date(run.finished_at).toISOString() : null,
     report: hasReport(run.id),
-    triage_verdict: run.triage_verdict,
+    triage: outcomeText(verdictCounts(run.id)[run.id]),
     follow_up_of: run.parent_run,
   };
   writeAtomic(join(dir, "run.json"), JSON.stringify(info, null, 2) + "\n");
@@ -66,9 +101,13 @@ export function writeTriage(run: RunRow) {
     )
     .all(run.id);
   if (!run.triage_notes && !run.triage_verdict && !verdicts.length) return;
+  const outcome = outcomeText(verdictCounts(run.id)[run.id]);
   const word: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
   const lines = [`# Triage of ${run.id}`, "", "Written by the human who reviewed this run's findings and REPORT.md.", ""];
-  if (run.triage_notes || run.triage_verdict) lines.push(`Overall verdict: ${run.triage_verdict || "not set"}`, "", run.triage_notes || "", "");
+  if (outcome) lines.push(`Result: ${outcome}.`, "");
+  // Runs triaged before findings had verdicts carry a typed overall verdict.
+  if (run.triage_verdict) lines.push(`Earlier overall verdict: ${run.triage_verdict}`, "");
+  if (run.triage_notes) lines.push(run.triage_notes, "");
   if (verdicts.length) {
     lines.push("## Findings", "");
     for (const v of verdicts) lines.push(`- ${v.id} ${v.title}: **${word[v.verdict] ?? v.verdict}**${v.verdict_note ? `. ${v.verdict_note}` : ""}`);
@@ -91,6 +130,7 @@ const STATUS_WORD: Record<string, string> = {
 /** INDEX.md at the top of /workbases: one line per run. */
 export function writeIndex() {
   const runs = listRuns().filter((r) => existsSync(workbasePath(r.id)));
+  const verdicts = verdictCounts();
   const rows = runs.map((r) => {
     const cells = [
       r.id,
@@ -100,14 +140,14 @@ export function writeIndex() {
       r.started_at ? new Date(r.started_at).toISOString().slice(0, 10) : "",
       r.model,
       hasReport(r.id) ? "yes" : "no",
-      r.triage_verdict || "",
+      outcomeText(verdicts[r.id]) ?? r.triage_verdict ?? "",
     ];
     return `| ${cells.join(" | ")} |`;
   });
   const body = [
     "# Workbases",
     "",
-    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report) `FINDINGS.md` (what the agent found, by state) and sometimes `TRIAGE.md` (a human's verdicts on the findings and the report).",
+    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report), `findings/` (one folder per finding: README.md with the details, PoCs next to it), `FINDINGS.md` (an index of those, by state) and sometimes `TRIAGE.md` (a human's verdicts on the findings and the report).",
     "",
     "| Run | Repository | Language | Status | Started | Model | Report | Triage |",
     "|---|---|---|---|---|---|---|---|",

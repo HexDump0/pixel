@@ -71,8 +71,9 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
   const [lang, setLang] = useState("");
   const [verdict, setVerdict] = useState("");
   const langs = [...new Set((wbs.data ?? []).map((w) => w.language).filter(Boolean))] as string[];
-  const verdicts = [...new Set((wbs.data ?? []).map((w) => w.verdict).filter(Boolean))] as string[];
-  const shown = (wbs.data ?? []).filter((w) => (!lang || w.language === lang) && (!verdict || w.verdict === verdict)).sort((a, b) => b.last - a.last);
+  // verdict is the run's result ("2 real (1 high)", "nothing real") or an older typed overall verdict.
+  const result = (v: string | null) => (!v ? "untriaged" : /^\d+ real\b/.test(v) ? "real" : "other");
+  const shown = (wbs.data ?? []).filter((w) => (!lang || w.language === lang) && (!verdict || result(w.verdict) === verdict)).sort((a, b) => b.last - a.last);
   return (
     <div>
       <div className="mb-3 flex flex-wrap gap-2">
@@ -83,10 +84,10 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
           ))}
         </select>
         <select className="input" value={verdict} onChange={(e) => setVerdict(e.target.value)}>
-          <option value="">Any triage verdict</option>
-          {verdicts.map((v) => (
-            <option key={v}>{v}</option>
-          ))}
+          <option value="">Any triage result</option>
+          <option value="real">With real findings</option>
+          <option value="other">Nothing real</option>
+          <option value="untriaged">Not triaged</option>
         </select>
       </div>
       <ErrorBox error={wbs.error} />
@@ -200,7 +201,7 @@ export function KnowledgePage() {
               </button>{" "}
               · <Link to={`/runs/${encodeURIComponent(open)}`}>open run</Link>
             </div>
-            <WorkbaseBrowser runId={open} />
+            <WorkbaseBrowser runId={open} className="h-[75vh] rounded-xl border border-line-2" />
           </div>
         ) : (
           <Card title="INDEX.md (what agents see at /workbases/INDEX.md)">

@@ -81,9 +81,13 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 - **Looking at the UI without agents**: `PIXEL_DATA=/tmp/pixel-demo bun server/test/seed-demo.ts`, then start Pixel with the same `PIXEL_DATA`, `PIXEL_RUNTIME=local` and `PIXEL_DETACHED=1` (no reattaching or recovering runs).
 - **CLI**: `bun run cli -- run <repo> --wait`, `ls`, `show`, `log`, `msg`, `continue`, `triage`, … (`PIXEL_URL`, `PIXEL_PASSWORD`).
 
-### Findings tools
+### Findings
 
-Every agent gets the opencode plugin [`opencode-plugins/findings.ts`](opencode-plugins/findings.ts): `finding_add`, `finding_update`, `finding_remove` and `finding_list`. Findings have a state (lead → suspected → confirmed, or ruled out), a severity, a location and a PoC path, and live in the run's workbase as `FINDINGS.json` (plus a readable `FINDINGS.md`). Pixel shows them as they come in; `finding_list` shows the agent your verdicts and notes. Ask for them in your template (the seeded `audit` template does).
+Agents keep their findings as plain files in the run's workbase, one folder per finding: `findings/F3-short-name/README.md` with a short header (`state`: lead → suspected → confirmed, or ruled out; `severity`, `location`, `poc`), then the details in markdown, with PoCs and logs next to it. No tools or API calls, so other agents can read them like any other file. Pixel picks changes up within a few seconds, keeps a history of each finding, writes `FINDINGS.md` (an index) and puts your verdicts in `TRIAGE.md`. A run's result ("2 real (1 high, 1 low)") comes from your verdicts.
+
+### Template sections
+
+The conventions every template should share live in `templates/parts/` and ship with Pixel: `{{> environment}}` (target, workbase, scratch, other runs' workbases), `{{> findings}}` (the format above) and `{{> report}}`. Put them in your template and keep only your own task text around them; when a convention changes, every template that uses the section gets it. The seeded `audit` template is built this way.
 
 ### Interrupted subagents
 
@@ -122,7 +126,7 @@ server/src/
 web/src/           React dashboard: pages/, pages/run/, components/ (viz.tsx charts, RunPanel, Mesh, CommandPalette), lib/ (fleet + runs stores)
 image/             pixel-image build (provision.sh, opencode config + systemd unit)
 Dockerfile.single, compose.single.yaml   single-container mode (Coolify)
-templates/         seed prompt templates
+templates/         seed prompt templates; parts/ = Pixel's sections ({{> name}})
 opencode-plugins/  opencode plugins every agent gets (resume interrupted subagents)
 server/test/       bun tests, with a fake opencode server
 ai/                design notes and decisions

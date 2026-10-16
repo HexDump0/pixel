@@ -181,12 +181,12 @@ export async function deleteMachine(id: string) {
   timeline(id, "pixel", "vm", "Machine deleted; workbase kept");
 }
 
-/** Save triage notes (→ TRIAGE.md); optionally mark triaged, which deletes the machine. */
-export async function triage(id: string, verdict: string | null, notes: string | null, markTriaged: boolean, keepVm = false) {
+/** Save triage notes (→ TRIAGE.md; the run's result comes from its finding verdicts); optionally mark triaged, which deletes the machine. */
+export async function triage(id: string, notes: string | null, markTriaged: boolean, keepVm = false) {
   mustRun(id);
-  setRun(id, { triage_verdict: verdict || null, triage_notes: notes || null });
+  setRun(id, { triage_notes: notes || null });
   writeTriage(getRun(id)!);
-  timeline(id, "user", "triage", `Triage notes saved${verdict ? ` (verdict: ${verdict})` : ""}`);
+  timeline(id, "user", "triage", "Triage notes saved");
   if (!markTriaged) return;
   setStatus(id, "triaged", null, { triaged_at: Date.now() });
   timeline(id, "user", "triage", "Marked triaged");

@@ -272,7 +272,7 @@ export async function stats(days: number, tzOffsetMin = 0) {
   }
 
   const status = counts<string>("SELECT status AS k, COUNT(*) AS n FROM runs GROUP BY status");
-  const verdicts = counts<string>("SELECT triage_verdict AS k, COUNT(*) AS n FROM runs WHERE triage_verdict IS NOT NULL GROUP BY triage_verdict");
+  const verdicts = counts<string>("SELECT verdict AS k, COUNT(*) AS n FROM findings WHERE verdict IS NOT NULL AND removed_at IS NULL GROUP BY verdict");
   const runTotals = db
     .query<{ continues: number; oom: number; created: number; finished: number }, [number, number]>(
       "SELECT COALESCE(SUM(continues), 0) AS continues, COALESCE(SUM(oom_restarts), 0) AS oom, SUM(created_at >= ?) AS created, SUM(finished_at >= ?) AS finished FROM runs",
