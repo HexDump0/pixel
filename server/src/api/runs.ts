@@ -102,11 +102,8 @@ get("/runs/:id", ({ params: { id } }) => {
     report: existsSync(reportPath(id)),
     // Prompt tokens of every model call: cache rate = read / (input + read + write), as on the Stats page.
     cache: db
-      .query<{ input: number; read: number; write: number }, [string]>(
-        `SELECT COALESCE(SUM(json_extract(data, '$.tokens.input')), 0) AS input, COALESCE(SUM(json_extract(data, '$.tokens.cache.read')), 0) AS read,
-           COALESCE(SUM(json_extract(data, '$.tokens.cache.write')), 0) AS write FROM messages WHERE run_id = ? AND role = 'assistant'`,
-      )
-      .get(id),
+      .query<{ input: number; read: number; write: number }, [string]>("SELECT input, cache_read AS read, cache_write AS write FROM message_totals WHERE run_id = ?")
+      .get(id) ?? { input: 0, read: 0, write: 0 },
     compare: run.compare_group ? all.filter((r) => r.compare_group === run.compare_group).map((r) => r.id) : [],
     followUps: all.filter((r) => r.parent_run === id).map((r) => r.id),
   };

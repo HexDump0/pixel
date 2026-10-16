@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { relative, isAbsolute } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { db, getRun, listRuns, type RunRow } from "./db.ts";
-import { publish } from "./bus.ts";
+import { publish, subscribe } from "./bus.ts";
 import { runtime } from "./runtime/index.ts";
 import { crossReadGraph } from "./crossreads.ts";
 import { OpencodeClient } from "./opencode.ts";
@@ -195,6 +195,7 @@ function sample() {
   // Aborted messages never finish; forget them once they've scrolled out of the window.
   for (const [id, m] of streaming) if (!rates.has(m.run) || Math.max(...m.est.keys()) < tick - WINDOW) streaming.delete(id);
   if (active.length) publish("*", "fleet.tick", { ts: Date.now(), tps: now, fix });
+  void pushFleet();
 }
 
 let sampler: Timer | null = null;
@@ -204,6 +205,11 @@ export function startFleet() {
 export function stopFleet() {
   if (sampler) clearInterval(sampler);
   sampler = null;
+  // Forget the pushed state: whoever starts the sampler again starts from a fresh build.
+  fleet.runs.clear();
+  fleet.sent.clear();
+  fleet.top = null;
+  fleet.lastFull = 0;
 }
 
 // ---- snapshot for the dashboard ----
@@ -479,69 +485,156 @@ export interface FleetRun {
   machine: { name: string | null; pid: number | null; endpoint: string | null };
 }
 
-/**
- * Everything the Wall draws, for every run that isn't archived. Every open tab asks for this
- * (on a timer and after run changes), so one snapshot is built per second at most and shared.
- */
-let snapCache: { at: number; tick: number; value: Promise<FleetSnapshot> } | null = null;
-export function fleetSnapshot(): Promise<FleetSnapshot> {
-  const now = Date.now();
-  if (snapCache && snapCache.tick === tick && now - snapCache.at < 1000) return snapCache.value;
-  const t0 = performance.now();
-  const value = buildSnapshot();
-  snapCache = { at: now, tick, value };
-  value.then(
-    () => {
-      const ms = performance.now() - t0;
-      if (ms > 250) console.warn(`fleet snapshot took ${Math.round(ms)} ms`);
-    },
-    () => snapCache?.value === value && (snapCache = null),
-  );
-  return value;
+const shownRuns = (now: number) => listRuns().filter((r) => r.status !== "triaged" || now - (r.triaged_at ?? 0) < 86_400_000);
+
+/** Everything the Wall draws for one run. */
+async function buildRun(r: RunRow, now: number, series: Map<string, number[]>): Promise<FleetRun> {
+  const calls = callsSince(r.id, now - HISTORY_MS);
+  const subs = subAgents(r);
+  const rootNow = r.session_id ? latestCall(r, r.session_id) : null;
+  const working = subs.filter((s) => s.status === "running").length;
+  const main =
+    r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
+  const m = latestMetrics(r.id);
+  const size = JSON.parse(r.size);
+  const todos = r.session_id ? db.query<{ data: string }, [string]>("SELECT data FROM todos WHERE session_id = ?").get(r.session_id) : null;
+  return {
+    id: r.id,
+    label: r.label,
+    hue: r.hue,
+    tps: rates.get(r.id)?.samples.map(Math.round) ?? [],
+    tps30: series.get(r.id) ?? [],
+    ticks: recentTicks(calls, now),
+    todos: todos ? (JSON.parse(todos.data) as { status: string }[]).map((t) => t.status) : [],
+    now: rootNow,
+    agents: { main, subs },
+    activity: activityHistory(r.id, calls, now),
+    cpu: ACTIVE.includes(r.status) ? (m?.cpu ?? null) : null,
+    mem: { used: ACTIVE.includes(r.status) ? (m?.mem_used ?? null) : null, total: m?.mem_total ?? size.memoryGiB * 1024 ** 3 },
+    disk: { used: m?.disk_used ?? null, total: m?.disk_total ?? size.diskGiB * 1024 ** 3 },
+    context: { used: contextUsed(r), limit: await contextLimit(r) },
+    machine: { name: r.vm_name, pid: runtime.pid?.(r) ?? null, endpoint: r.endpoint ? new URL(r.endpoint).host : null },
+  };
 }
+
+/** The fleet-wide part of the snapshot: shared memory, today's spend and tokens, the cross-read graph. */
+const buildTop = (now: number) => ({ window: WINDOW, memory: { ...sharedMemory(), pixel: process.memoryUsage().rss }, ...today(now), links: crossReadGraph() });
+type FleetTop = ReturnType<typeof buildTop>;
 
 async function buildSnapshot() {
   const now = Date.now();
-  const runs = listRuns();
-  const shown = runs.filter((r) => r.status !== "triaged" || now - (r.triaged_at ?? 0) < 86_400_000);
-  const out: FleetRun[] = [];
+  const shown = shownRuns(now);
   const series = outputSeries(new Set(shown.map((r) => r.id)), now);
-  for (const r of shown) {
-    const calls = callsSince(r.id, now - HISTORY_MS);
-    const subs = subAgents(r);
-    const rootNow = r.session_id ? latestCall(r, r.session_id) : null;
-    const working = subs.filter((s) => s.status === "running").length;
-    const main =
-      r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
-    const m = latestMetrics(r.id);
-    const size = JSON.parse(r.size);
-    const todos = r.session_id ? db.query<{ data: string }, [string]>("SELECT data FROM todos WHERE session_id = ?").get(r.session_id) : null;
-    out.push({
-      id: r.id,
-      label: r.label,
-      hue: r.hue,
-      tps: rates.get(r.id)?.samples.map(Math.round) ?? [],
-      tps30: series.get(r.id) ?? [],
-      ticks: recentTicks(calls, now),
-      todos: todos ? (JSON.parse(todos.data) as { status: string }[]).map((t) => t.status) : [],
-      now: rootNow,
-      agents: { main, subs },
-      activity: activityHistory(r.id, calls, now),
-      cpu: ACTIVE.includes(r.status) ? (m?.cpu ?? null) : null,
-      mem: { used: ACTIVE.includes(r.status) ? (m?.mem_used ?? null) : null, total: m?.mem_total ?? size.memoryGiB * 1024 ** 3 },
-      disk: { used: m?.disk_used ?? null, total: m?.disk_total ?? size.diskGiB * 1024 ** 3 },
-      context: { used: contextUsed(r), limit: await contextLimit(r) },
-      machine: { name: r.vm_name, pid: runtime.pid?.(r) ?? null, endpoint: r.endpoint ? new URL(r.endpoint).host : null },
-    });
+  const runs: FleetRun[] = [];
+  for (const r of shown) runs.push(await buildRun(r, now, series));
+  return { ts: now, runs, ...buildTop(now) };
+}
+
+// ---- the live fleet, pushed to the dashboard ----
+//
+// The server keeps the Wall's state and sends each tab only what changed (fleet.patch), so tabs
+// never poll and ten tabs cost what one does. A run is rebuilt when something about it happens
+// (any bus message for it) and every FULL_MS regardless, since its activity buckets age with time;
+// the fleet-wide part every TOP_MS. tps is left out of patches: fleet.tick carries it every second.
+
+const FULL_MS = 15_000;
+const TOP_MS = 5_000;
+const fleet = {
+  ts: 0,
+  runs: new Map<string, FleetRun>(),
+  /** Per run, each field as JSON as last sent, to find what changed. */
+  sent: new Map<string, Record<string, string>>(),
+  top: null as FleetTop | null,
+  topSent: "",
+  lastFull: 0,
+  lastTop: 0,
+};
+const dirty = new Set<string>();
+let pushing = false;
+
+subscribe((m) => {
+  if (m.type === "fleet.tick" || m.type === "fleet.patch" || m.type === "delta") return;
+  if (m.run !== "*") return void dirty.add(m.run);
+  const d = m.data as { run?: unknown; id?: unknown } | null;
+  const id = typeof d?.run === "string" ? d.run : typeof d?.id === "string" ? d.id : null;
+  if (id) dirty.add(id);
+  if (m.type === "crossread") fleet.lastTop = 0;
+});
+
+/** Rebuild what changed and publish one fleet.patch; called by the sampler every second. */
+async function pushFleet() {
+  if (pushing) return;
+  pushing = true;
+  try {
+    const now = Date.now();
+    const full = now - fleet.lastFull >= FULL_MS;
+    if (full) fleet.lastFull = now;
+    const shown = shownRuns(now);
+    const todo = shown.filter((r) => full || dirty.has(r.id) || !fleet.runs.has(r.id));
+    dirty.clear();
+    const patch: { ts: number; runs: Record<string, Partial<FleetRun>>; removed: string[]; top?: FleetTop } = { ts: now, runs: {}, removed: [] };
+    if (todo.length) {
+      const series = outputSeries(new Set(todo.map((r) => r.id)), now);
+      for (const r of todo) {
+        const run = await buildRun(r, now, series);
+        const sent = fleet.sent.get(r.id);
+        const fields: Record<string, string> = {};
+        const changed: Partial<FleetRun> = {};
+        for (const [k, v] of Object.entries(run) as [keyof FleetRun, unknown][]) {
+          if (k === "tps") continue;
+          fields[k] = JSON.stringify(v);
+          if (!sent || sent[k] !== fields[k]) (changed as any)[k] = v;
+        }
+        if (!sent) changed.tps = run.tps;
+        fleet.sent.set(r.id, fields);
+        if (Object.keys(changed).length) patch.runs[r.id] = changed;
+      }
+    }
+    const ids = new Set(shown.map((r) => r.id));
+    for (const id of fleet.sent.keys()) if (!ids.has(id)) patch.removed.push(id);
+    for (const id of patch.removed) fleet.sent.delete(id);
+    // Keep the runs in list order, with the newest build of each.
+    const runs = new Map<string, FleetRun>();
+    for (const r of shown) {
+      const prev = fleet.runs.get(r.id);
+      const p = patch.runs[r.id];
+      runs.set(r.id, p ? ({ ...prev, ...p } as FleetRun) : prev!);
+    }
+    fleet.runs = runs;
+    if (!fleet.top || now - fleet.lastTop >= TOP_MS) {
+      fleet.lastTop = now;
+      fleet.top = buildTop(now);
+      const json = JSON.stringify(fleet.top);
+      if (json !== fleet.topSent) patch.top = fleet.top;
+      fleet.topSent = json;
+    }
+    fleet.ts = now;
+    if (Object.keys(patch.runs).length || patch.removed.length || patch.top) publish("*", "fleet.patch", patch);
+    const ms = Date.now() - now;
+    if (ms > 250) console.warn(`fleet update took ${ms} ms (${todo.length} runs rebuilt)`);
+  } catch (e) {
+    console.error("fleet update failed", e);
+  } finally {
+    pushing = false;
   }
-  return {
-    ts: now,
-    window: WINDOW,
-    runs: out,
-    memory: { ...sharedMemory(), pixel: process.memoryUsage().rss },
-    ...today(now),
-    links: crossReadGraph(),
-  };
+}
+
+/**
+ * The whole snapshot, for a tab that just connected. While the sampler runs it's the pushed state
+ * (with live tps), so it costs nothing; otherwise (tests, CLI) it's built, at most once a second.
+ */
+let snapCache: { at: number; value: Promise<FleetSnapshot> } | null = null;
+export function fleetSnapshot(): Promise<FleetSnapshot> {
+  if (sampler && fleet.top) {
+    const runs = [...fleet.runs.values()].map((r) => ({ ...r, tps: rates.get(r.id)?.samples.map(Math.round) ?? [] }));
+    return Promise.resolve({ ts: fleet.ts, runs, ...fleet.top });
+  }
+  const now = Date.now();
+  if (snapCache && now - snapCache.at < 1000) return snapCache.value;
+  const value = buildSnapshot();
+  snapCache = { at: now, value };
+  value.catch(() => snapCache?.value === value && (snapCache = null));
+  return value;
 }
 
 /** Per-agent swimlanes for one run: tool calls as [start, end, kind] segments plus Pixel's interventions. */

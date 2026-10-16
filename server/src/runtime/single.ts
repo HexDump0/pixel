@@ -9,7 +9,7 @@
  * Set CPU/memory limits on the container itself so a runaway can never reach other apps on the host.
  */
 import { join } from "node:path";
-import { chmodSync, chownSync, existsSync, lchownSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lchownSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { config } from "../config.ts";
 import type { RunRow, RunSize } from "../db.ts";
 import type { Credentials, Metrics, PrepareOptions } from "./types.ts";
@@ -41,11 +41,18 @@ function chownTree(dir: string, uid: number) {
 }
 
 /** Every process on the system, grouped by real uid. */
+/**
+ * Agent processes by uid. Most processes on the box aren't agents', so the owner of /proc/<pid> (a
+ * stat, no read) rules them out first. Non-dumpable processes show root as that owner whatever
+ * their real uid, so root-owned ones get their status read as before.
+ */
 function scanProcs() {
   const byUid = new Map<number, ProcInfo[]>();
   for (const name of readdirSync("/proc")) {
     if (!/^\d+$/.test(name)) continue;
     try {
+      const owner = statSync(`/proc/${name}`).uid;
+      if (owner !== 0 && (owner < FIRST_UID || owner > LAST_UID)) continue;
       const status = readFileSync(`/proc/${name}/status`, "utf8");
       const uid = Number(/^Uid:\s+(\d+)/m.exec(status)?.[1]);
       if (uid < FIRST_UID || uid > LAST_UID) continue;
@@ -61,6 +68,13 @@ function scanProcs() {
     }
   }
   return byUid;
+}
+
+/** A scan at most a second old, for readings (metrics, machine list); enforcing and killing always scan afresh. */
+let recentScan: { at: number; procs: Map<number, ProcInfo[]> } | null = null;
+function recentProcs() {
+  if (!recentScan || Date.now() - recentScan.at > 1000) recentScan = { at: Date.now(), procs: scanProcs() };
+  return recentScan.procs;
 }
 
 export class SingleRuntime extends ProcessRuntime {
@@ -275,7 +289,7 @@ export class SingleRuntime extends ProcessRuntime {
     const out: Metrics = { memTotal: size.memoryGiB * GiB, diskTotal: size.diskGiB * GiB };
     out.diskUsed = await this.diskUsed(run);
     if (!existsSync(this.uidPath(run))) return out;
-    const list = scanProcs().get(this.uid(run)) ?? [];
+    const list = recentProcs().get(this.uid(run)) ?? [];
     out.memUsed = list.reduce((a, p) => a + p.rss, 0);
     const ticks = list.reduce((a, p) => a + p.ticks, 0);
     const now = Date.now();
@@ -356,7 +370,7 @@ export class SingleRuntime extends ProcessRuntime {
   }
 
   async listMachines() {
-    const procs = scanProcs();
+    const procs = recentProcs();
     return [...this.limits.entries()].map(([id, { uid }]) => {
       const list = procs.get(uid) ?? [];
       return { name: `${id} (px${uid})`, status: list.length ? "Running" : "Stopped", memory: list.reduce((a, p) => a + p.rss, 0) };

@@ -77,3 +77,29 @@ describe("search", () => {
     expect(size.files).toBe(3);
   });
 });
+
+describe("derived tables", () => {
+  test("message totals follow inserts, upserts and deletes of assistant messages", () => {
+    db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at) VALUES ('mt-1', 'x', 'p/m', '{}', 'running', 'local', 1)").run();
+    const upsert = db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, 'mt-1', 's', ?, ?, 1) ON CONFLICT(id) DO UPDATE SET data = excluded.data WHERE messages.data IS NOT excluded.data");
+    const totals = () => db.query("SELECT input, cache_read, cache_write FROM message_totals WHERE run_id = 'mt-1'").get();
+    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 0 } })); // still streaming
+    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 100, cache: { read: 50, write: 10 } } }));
+    upsert.run("m1", "assistant", JSON.stringify({ tokens: { input: 100, cache: { read: 50, write: 10 } } })); // unchanged resync
+    upsert.run("m2", "assistant", JSON.stringify({ tokens: { input: 5, cache: { read: 1, write: 0 } } }));
+    upsert.run("u1", "user", JSON.stringify({ tokens: { input: 999 } }));
+    expect(totals()).toEqual({ input: 105, cache_read: 51, cache_write: 10 });
+    db.query("DELETE FROM messages WHERE id = 'm2'").run();
+    expect(totals()).toEqual({ input: 100, cache_read: 50, cache_write: 10 });
+  });
+});
+
+describe("deleting a run", () => {
+  test("takes its messages, parts and derived rows with it", () => {
+    db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at) VALUES ('del-1', 'x', 'p/m', '{}', 'done', 'local', 1)").run();
+    db.query("INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES ('del-m', 'del-1', 's', 'assistant', ?, 1)").run(JSON.stringify({ tokens: { input: 3 } }));
+    db.query("INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES ('del-p', 'del-1', 's', 'del-m', 'tool', ?, 1)").run(JSON.stringify({ tool: "bash", state: { status: "completed" } }));
+    db.query("DELETE FROM runs WHERE id = 'del-1'").run();
+    for (const t of ["messages", "parts", "tool_calls", "message_totals"]) expect(db.query(`SELECT COUNT(*) AS n FROM ${t} WHERE run_id = 'del-1'`).get()).toEqual({ n: 0 });
+  });
+});

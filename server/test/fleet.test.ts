@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { db, getRun } from "../src/db.ts";
+import { publish, subscribe } from "../src/bus.ts";
 import { runtime } from "../src/runtime/index.ts";
 import { describeCall, fleetSnapshot, kindOf, lanes, onAssistantMessage, onDelta, recentActivity, startFleet, stopFleet } from "../src/fleet.ts";
 
@@ -146,5 +147,31 @@ describe("fleet", () => {
     expect(tps.reduce((a, b) => a + b, 0)).toBe(300);
     expect(tps.at(-1)).toBe(150);
     expect(snap.runs.find((r) => r.id === "fl-2")!.tps).toEqual([]);
+  });
+
+  test("pushed updates: the first patch has the whole run, later ones only what changed", async () => {
+    const patches: any[] = [];
+    const off = subscribe((m) => m.type === "fleet.patch" && patches.push(m.data));
+    startFleet();
+    try {
+      await Bun.sleep(1200);
+      const first = patches.find((p) => p.runs["fl-1"]);
+      expect(first.runs["fl-1"]).toMatchObject({ id: "fl-1", agents: { main: "waiting" }, tps: expect.any(Array) });
+      expect(first.top.window).toBe(90);
+      // The connecting tab's snapshot is the pushed state.
+      expect((await fleetSnapshot()).runs.find((r) => r.id === "fl-1")!.agents.main).toBe("waiting");
+
+      patches.length = 0;
+      addTool("fl-1", "fl-root", "read", { status: "running", input: { filePath: `${target}/src/b.c` }, time: { start: Date.now() } }, Date.now());
+      publish("fl-1", "part", {});
+      await Bun.sleep(1100);
+      const next = patches.find((p) => p.runs["fl-1"])?.runs["fl-1"];
+      expect(next.now).toMatchObject({ tool: "read", text: "src/b.c" });
+      expect(next.id).toBeUndefined(); // unchanged fields stay out
+      expect(next.tps).toBeUndefined();
+    } finally {
+      stopFleet();
+      off();
+    }
   });
 });

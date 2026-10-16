@@ -73,15 +73,18 @@ export function watch(id: string) {
 export function unwatch(id: string) {
   watchers.get(id)?.abort.abort();
   watchers.delete(id);
+  flushPartWrites();
 }
 
 // ---- storage ----
 
+// Unchanged rows are left alone: a resync after every reconnect re-sends the whole transcript, and
+// rewriting it would cost a full copy of the run and mark every tool call as just updated.
 const upsertMessage = db.query(
-  "INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+  "INSERT INTO messages (id, run_id, session_id, role, data, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data WHERE messages.data IS NOT excluded.data",
 );
 const upsertPart = db.query(
-  "INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+  "INSERT INTO parts (id, run_id, session_id, message_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at WHERE parts.data IS NOT excluded.data",
 );
 const upsertSession = db.query(
   `INSERT INTO sessions (id, run_id, parent_id, title, agent, cost, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -113,8 +116,52 @@ function storeMessage(runId: string, info: any) {
   publish(runId, "message", info);
 }
 
+/*
+ * A running tool call is re-sent with its output so far, often many times (a long build), and text
+ * may be re-sent while it streams. The dashboard gets every update live; the stored copy of an
+ * unfinished part is refreshed at most every PART_WRITE_MS, and a finished part is written at once.
+ */
+const PART_WRITE_MS = 5000;
+const partWritten = new Map<string, number>();
+const pendingParts = new Map<string, { runId: string; part: any }>();
+let partFlush: ReturnType<typeof setTimeout> | null = null;
+
+const writePart = (runId: string, part: any) => upsertPart.run(part.id, runId, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
+const settled = (part: any) =>
+  part.type === "tool" ? part.state?.status === "completed" || part.state?.status === "error" : !["text", "reasoning"].includes(part.type) || !!part.time?.end;
+
+function flushParts() {
+  partFlush = null;
+  for (const { runId, part } of pendingParts.values()) {
+    writePart(runId, part);
+    partWritten.set(part.id, Date.now());
+  }
+  pendingParts.clear();
+  // Parts that never finished (an aborted call) would otherwise stay here forever.
+  for (const [id, t] of partWritten) if (Date.now() - t > 3_600_000) partWritten.delete(id);
+}
+
+/** Write every part still waiting for its next refresh (a run stopping, Pixel shutting down). */
+export function flushPartWrites() {
+  if (partFlush) clearTimeout(partFlush);
+  flushParts();
+}
+
+function savePart(runId: string, part: any) {
+  const last = partWritten.get(part.id);
+  if (settled(part) || last === undefined || Date.now() - last >= PART_WRITE_MS) {
+    pendingParts.delete(part.id);
+    writePart(runId, part);
+    if (settled(part)) partWritten.delete(part.id);
+    else partWritten.set(part.id, Date.now());
+    return;
+  }
+  pendingParts.set(part.id, { runId, part });
+  partFlush ??= setTimeout(flushParts, PART_WRITE_MS);
+}
+
 function storePart(runId: string, w: Watcher, part: any) {
-  upsertPart.run(part.id, runId, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
+  savePart(runId, part);
   publish(runId, "part", part);
   onPart(runId, part);
   onToolPart(runId, part);
@@ -184,11 +231,13 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
       onDelta(id, p.messageID, p.delta);
       break;
     case "message.removed":
+      for (const [pid, x] of pendingParts) if (x.part.messageID === p.messageID) pendingParts.delete(pid);
       db.query("DELETE FROM messages WHERE id = ?").run(p.messageID);
       db.query("DELETE FROM parts WHERE message_id = ?").run(p.messageID);
       publish(id, "message.removed", p);
       break;
     case "message.part.removed":
+      pendingParts.delete(p.partID);
       db.query("DELETE FROM parts WHERE id = ?").run(p.partID);
       publish(id, "part.removed", p);
       break;
@@ -249,6 +298,7 @@ export async function syncTranscript(id: string) {
         for (const m of msgs) {
           upsertMessage.run(m.info.id, id, m.info.sessionID, m.info.role, JSON.stringify(m.info), m.info.time?.created ?? Date.now());
           for (const part of m.parts) {
+            pendingParts.delete(part.id);
             upsertPart.run(part.id, id, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
             if (part.type === "tool") w?.seenCalls.add(part.id);
           }

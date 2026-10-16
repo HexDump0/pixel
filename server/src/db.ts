@@ -274,6 +274,43 @@ END;
 `);
 if (!hadToolCalls) db.exec(`INSERT OR REPLACE INTO tool_calls ${toolCallRow("p")} FROM parts p WHERE p.type = 'tool' AND json_valid(p.data)`);
 
+/*
+ * Prompt tokens per run (uncached input, cache reads, cache writes) from its assistant messages, kept
+ * by triggers. The run view asks for these after every message; summing every message each time
+ * grew with the run's length.
+ */
+const hadMessageTotals = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_totals'").get();
+const tok = (row: string, path: string) => `COALESCE(json_extract(${row}.data, '$.tokens.${path}'), 0)`;
+const addTotals = (row: string, sign: string) => `
+  INSERT INTO message_totals (run_id, input, cache_read, cache_write)
+  VALUES (${row}.run_id, ${sign}${tok(row, "input")}, ${sign}${tok(row, "cache.read")}, ${sign}${tok(row, "cache.write")})
+  ON CONFLICT(run_id) DO UPDATE SET input = input + excluded.input, cache_read = cache_read + excluded.cache_read, cache_write = cache_write + excluded.cache_write;`;
+db.exec(`
+CREATE TABLE IF NOT EXISTS message_totals (
+  run_id      TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+  input       INTEGER NOT NULL DEFAULT 0,
+  cache_read  INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0
+);
+DROP TRIGGER IF EXISTS message_totals_insert;
+DROP TRIGGER IF EXISTS message_totals_update;
+DROP TRIGGER IF EXISTS message_totals_delete;
+CREATE TRIGGER message_totals_insert AFTER INSERT ON messages WHEN NEW.role = 'assistant' AND json_valid(NEW.data) BEGIN ${addTotals("NEW", "")} END;
+CREATE TRIGGER message_totals_update AFTER UPDATE OF data ON messages WHEN NEW.role = 'assistant' AND json_valid(OLD.data) AND json_valid(NEW.data) BEGIN
+  ${addTotals("OLD", "-")}
+  ${addTotals("NEW", "")}
+END;
+-- Only an update here: when a run is deleted its messages go with it, and inserting a row for the gone run would fail the delete.
+CREATE TRIGGER message_totals_delete AFTER DELETE ON messages WHEN OLD.role = 'assistant' AND json_valid(OLD.data) BEGIN
+  UPDATE message_totals SET input = input - ${tok("OLD", "input")}, cache_read = cache_read - ${tok("OLD", "cache.read")}, cache_write = cache_write - ${tok("OLD", "cache.write")}
+  WHERE run_id = OLD.run_id;
+END;
+`);
+if (!hadMessageTotals)
+  db.exec(`INSERT INTO message_totals (run_id, input, cache_read, cache_write)
+    SELECT m.run_id, SUM(${tok("m", "input")}), SUM(${tok("m", "cache.read")}), SUM(${tok("m", "cache.write")})
+    FROM messages m WHERE m.role = 'assistant' AND json_valid(m.data) AND m.run_id IN (SELECT id FROM runs) GROUP BY m.run_id`);
+
 export type RunStatus =
   | "preparing"
   | "running"

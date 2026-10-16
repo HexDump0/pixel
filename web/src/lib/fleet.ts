@@ -1,52 +1,49 @@
 /**
- * The live view of the fleet: one /api/fleet snapshot in the query cache, kept current by the websocket
- * (tokens/s every second, tool calls as they happen) and refreshed in the background.
+ * The live view of the fleet: one /api/fleet snapshot in the query cache when a tab connects, then
+ * kept current by the websocket: fleet.patch (the server's changes, about once a second), fleet.tick
+ * (tokens/s every second) and activity (tool calls as they happen, for an instant "now").
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api.ts";
 import { keys, onLive, queryClient, startLiveCache } from "./query.ts";
 import type { FleetRun, FleetSnapshot } from "./types.ts";
 
-const REFRESH_MS = 15_000;
 const TICK_WINDOW_MS = 15 * 60_000;
 
-let refetchTimer: ReturnType<typeof setTimeout> | null = null;
-/** Refetch soon, coalescing bursts (a run changing status emits several messages). */
-function refetchSoon(ms = 1500) {
-  if (refetchTimer) return;
-  refetchTimer = setTimeout(() => {
-    refetchTimer = null;
-    void queryClient.invalidateQueries({ queryKey: keys.fleet });
-  }, ms);
-}
-
+const reload = () => void queryClient.invalidateQueries({ queryKey: keys.fleet });
 const patchRun = (id: string, fn: (r: FleetRun) => FleetRun) =>
   queryClient.setQueryData<FleetSnapshot>(keys.fleet, (s) => (s ? { ...s, runs: s.runs.map((r) => (r.id === id ? fn(r) : r)) } : s));
 
-/** Fields of a run the snapshot is built from; a "run" message that changes none of them (token totals, cost) needs no refetch. */
-const shapeOf = (r: Record<string, unknown>) => `${r.status}|${r.agent_status}|${r.label}|${r.hue}|${r.session_id}`;
-const shapes = new Map<string, string>();
-
-// A hidden tab skips the per-second patches (they re-render the whole Wall) and catches up when shown.
+// A hidden tab ignores live updates (they re-render the whole Wall) and reloads the snapshot when shown.
 let missed = false;
 if (typeof document !== "undefined")
   document.addEventListener("visibilitychange", () => {
     if (document.hidden || !missed) return;
     missed = false;
-    void queryClient.invalidateQueries({ queryKey: keys.fleet });
+    reload();
   });
 
+interface FleetPatch {
+  ts: number;
+  runs: Record<string, Partial<FleetRun>>;
+  removed: string[];
+  top?: Omit<FleetSnapshot, "ts" | "runs">;
+}
+
 onLive((m) => {
+  if (m.type === "connected") return reload();
   const snap = queryClient.getQueryData<FleetSnapshot>(keys.fleet);
-  if (m.type === "connected") return void queryClient.invalidateQueries({ queryKey: keys.fleet });
   if (!snap) return;
-  if (m.type === "run") {
-    const shape = shapeOf(m.data);
-    if (shapes.get(m.data.id) === shape) return;
-    shapes.set(m.data.id, shape);
-  }
   if (document.hidden) return void (missed = true);
-  if (m.type === "fleet.tick") {
+  if (m.type === "fleet.patch") {
+    const p = m.data as FleetPatch;
+    if (p.ts < snap.ts) return; // the snapshot already has it
+    const removed = new Set(p.removed);
+    const known = new Set(snap.runs.map((r) => r.id));
+    const runs = snap.runs.filter((r) => !removed.has(r.id)).map((r) => (p.runs[r.id] ? { ...r, ...p.runs[r.id] } : r));
+    for (const [id, fields] of Object.entries(p.runs)) if (!known.has(id)) runs.push(fields as FleetRun);
+    queryClient.setQueryData<FleetSnapshot>(keys.fleet, { ...snap, ...p.top, ts: p.ts, runs });
+  } else if (m.type === "fleet.tick") {
     const tps: Record<string, number> = m.data.tps;
     // The server corrects recent seconds when a model call finishes; those runs get their whole window.
     const fix: Record<string, number[]> = m.data.fix ?? {};
@@ -60,25 +57,22 @@ onLive((m) => {
         return { ...r, tps: s };
       }),
     });
-    if (Object.keys(tps).some((id) => !snap.runs.some((r) => r.id === id))) refetchSoon();
   } else if (m.type === "activity") {
     const a = m.data;
-    const run = snap.runs.find((r) => r.id === a.run);
-    if (!run) return;
+    if (!snap.runs.some((r) => r.id === a.run)) return;
     const now = { tool: a.tool, kind: a.kind, text: a.text, ts: a.ts, status: a.status };
-    if (a.agent !== null && !run.agents.subs.some((s) => s.id === a.session)) refetchSoon(); // a new subagent
     patchRun(a.run, (r) => ({
       ...r,
       now: a.agent === null ? now : r.now,
       agents: a.agent === null ? r.agents : { ...r.agents, subs: r.agents.subs.map((s) => (s.id === a.session ? { ...s, now } : s)) },
       ticks: a.status === "running" || a.status === "pending" ? [...r.ticks.filter((t) => Date.now() - t[1] < TICK_WINDOW_MS), [a.session, a.ts, a.kind]] : r.ticks,
     }));
-  } else if (["run", "run.deleted", "crossread", "todos"].includes(m.type)) refetchSoon();
+  }
 });
 
 export function useFleet(): FleetSnapshot | null {
   startLiveCache();
-  return useQuery({ queryKey: keys.fleet, queryFn: api.fleet, refetchInterval: REFRESH_MS, staleTime: 5_000 }).data ?? null;
+  return useQuery({ queryKey: keys.fleet, queryFn: api.fleet, staleTime: Infinity }).data ?? null;
 }
 
 /** Tokens/s as a rate: opencode reports tokens in bursts at the end of each step, so average the last few seconds. */
