@@ -84,7 +84,7 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 
 ### Connecting your agents (MCP)
 
-Settings, **Agent access**: make a token per agent or machine (a name, **Read only** or **Full control**, and an expiry). It's shown once, with the setup ready to paste for Claude Code, opencode and `.mcp.json`. The list shows each token's last use; change its access or revoke it there. Tokens open only the MCP endpoint, not the dashboard; the dashboard password doesn't open MCP.
+Settings, **Agent access**: make a token per agent or machine (a name, **Read only** or **Full control**, and an expiry). It's shown once, with the setup ready to paste for Claude Code, opencode and `.mcp.json`; the same steps stay under the token list (Connect an agent), where you can paste a token to fill it in. The list shows each token's last use; change its access or revoke it there. Tokens open only the MCP endpoint, not the dashboard; the dashboard password doesn't open MCP.
 
 Claude Code:
 

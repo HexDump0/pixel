@@ -32,7 +32,6 @@ const EXPIRY: [string, string][] = [
 
 export function AgentAccessSection({ data, setData, error: loadError }: { data: Data | undefined; setData: (d: Data) => void; error: string | null }) {
   const [making, setMaking] = useState(false);
-  const [howTo, setHowTo] = useState(false);
   const tokens = data?.tokens ?? [];
   const now = Date.now();
 
@@ -60,9 +59,6 @@ export function AgentAccessSection({ data, setData, error: loadError }: { data: 
           <Row label="Address" hint="Agents connect here over MCP (streamable HTTP) with one of the tokens below. Tokens open only this, not the dashboard.">
             <code className="max-w-[340px] truncate rounded-md bg-s3 px-2 py-1 font-mono text-xs max-sm:flex-1">{data.url}</code>
             <Copy text={data.url} label="Copy address" />
-            <Button size="sm" variant="ghost" onClick={() => setHowTo(true)}>
-              How to connect
-            </Button>
           </Row>
           {tokens.length === 0 && <Row label={<State tone="off">No tokens yet</State>} hint="Make one to let an agent connect." />}
           {tokens.map((t) => {
@@ -126,14 +122,10 @@ export function AgentAccessSection({ data, setData, error: loadError }: { data: 
               </Row>
             );
           })}
+          <ConnectGuide url={data.url} />
         </>
       )}
       {making && data && <NewTokenDialog url={data.url} onClose={() => setMaking(false)} onMade={(t) => setData({ ...data, tokens: [t, ...data.tokens] })} />}
-      {howTo && data && (
-        <Dialog open onOpenChange={setHowTo} title="Connect an agent" description="Put one of your tokens where it says pxm_YOUR_TOKEN." size="md">
-          <Setup url={data.url} token="pxm_YOUR_TOKEN" />
-        </Dialog>
-      )}
     </Section>
   );
 }
@@ -238,18 +230,65 @@ function NewTokenDialog({ url, onClose, onMade }: { url: string; onClose: () => 
   );
 }
 
-/** Ready-to-paste setup for the common MCP clients. */
+const PLACEHOLDER = "pxm_YOUR_TOKEN";
+const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono text-[11.5px] text-ink-2">{children}</span>;
+
+/** Always under the tokens: how to add Pixel to each client, with the token pasted in if the user gives it (kept in the page only). */
+function ConnectGuide({ url }: { url: string }) {
+  const [token, setToken] = useState("");
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3.5">
+      <div>
+        <div className="text-[13px] text-ink">Connect an agent</div>
+        <div className="mt-0.5 max-w-[70ch] text-xs leading-relaxed text-ink-3">
+          Make a token above, then add Pixel to your agent below. Use Read only unless the agent should control runs. Paste the token here to fill it into the setup; it stays in this page and isn't saved.
+        </div>
+      </div>
+      <input
+        className="input max-w-[420px] font-mono text-[12.5px]"
+        type="password"
+        autoComplete="off"
+        aria-label="Your token, to fill into the setup"
+        placeholder="Paste a token (optional)"
+        value={token}
+        onChange={(e) => setToken(e.target.value.trim())}
+      />
+      <Setup url={url} token={token || PLACEHOLDER} />
+      <div className="text-xs leading-relaxed text-ink-3">
+        Not connecting? A 401 means the token is wrong, expired or revoked. A tool answering that the token is read only needs Full control above. Each token's last use shows in its row once the agent calls a tool.
+      </div>
+    </div>
+  );
+}
+
+/** Ready-to-paste setup for the common MCP clients, with the steps around it. */
 function Setup({ url, token }: { url: string; token: string }) {
   const [tab, setTab] = useState<"claude" | "opencode" | "json">("claude");
-  const snippets = {
-    claude: { text: `claude mcp add --transport http pixel ${url} --header "Authorization: Bearer ${token}"`, hint: "Run in a terminal. Add --scope user to have it in every project." },
+  const placeholder = token === PLACEHOLDER;
+  const snippets: Record<typeof tab, { text: string; steps: ReactNode[] }> = {
+    claude: {
+      text: `claude mcp add --transport http --scope user pixel ${url} --header "Authorization: Bearer ${token}"`,
+      steps: [
+        <>Run this in a terminal{placeholder && <>, with your token in place of <Mono>{PLACEHOLDER}</Mono></>}. <Mono>--scope user</Mono> adds Pixel to every project; leave it out for the current folder only.</>,
+        <>Start Claude Code and type <Mono>/mcp</Mono>: pixel should be connected, with its tools listed.</>,
+        <>Ask for things in plain words, e.g. "list Pixel's untriaged findings" or "how many tokens did runs use this week".</>,
+      ],
+    },
     opencode: {
       text: JSON.stringify({ mcp: { pixel: { type: "remote", url, oauth: false, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
-      hint: "Merge into opencode.json (the project's, or ~/.config/opencode/opencode.json for all).",
+      steps: [
+        <>Add this to <Mono>opencode.json</Mono> in the project, or to <Mono>~/.config/opencode/opencode.json</Mono> for every project. Keep any <Mono>mcp</Mono> entries already there.</>,
+        <>Restart opencode. Pixel's tools come up as the pixel MCP server.</>,
+        <>Ask for things in plain words, e.g. "show the latest finding from the libpng run".</>,
+      ],
     },
     json: {
       text: JSON.stringify({ mcpServers: { pixel: { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
-      hint: "For .mcp.json in a project, Cursor, and other clients that take mcpServers.",
+      steps: [
+        <>For clients that read <Mono>mcpServers</Mono>: <Mono>.mcp.json</Mono> at a project's root (Claude Code), <Mono>~/.cursor/mcp.json</Mono> (Cursor) and similar.</>,
+        <>A project file can end up in git: put <Mono>{"${PIXEL_MCP_TOKEN}"}</Mono> in place of the token and set that variable in your shell (Claude Code expands it).</>,
+        <>Restart the client and check that pixel shows as connected.</>,
+      ],
     },
   };
   const s = snippets[tab];
@@ -270,7 +309,11 @@ function Setup({ url, token }: { url: string; token: string }) {
           <Copy text={s.text} label="Copy setup" />
         </div>
       </div>
-      <div className="mt-2 text-xs text-ink-3">{s.hint}</div>
+      <ol className="m-0 mt-3 flex list-decimal flex-col gap-1.5 pl-5 text-xs leading-relaxed text-ink-3 marker:text-ink-4">
+        {s.steps.map((step, i) => (
+          <li key={i}>{step}</li>
+        ))}
+      </ol>
     </div>
   );
 }
