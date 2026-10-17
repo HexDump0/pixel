@@ -24,7 +24,8 @@ const NAV: { to: string; label: string; match: (p: string) => boolean }[] = [
   { to: "/stats", label: "Stats", match: (p) => p === "/stats" },
   { to: "/knowledge", label: "Knowledge", match: (p) => p.startsWith("/knowledge") },
   { to: "/templates", label: "Templates", match: (p) => p.startsWith("/templates") },
-  { to: "/settings", label: "Settings", match: (p) => p === "/settings" || p === "/system" },
+  { to: "/system", label: "System", match: (p) => p === "/system" },
+  { to: "/settings", label: "Settings", match: (p) => p === "/settings" },
 ];
 
 export function AppShell({ authEnabled, children }: { authEnabled: boolean; children: ReactNode }) {

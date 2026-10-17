@@ -1,4 +1,4 @@
-/** The MCP endpoint for outside agents: handshake, tool list, read tools over a run with a finding, errors, cross-origin refusal. */
+/** The MCP endpoint for outside agents: access tokens (read, full, revoked, expired), handshake, tool list, read tools over a run with a finding, errors, cross-origin refusal. */
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import { workbasePath } from "../src/knowledge.ts";
 import { checkFindings } from "../src/findings.ts";
 import "../src/api/index.ts";
 import { serveMcp } from "../src/mcp.ts";
+import { createMcpToken, revokeMcpToken } from "../src/mcpTokens.ts";
+import { dispatch } from "../src/api/router.ts";
 
 const size = JSON.stringify({ cpu: 2, memoryGiB: 4, diskGiB: 20 });
 const RUN = "mcp-run";
@@ -22,17 +24,29 @@ writeFileSync(join(dir, "poc.png"), "x");
 writeFileSync(join(workbasePath(RUN), "NOTES.md"), "hello from the agent\n");
 checkFindings(getRun(RUN)!);
 
+const full = createMcpToken({ name: "laptop claude", access: "full" }).token;
+const read = createMcpToken({ name: "reader", access: "read", days: 30 }).token;
+
 let nextId = 1;
-async function rpc(method: string, params?: unknown, headers: Record<string, string> = {}) {
+async function rpc(method: string, params?: unknown, headers: Record<string, string> = {}, token: string | null = full) {
   const res = await serveMcp(
-    new Request("http://pixel.test/api/mcp", { method: "POST", headers: { "content-type": "application/json", host: "pixel.test", ...headers }, body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }) }),
+    new Request("http://pixel.test/api/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", host: "pixel.test", ...(token && { authorization: `Bearer ${token}` }), ...headers },
+      body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
+    }),
   );
   return { status: res.status, body: (await res.json()) as any };
 }
-async function tool(name: string, args: Record<string, unknown> = {}) {
-  const { body } = await rpc("tools/call", { name, arguments: args });
+async function tool(name: string, args: Record<string, unknown> = {}, token = full) {
+  const { body } = await rpc("tools/call", { name, arguments: args }, {}, token);
   return { text: body.result.content[0].text as string, isError: !!body.result.isError };
 }
+const apiCall = async (method: string, path: string, body?: unknown) => {
+  const url = new URL(`http://pixel.test/api${path}`);
+  const res = await dispatch(new Request(url, { method, headers: { host: "pixel.test" }, body: body ? JSON.stringify(body) : undefined }), url);
+  return { status: res.status, body: (await res.json()) as any };
+};
 
 describe("mcp", () => {
   test("handshake, notifications and tool list", async () => {
@@ -41,7 +55,7 @@ describe("mcp", () => {
     expect(init.body.result.capabilities.tools).toBeTruthy();
     expect((await rpc("initialize", { protocolVersion: "1999-01-01" })).body.result.protocolVersion).toBe("2025-11-25");
 
-    const note = await serveMcp(new Request("http://pixel.test/api/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }));
+    const note = await serveMcp(new Request("http://pixel.test/api/mcp", { method: "POST", headers: { authorization: `Bearer ${full}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }));
     expect(note.status).toBe(202);
 
     const { body } = await rpc("tools/list");
@@ -100,5 +114,44 @@ describe("mcp", () => {
     const { status } = await rpc("tools/list", undefined, { origin: "https://evil.example" });
     expect(status).toBe(403);
     expect((await rpc("tools/list", undefined, { origin: "http://pixel.test" })).status).toBe(200);
+  });
+
+  test("tokens: none, read only, revoked, expired, managed from the API", async () => {
+    expect((await rpc("tools/list", undefined, {}, null)).status).toBe(401);
+    expect((await rpc("tools/list", undefined, {}, "pxm_made-up")).status).toBe(401);
+    expect((await rpc("tools/list", undefined, {}, "the-dashboard-password")).status).toBe(401);
+
+    const names = (await rpc("tools/list", undefined, {}, read)).body.result.tools.map((t: any) => t.name);
+    expect(names).toContain("list_findings");
+    expect(names).not.toContain("send_message");
+    expect(names).not.toContain("pixel_api");
+    const refused = await tool("set_finding_verdict", { run: RUN, finding: "F1", verdict: null }, read);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("read only");
+    expect(JSON.parse((await tool("get_run", { run: RUN }, read)).text).attach).toBeUndefined();
+
+    // Settings' view: no hashes, use is counted, the address is given.
+    const list = await apiCall("GET", "/mcp/tokens");
+    expect(list.body.url).toBe("http://pixel.test/api/mcp");
+    const mine = list.body.tokens.find((t: any) => t.name === "laptop claude");
+    expect(mine.hash).toBeUndefined();
+    expect(mine.uses).toBeGreaterThan(0);
+    expect(mine.used_tool).toBeTruthy();
+    expect(list.body.tokens.find((t: any) => t.name === "reader").expires).toBeGreaterThan(Date.now());
+    expect((await apiCall("POST", "/mcp/tokens", { name: "", access: "full" })).status).toBe(400);
+    expect((await apiCall("POST", "/mcp/tokens", { name: "x", access: "admin" })).status).toBe(400);
+
+    // A token can't make more tokens through pixel_api.
+    expect((await tool("pixel_api", { method: "POST", path: "/mcp/tokens", body: { name: "sneaky", access: "full" } })).isError).toBe(true);
+
+    const made = await apiCall("POST", "/mcp/tokens", { name: "short lived", access: "full" });
+    expect(made.body.token).toStartWith("pxm_");
+    expect((await rpc("ping", undefined, {}, made.body.token)).status).toBe(200);
+    expect((await apiCall("PUT", `/mcp/tokens/${made.body.info.id}`, { access: "read" })).body.access).toBe("read");
+    revokeMcpToken(made.body.info.id);
+    expect((await rpc("ping", undefined, {}, made.body.token)).status).toBe(401);
+
+    const old = createMcpToken({ name: "old", access: "read", days: 1 }, Date.now() - 2 * 86_400_000).token;
+    expect((await rpc("ping", undefined, {}, old)).status).toBe(401);
   });
 });

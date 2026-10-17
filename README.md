@@ -84,21 +84,15 @@ Differences from the VM setup: a redeploy or container restart kills every agent
 
 ### Connecting your agents (MCP)
 
-Streamable HTTP, same password as the dashboard (sent as `Authorization: Bearer`).
+Settings, **Agent access**: make a token per agent or machine (a name, **Read only** or **Full control**, and an expiry). It's shown once, with the setup ready to paste for Claude Code, opencode and `.mcp.json`. The list shows each token's last use; change its access or revoke it there. Tokens open only the MCP endpoint, not the dashboard; the dashboard password doesn't open MCP.
 
 Claude Code:
 
 ```sh
-claude mcp add --transport http pixel https://pixel.example.com/api/mcp --header "Authorization: Bearer $PIXEL_PASSWORD"
+claude mcp add --transport http pixel https://pixel.example.com/api/mcp --header "Authorization: Bearer pxm_..."
 ```
 
-opencode (`opencode.json`):
-
-```json
-{ "mcp": { "pixel": { "type": "remote", "url": "https://pixel.example.com/api/mcp", "oauth": false, "headers": { "Authorization": "Bearer {env:PIXEL_PASSWORD}" } } } }
-```
-
-Tools: `list_runs`, `get_run`, `get_timeline`, `get_transcript`, `list_findings`, `get_finding` (the full "Copy for LLM" brief with download commands), `finding_history`, `set_finding_verdict`, `token_usage` (Pixel-wide or per run), `get_report`, `list_files`, `read_file`, `search_workbases`, `new_run_options`, `create_run`, `send_message`, `control_run`, `answer_question`, and `pixel_api`, which calls any API route (its description lists them all). The password gives full control, the same as the dashboard.
+Tools: `list_runs`, `get_run`, `get_timeline`, `get_transcript`, `list_findings`, `get_finding` (the full "Copy for LLM" brief with download commands), `finding_history`, `token_usage` (Pixel-wide or per run), `get_report`, `list_files`, `read_file`, `search_workbases`, `new_run_options`. Full control adds `set_finding_verdict`, `create_run`, `send_message`, `control_run`, `answer_question`, and `pixel_api`, which calls any API route (its description lists them all).
 
 ### Findings
 
@@ -134,7 +128,7 @@ Marking a run **triaged** writes `TRIAGE.md` into its workbase and deletes its V
 ```
 server/src/
   index.ts         server entry: dashboard, API, websockets, background loops
-  mcp.ts           MCP server for your own agents (/api/mcp)
+  mcp.ts           MCP server for your own agents (/api/mcp); mcpTokens.ts its access tokens
   api/             JSON API (router + one file per area)
   runs/            run manager: create/prepare, event capture, lifecycle, watchdog, manual controls
   runtime/         machines: incus.ts (VMs), single.ts (one container), local.ts (development); process.ts is shared by the last two

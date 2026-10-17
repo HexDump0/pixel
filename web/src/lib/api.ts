@@ -62,6 +62,19 @@ export interface GithubInfo {
   mcpUrl: string;
 }
 
+/** An MCP access token as Settings lists it (the token itself is only returned once, when made). */
+export interface McpToken {
+  id: string;
+  name: string;
+  hint: string;
+  access: "read" | "full";
+  created: number;
+  expires: number | null;
+  used_at: number | null;
+  used_tool: string | null;
+  uses: number;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -191,6 +204,10 @@ export const api = {
   saveGithub: (body: { token?: string; mcp?: boolean; toolsets?: string }) => request<GithubInfo>("PUT", "/github", body),
   checkGithub: () =>
     request<{ login: string; kind: string; scopes: string[] | null; writeScopes: string[]; rateLimit: number | null; rateRemaining: number | null }>("POST", "/github/check"),
+  mcpTokens: () => request<{ url: string; tokens: McpToken[] }>("GET", "/mcp/tokens"),
+  createMcpToken: (body: { name: string; access: McpToken["access"]; days: number | null }) => request<{ token: string; info: McpToken }>("POST", "/mcp/tokens", body),
+  updateMcpToken: (id: string, body: { name?: string; access?: McpToken["access"] }) => request<McpToken>("PUT", `/mcp/tokens/${encodeURIComponent(id)}`, body),
+  revokeMcpToken: (id: string) => request<{ removed: boolean }>("DELETE", `/mcp/tokens/${encodeURIComponent(id)}`),
   testNotify: () => request<{ results: Sent[] }>("POST", "/settings/test-notify"),
   notifyStatus: () => request<NotifyStatus>("GET", "/settings/notify-status"),
   system: () => request<SystemInfo>("GET", "/system"),

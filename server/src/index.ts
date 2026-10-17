@@ -53,9 +53,10 @@ const server = Bun.serve<SocketData>({
     const auth = await handleAuth(req, url);
     if (auth) return auth;
     if (req.method === "GET" && url.pathname.startsWith("/api/share/")) return serveShare(req, url.pathname);
+    // Its own tokens (Settings, Agent access), not the dashboard login.
+    if (url.pathname === "/api/mcp") return serveMcp(req);
     if (!isAuthed(req)) return Response.json({ error: "login required" }, { status: 401 });
 
-    if (url.pathname === "/api/mcp") return serveMcp(req);
     if (url.pathname === "/api/ws") {
       return server.upgrade(req, { data: feedData() }) ? undefined : new Response("upgrade failed", { status: 400 });
     }

@@ -12,6 +12,7 @@ import {
   IconDatabase,
   IconFolder,
   IconKey,
+  IconPlugConnected,
   IconPlus,
   IconRobot,
   IconServer,
@@ -30,6 +31,7 @@ import { IC, IC_SM, IC_XS, Kbd } from "../components/ui/bits.tsx";
 import { ProviderMark } from "../components/ProviderMark.tsx";
 import { EnvEditor, NumberInput, Row, Section, State, Toggle } from "./settings/parts.tsx";
 import { GithubSection } from "./settings/Github.tsx";
+import { AgentAccessSection } from "./settings/AgentAccess.tsx";
 
 type Update = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 type Draft = Omit<Settings, "models" | "defaultModel" | "providerLimits" | "thinkingLevels" | "modelOverrides" | "providerOverrides" | "defaultProxy">;
@@ -56,6 +58,7 @@ const HOST_RESERVE_GiB = 1.5;
 const NAV: { id: string; label: string; icon: ReactNode }[] = [
   { id: "models", label: "Models", icon: <IconSparkles {...IC_SM} /> },
   { id: "github", label: "GitHub", icon: <IconBrandGithub {...IC_SM} /> },
+  { id: "mcp", label: "Agent access", icon: <IconPlugConnected {...IC_SM} /> },
   { id: "machines", label: "Machines", icon: <IconCpu {...IC_SM} /> },
   { id: "autopilot", label: "Autopilot", icon: <IconRobot {...IC_SM} /> },
   { id: "workbase", label: "Workbase and disk", icon: <IconFolder {...IC_SM} /> },
@@ -69,6 +72,7 @@ export function SettingsPage() {
   const sys = useAsync(api.system, []);
   const providers = useAsync(api.providers, []);
   const gh = useAsync(api.github, []);
+  const mcp = useAsync(api.mcpTokens, []);
   const notifyStatus = useAsync(api.notifyStatus, []);
   const workbases = useAsync(api.workbases, []);
   const [saved, setSaved] = useState<Settings | null>(null);
@@ -127,6 +131,7 @@ export function SettingsPage() {
   const navState: Record<string, ReactNode> = {
     models: <span className="font-mono">{s.models.length}</span>,
     github: gh.data?.tokenHint && <Dot tone="good" />,
+    mcp: mcp.data && mcp.data.tokens.length > 0 && <span className="font-mono">{mcp.data.tokens.length}</span>,
     machines: s.defaultSize,
     notifications: channels ? <Dot tone={Object.values(ns).some((x) => x && !x.ok) ? "bad" : "good"} /> : "Off",
     backups: !backupOn ? "Off" : last && !last.ok ? <Dot tone="bad" /> : <Dot tone="good" />,
@@ -164,6 +169,8 @@ export function SettingsPage() {
           <ModelsSection s={s} providers={p} />
 
           <GithubSection g={gh.data} setG={(g) => gh.setData(g)} error={gh.error} />
+
+          <AgentAccessSection data={mcp.data} setData={(d) => mcp.setData(d)} error={mcp.error} />
 
           <MachinesSection s={s} update={update} memTotal={sys.data?.host.memTotal} committedGiB={sys.data?.committedMemoryGiB} />
 

@@ -3,11 +3,13 @@
  * runs, findings, token usage, workbase files, and controlling runs.
  *
  * Streamable HTTP at POST /api/mcp, stateless, JSON responses only (no SSE stream: every tool answers at once).
- * Same login as the API (Authorization: Bearer <PIXEL_PASSWORD>), checked before it gets here.
+ * Opened only by MCP access tokens made in Settings (mcpTokens.ts), sent as Authorization: Bearer pxm_...;
+ * a read token sees only the tools that look, a full token everything. The dashboard password doesn't open it.
  * Tools call the API's own handlers through `dispatch`, so they behave exactly like the dashboard.
  * Not for Pixel's own run agents: they keep working from plain files in the workbases (decisions.md, 2026-10-15).
  */
 import { dispatch, routeList } from "./api/router.ts";
+import { markUsed, mcpTokenOf, type PublicMcpToken } from "./mcpTokens.ts";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 /** Longest tool answer, so one call can't flood the agent's context. */
@@ -19,6 +21,7 @@ Runs are controlled with send_message, control_run, answer_question and create_r
 
 interface Ctx {
   req: Request;
+  token: PublicMcpToken;
 }
 interface Tool {
   name: string;
@@ -170,6 +173,8 @@ const TOOLS: Tool[] = [
     inputSchema: { type: "object", properties: { run: runArg }, required: ["run"] },
     async run(a, ctx) {
       const d = await api(ctx, "GET", `/runs/${enc(a.run)}`);
+      // The attach and shell commands hand over the agent's machine: full tokens only.
+      if (ctx.token.access !== "full") delete d.attach, delete d.shell;
       return {
         ...d,
         run: compactRun(d.run),
@@ -462,8 +467,10 @@ const TOOLS: Tool[] = [
 ];
 
 /** pixel_api's description gets the live route list, so the agent can see everything there is. */
-function toolList() {
-  return TOOLS.map((t) => ({
+const allowed = (t: Tool, ctx: Ctx) => ctx.token.access === "full" || !!t.readOnly;
+
+function toolList(ctx: Ctx) {
+  return TOOLS.filter((t) => allowed(t, ctx)).map((t) => ({
     name: t.name,
     title: t.title,
     description: t.name === "pixel_api" ? `${t.description}\n\nRoutes:\n${routeList().filter((r) => !r.includes("/mcp")).join("\n")}` : t.description,
@@ -487,6 +494,8 @@ const fail = (id: RpcMessage["id"], code: number, message: string) => ({ jsonrpc
 async function callTool(params: any, ctx: Ctx) {
   const tool = TOOLS.find((t) => t.name === params?.name);
   if (!tool) return null;
+  if (!allowed(tool, ctx)) return { content: [{ type: "text", text: `The token "${ctx.token.name}" is read only; ${tool.name} needs a full-control token (Settings, Agent access).` }], isError: true };
+  markUsed(ctx.token.id, tool.name);
   try {
     const out = await tool.run(params.arguments ?? {}, ctx);
     const text = typeof out === "string" ? out : JSON.stringify(out, null, 1);
@@ -512,7 +521,7 @@ async function handle(m: RpcMessage, ctx: Ctx) {
     case "ping":
       return reply(m.id, {});
     case "tools/list":
-      return reply(m.id, { tools: toolList() });
+      return reply(m.id, { tools: toolList(ctx) });
     case "tools/call": {
       const out = await callTool(m.params, ctx);
       return out ? reply(m.id, out) : fail(m.id, -32602, `unknown tool ${m.params?.name}`);
@@ -524,11 +533,13 @@ async function handle(m: RpcMessage, ctx: Ctx) {
 
 /** POST /api/mcp (the request is already logged in). */
 export async function serveMcp(req: Request): Promise<Response> {
-  // A browser page from another site must not reach this through a logged-in or password-less Pixel.
+  // A browser page from another site has no business here.
   const origin = req.headers.get("origin");
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
   if (origin && URL.parse(origin)?.host !== host)
     return Response.json(fail(null, -32600, "cross-origin request refused"), { status: 403 });
+  const token = mcpTokenOf(req);
+  if (!token) return Response.json(fail(null, -32001, "send an MCP access token as Authorization: Bearer pxm_... (make one in Pixel's Settings, Agent access); it may have expired or been revoked"), { status: 401 });
   if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
 
   let body: RpcMessage | RpcMessage[];
@@ -537,7 +548,7 @@ export async function serveMcp(req: Request): Promise<Response> {
   } catch {
     return Response.json(fail(null, -32700, "parse error"), { status: 400 });
   }
-  const ctx = { req };
+  const ctx = { req, token };
   const batch = Array.isArray(body);
   const messages: RpcMessage[] = Array.isArray(body) ? body : [body];
   const replies = (await Promise.all(messages.map((m) => handle(m, ctx)))).filter((r) => r !== null);

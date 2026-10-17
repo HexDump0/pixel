@@ -274,6 +274,20 @@ CREATE TABLE IF NOT EXISTS share_tokens (
   used_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS share_tokens_finding ON share_tokens(run_id, finding_id);
+
+-- Access tokens for outside agents on the MCP endpoint (mcpTokens.ts), made and revoked in Settings.
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  id        TEXT PRIMARY KEY,
+  name      TEXT NOT NULL,
+  hash      TEXT NOT NULL UNIQUE,               -- sha256 of the token; the token is shown once, when made
+  hint      TEXT NOT NULL,                      -- its last 4 characters, to tell tokens apart
+  access    TEXT NOT NULL,                      -- read | full
+  created   INTEGER NOT NULL,
+  expires   INTEGER,                            -- null = never
+  used_at   INTEGER,
+  used_tool TEXT,
+  uses      INTEGER NOT NULL DEFAULT 0
+);
 `);
 
 // Columns added after the first release: add them to existing databases.
