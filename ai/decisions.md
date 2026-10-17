@@ -251,3 +251,8 @@
 - **Protocol handled automatically** (user: "is it socks5 or https or http, handle all of it automatically"; "make it easy to choose"). A Protocol choice (Auto, HTTP, HTTPS, SOCKS5) in both dialogs; Auto asks the proxy: CONNECT to a name that never resolves (an HTTP proxy answers with any HTTP status), then a SOCKS5 greeting, then CONNECT over TLS; HTTP when nothing answers. A scheme written in the address wins.
 - **SOCKS5** works although Bun's fetch has none (`UnsupportedProxyProtocol`): `server/src/socks.ts` runs a loopback bridge; fetch gets `http://<socks url, base64url>:<per-process secret>@127.0.0.1:<port>` as its proxy and the bridge opens CONNECT tunnels (and http:// targets in absolute form) through the SOCKS5 proxy, with username/password login. The secret keeps it from being an open proxy for agents on the same loopback. Used by the relay and proxy tests.
 - The user's first proxy (45.41.128.10, AS62874 Web2Objects, Dallas) couldn't be probed from the laptop: its network blocks outbound port 8001.
+
+## 2026-10-17 (MCP for the user's own agents)
+
+- **Pixel is an MCP server** (user: "add an mcp to pixel, to let my local agents connect with pixel, get the findings, get all the token usage, and pretty much get everything it wants and interact with pixel"). `POST /api/mcp`, Streamable HTTP, behind the dashboard password as a Bearer token. 18 named tools (runs, timeline, transcript, findings and their brief, verdicts, token usage, report, workbase files, search, models and templates, create run, message, controls, answer questions) plus `pixel_api` for any route, so "everything" is reachable. Full control, like the dashboard; no separate read-only token yet. Doesn't change Pixel's own agents: they still work from plain files.
+

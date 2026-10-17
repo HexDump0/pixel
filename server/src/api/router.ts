@@ -15,6 +15,7 @@ export class HttpError extends Error {
 
 interface Route {
   method: string;
+  path: string;
   pattern: RegExp;
   keys: string[];
   handler: Handler;
@@ -35,11 +36,14 @@ function compile(path: string) {
   return { pattern, keys };
 }
 
-const add = (method: string) => (path: string, handler: Handler) => routes.push({ method, handler, ...compile(path) });
+const add = (method: string) => (path: string, handler: Handler) => routes.push({ method, path, handler, ...compile(path) });
 export const get = add("GET");
 export const post = add("POST");
 export const put = add("PUT");
 export const del = add("DELETE");
+
+/** Every registered route as "METHOD /path", for the MCP endpoint's generic API tool. */
+export const routeList = () => routes.map((r) => `${r.method} ${r.path}`);
 
 export async function readJson<T = any>(req: Request): Promise<T> {
   const text = await req.text();

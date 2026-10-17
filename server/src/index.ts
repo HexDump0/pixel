@@ -19,6 +19,7 @@ import { startFindingsWatch, stopFindingsWatch } from "./findings.ts";
 import { serveShare } from "./findingShare.ts";
 import dashboard from "../../web/index.html";
 import { liveShutdown } from "./liveTest.ts";
+import { serveMcp } from "./mcp.ts";
 
 /** Client-side routes of the dashboard SPA. */
 const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/stats", "/findings", "/login"];
@@ -54,6 +55,7 @@ const server = Bun.serve<SocketData>({
     if (req.method === "GET" && url.pathname.startsWith("/api/share/")) return serveShare(req, url.pathname);
     if (!isAuthed(req)) return Response.json({ error: "login required" }, { status: 401 });
 
+    if (url.pathname === "/api/mcp") return serveMcp(req);
     if (url.pathname === "/api/ws") {
       return server.upgrade(req, { data: feedData() }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
