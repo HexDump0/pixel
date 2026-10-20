@@ -3,8 +3,8 @@
  * rate, cost and cost per hour, context, agents) · Pause, Stop, ⋯, ×. A one-line notice only when something is off.
  */
 import type { ReactNode } from "react";
-import { IconLayoutSidebarLeftExpand, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconRefresh, IconX } from "@tabler/icons-react";
-import { act, canPause, canResume, canStop } from "../../lib/actions.ts";
+import { IconDatabasePlus, IconLayoutSidebarLeftExpand, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconRefresh, IconX } from "@tabler/icons-react";
+import { act, canPause, canResume, canStop, diskFull } from "../../lib/actions.ts";
 import { rate } from "../../lib/fleet.ts";
 import { money, tokens } from "../../lib/format.ts";
 import type { Health } from "../../lib/health.ts";
@@ -125,7 +125,26 @@ export function RunHeader({ detail, fleet, h, railHidden, onShowRail, onClose }:
         </div>
       </div>
       {notice && (
-        <div className={cn("mt-2 rounded-[10px] px-3 py-2 font-mono text-[12.5px] leading-normal text-ink", r.status === "failed" ? "bg-[var(--bad-tint)]" : "bg-[var(--warn-tint)]")}>{r.status_detail}</div>
+        <div className={cn("mt-2 flex items-center gap-3 rounded-[10px] px-3 py-2 font-mono text-[12.5px] leading-normal text-ink", r.status === "failed" ? "bg-[var(--bad-tint)]" : "bg-[var(--warn-tint)]")}>
+          <span className="min-w-0 flex-1">{r.status_detail}</span>
+          {diskFull(r) && (
+            <Button size="xs" onClick={() => void act.boostDisk(r.id)}>
+              <IconDatabasePlus {...IC_SM} />
+              Give more disk
+            </Button>
+          )}
+        </div>
+      )}
+      {r.disk_boost && (
+        <div className="mt-2 flex items-center gap-3 rounded-[10px] bg-[var(--warn-tint)] px-3 py-2 text-[13px] leading-normal text-ink">
+          <IconDatabasePlus {...IC_SM} className="shrink-0 text-warning" />
+          <span className="min-w-0 flex-1">
+            Cleaning up a full disk with {r.disk_boost.extraGiB} GB extra; back to {r.disk_boost.baseGiB} GB once it's under the limit
+          </span>
+          <Button size="xs" variant="ghost" onClick={() => act.endBoost(r.id)}>
+            Back to normal now
+          </Button>
+        </div>
       )}
     </div>
   );

@@ -258,3 +258,8 @@
 - **MCP tokens instead of the password** (user: the password felt hacky; "add like a way to config mcp api tokens and stuff, more cleanly in the ui"). Settings has an Agent access section: address, tokens (name, Read only or Full control, expiry, last used with the tool, revoke, switch access), New token dialog that shows the token once with setup for Claude Code, opencode and `.mcp.json`. The password no longer opens MCP.
 - **System in the top bar** (user: "make it easier to go to the systems page"). It was only reachable from the command palette and a link on Stats, and lit up the Settings tab; now it's its own tab between Templates and Settings.
 
+## 2026-10-20
+
+- **Machine size on the fly** (user: "easily able to change the machine type of a run on the fly"). Machine size dialog in the run menu and the Machine tab: a preset or CPU/memory/disk by hand, applied live.
+- **Disk rescue instead of a plain stop** (user: when a machine stops because its disk is full, "temp increase its limit by like a few gigs and ask it to clean up … if it does … decrease the limit back to normal and let it do its stuff (this all happens automatically)", plus "a button incase the machine disk is full"). Defaults: 5 GiB extra, 3 automatic cleanups per run, 30 min to get under 90% of the normal stop point; Settings, Workbase and disk. The button is Give more disk (run menu and the run header's notice when stopped for a full disk). Details in design.md.
+

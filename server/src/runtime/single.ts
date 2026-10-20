@@ -274,10 +274,20 @@ export class SingleRuntime extends ProcessRuntime {
     }
   }
 
-  /** Bytes the run's machine dir uses. `du` over build trees is slow, so it is cached for a few minutes. */
+  /** Limits apply from the next check: memory within 5 s, disk at the next metrics (du is measured again). */
+  async resize(run: RunRow, next: RunSize, prev: RunSize) {
+    if (this.limits.has(run.id)) this.track(run, next);
+    this.diskCache.delete(run.id);
+    return next.cpu !== prev.cpu ? ["CPU here is only a priority, the container's CPU cap is shared by every agent"] : [];
+  }
+
+  /**
+   * Bytes the run's machine dir uses. `du` over build trees is slow, so it is cached for a few minutes;
+   * for one minute while the run has extra disk to clean up, so its progress shows.
+   */
   private async diskUsed(run: RunRow) {
     const cached = this.diskCache.get(run.id);
-    if (cached && Date.now() - cached.t < DISK_CHECK_MS) return cached.bytes;
+    if (cached && Date.now() - cached.t < (run.disk_boost ? 60_000 : DISK_CHECK_MS)) return cached.bytes;
     const r = await sh(["du", "-sxb", this.runDir(run)], { timeoutMs: 120_000 });
     const bytes = Number(r.stdout.split(/\s/)[0]);
     if (!Number.isFinite(bytes)) return cached?.bytes;

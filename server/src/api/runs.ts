@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { config } from "../config.ts";
 import { addTimeline, db, getRun, listRuns, type RunRow } from "../db.ts";
 import { runtime } from "../runtime/index.ts";
-import { clientFor, controls, createRun, exportTranscript, releaseRun, isWatching, publicRun, syncTranscript, transcript, type NewRun } from "../runs/index.ts";
+import { boostDisk, clientFor, controls, createRun, endBoost, resizeRun, exportTranscript, releaseRun, isWatching, publicRun, syncTranscript, transcript, type NewRun } from "../runs/index.ts";
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
@@ -228,6 +228,9 @@ post("/runs/:id/vm/:action", async ({ req, params: { id, action } }) => {
   return controls.vmAction(id, action as controls.VmAction, (await readJson(req)).snapshot);
 });
 del("/runs/:id/vm", ({ params: { id } }) => controls.deleteMachine(id));
+post("/runs/:id/size", async ({ req, params: { id } }) => resizeRun(id, await readJson(req)));
+post("/runs/:id/disk-boost", ({ params: { id } }) => boostDisk(id, "user"));
+del("/runs/:id/disk-boost", ({ params: { id } }) => endBoost(id, "user"));
 post("/runs/:id/question/:qid", async ({ req, params: { id, qid } }) => {
   const b = await readJson<{ answers?: string[][]; reject?: boolean }>(req);
   return controls.answerQuestion(id, qid, b.reject ? null : (b.answers ?? []));

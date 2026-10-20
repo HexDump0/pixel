@@ -12,6 +12,7 @@ import { autoApprove, getWatcher, serial, unwatch, watch, watchedRuns, type Watc
 import { onIdle, recover, sendPrompt } from "./lifecycle.ts";
 import { prepare } from "./create.ts";
 import { releaseIdle } from "./release.ts";
+import { checkDisk } from "./resize.ts";
 
 const GiB = 1024 ** 3;
 const METRICS_MS = 60_000;
@@ -65,7 +66,7 @@ async function safetyNets(run: RunRow, w: Watcher, client: OpencodeClient, s: Se
   }
 }
 
-/** Record metrics; stop the run if the machine disk is full or the workbase is too big. */
+/** Record metrics; on a full machine disk give it room to clean up or stop (resize.ts); stop if the workbase is too big. */
 async function resources(id: string, client: OpencodeClient, s: Settings) {
   let run = getRun(id)!;
   const limit = s.workbaseLimitGiB * GiB;
@@ -89,8 +90,9 @@ async function resources(id: string, client: OpencodeClient, s: Settings) {
   run = getRun(id)!;
   if (run.status !== "running") return;
   const stop = async (detail: string, message: string) => {
-    await client.abort(run.session_id!).catch(() => {});
+    // Stopped before the abort, so the idle the abort causes doesn't send a continue.
     const r = setStatus(id, "stopped", detail)!;
+    await client.abort(run.session_id!).catch(() => {});
     timeline(id, "pixel", "stopped", message);
     notifyRun("stopped", r, `Run stopped: ${detail}`, message);
   };
@@ -98,9 +100,7 @@ async function resources(id: string, client: OpencodeClient, s: Settings) {
   if (free !== null && free < config.minFreeGiB * GiB) {
     return stop("server disk almost full", `Only ${(free / GiB).toFixed(1)} GiB free on Pixel's data disk (minimum ${config.minFreeGiB} GiB): aborted the session and stopped the run`);
   }
-  if (m.diskUsed && m.diskTotal && (m.diskUsed / m.diskTotal) * 100 >= s.diskFullPercent) {
-    return stop("machine disk full", `Machine disk at ${((m.diskUsed / m.diskTotal) * 100).toFixed(1)}%: aborted the session and stopped the run (machine kept for inspection)`);
-  }
+  if (await checkDisk(run, m, s, stop)) return;
   if (wb > limit) {
     return stop("workbase too big", `Workbase is ${(wb / GiB).toFixed(2)} GiB, over the ${s.workbaseLimitGiB} GiB limit: aborted the session and stopped the run`);
   }

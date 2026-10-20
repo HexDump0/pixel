@@ -9,6 +9,7 @@ import type { Credentials } from "../runtime/types.ts";
 import { agentCredentials } from "../providerAccounts.ts";
 import { refreshRunFiles } from "../knowledge.ts";
 import { notify, type NotifyKind } from "../notify.ts";
+import type { DiskBoost } from "./resize.ts";
 
 export type Actor = "pixel" | "user" | "agent";
 
@@ -22,7 +23,7 @@ export function timeline(runId: string, actor: Actor, kind: string, message: str
 /** The run as the dashboard sees it (no secrets, size parsed). */
 export function publicRun(run: RunRow) {
   const { opencode_password, prompt, creds_hash, ...rest } = run;
-  return { ...rest, size: JSON.parse(run.size) as RunSize };
+  return { ...rest, size: JSON.parse(run.size) as RunSize, disk_boost: run.disk_boost ? (JSON.parse(run.disk_boost) as DiskBoost) : null };
 }
 export type PublicRun = ReturnType<typeof publicRun>;
 

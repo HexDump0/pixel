@@ -6,6 +6,9 @@ import {
   IconBolt,
   IconBrain,
   IconCircleCheck,
+  IconCpu,
+  IconDatabaseMinus,
+  IconDatabasePlus,
   IconDots,
   IconDownload,
   IconZzz,
@@ -25,7 +28,8 @@ import {
 } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
 import { navigate } from "../lib/router.tsx";
-import { act, canPause, canResume, canStop, openRun } from "../lib/actions.ts";
+import { act, canPause, canResume, canStop, diskFull, openRun } from "../lib/actions.ts";
+import { openSizeDialog } from "./MachineSize.tsx";
 import { keys, queryClient } from "../lib/query.ts";
 import { reloadRuns } from "../lib/runs.ts";
 import type { Run } from "../lib/types.ts";
@@ -55,6 +59,9 @@ export function runMenuItems(r: Run): MenuEntry[] {
     "-",
     { label: "Autopilot", checked: !!r.autopilot, icon: <span />, hint: r.autopilot ? "continues when idle" : "off", onSelect: () => act.autopilot(r) },
     { label: "Model and thinking", icon: <IconBrain {...IC_SM} />, hint: r.model.split("/").slice(1).join("/"), onSelect: () => openModelDialog(r.id) },
+    { label: "Machine size", icon: <IconCpu {...IC_SM} />, hint: `${r.size.cpu} CPU, ${r.size.memoryGiB} GB, ${r.size.diskGiB} GB`, onSelect: () => openSizeDialog(r.id) },
+    diskFull(r) && !r.disk_boost && { label: "Give more disk", icon: <IconDatabasePlus {...IC_SM} />, hint: "and clean up", onSelect: () => void act.boostDisk(r.id), disabled: !hasSession },
+    r.disk_boost && { label: "Back to normal disk", icon: <IconDatabaseMinus {...IC_SM} />, hint: `${r.disk_boost.baseGiB} GB`, onSelect: () => act.endBoost(r.id) },
     { label: "Proxy", icon: r.proxy_id ? <IconWorld {...IC_SM} /> : <IconWorldOff {...IC_SM} />, hint: <ProxyName id={r.proxy_id} />, sub: () => useProxyItems(r) },
     { label: "Rename", icon: <IconPencil {...IC_SM} />, onSelect: () => (openRun(r.id), setTimeout(() => startRename(r.id), 50)) },
     { label: "Terminal", icon: <IconTerminal2 {...IC_SM} />, onSelect: () => openRun(r.id, "terminal") },

@@ -15,6 +15,7 @@ import { TipProvider } from "./ui/overlay.tsx";
 import { CommandPalette, openPalette } from "./CommandPalette.tsx";
 import { CatchUp, onOpenCatchUp, useCatchUp } from "./CatchUp.tsx";
 import { ModelDialogHost } from "./RunMenu.tsx";
+import { SizeDialogHost } from "./MachineSize.tsx";
 
 const NAV: { to: string; label: string; match: (p: string) => boolean }[] = [
   { to: "/", label: "Runs", match: (p) => p === "/" || p.startsWith("/runs") },
@@ -118,6 +119,7 @@ export function AppShell({ authEnabled, children }: { authEnabled: boolean; chil
       <CommandPalette authEnabled={authEnabled} />
       <CatchUp open={catchUpOpen} onOpenChange={setCatchUpOpen} data={catchUp} />
       <ModelDialogHost runs={runs ?? []} />
+      <SizeDialogHost runs={runs ?? []} />
     </TipProvider>
   );
 }

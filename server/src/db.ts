@@ -295,6 +295,10 @@ for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "cred
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
+// Machine resizing (2026-10-20): the temporary extra disk while an agent cleans up a full one, and how many it had.
+for (const [column, type] of [["disk_boost", "TEXT"], ["disk_rescues", "INTEGER NOT NULL DEFAULT 0"]] as const) {
+  if (!db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`);
+}
 // Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
 if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
 
@@ -465,7 +469,12 @@ export interface RunRow {
   proxy_id: string | null;
   /** Colour of the run on every chart and tile (0–5), picked at creation so runs live at the same time differ. */
   hue: number | null;
+  /** JSON RunSize: the machine's size right now (changed on the fly by runs/resize.ts). */
   size: string;
+  /** JSON DiskBoost while the run has extra disk to clean up a full one (runs/resize.ts), else null. */
+  disk_boost: string | null;
+  /** Automatic disk cleanups so far (reset with the other counters). */
+  disk_rescues: number;
   status: RunStatus;
   status_detail: string | null;
   runtime: string;

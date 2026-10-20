@@ -62,6 +62,11 @@ export interface Runtime {
   /** Start opencode again (after OOM or crash). Starts the VM first if needed. With `creds`, the new keys replace the old ones first. */
   restartOpencode(run: RunRow, creds?: Credentials): Promise<void>;
   metrics(run: RunRow): Promise<Metrics>;
+  /**
+   * Apply a new size to a live machine (`run` still has the old one). Returns notes on what could not
+   * change live; throws if nothing was changed. Without it the size is only what Pixel records.
+   */
+  resize?(run: RunRow, next: RunSize, prev: RunSize): Promise<string[]>;
   vmState(run: RunRow): Promise<string>;
   startVm(run: RunRow): Promise<void>;
   stopVm(run: RunRow): Promise<void>;

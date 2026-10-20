@@ -10,6 +10,14 @@ export interface Settings {
   maxOomRestarts: number;
   workbaseLimitGiB: number;
   diskFullPercent: number;
+  /** A run whose machine disk fills up gets this many GiB extra for a while and is asked to clean up (0 = just stop it). */
+  diskRescueGiB: number;
+  /** Automatic cleanups per run; after that a full disk stops the run. */
+  diskRescueMax: number;
+  /** Minutes the agent has to get back under its normal disk before the run stops. */
+  diskRescueMin: number;
+  /** Sent to the agent with the extra disk. {used} {limit} {extra} {goal} {dirs} are filled in. */
+  diskRescueMessage: string;
   continueMessage: string;
   oomMessage: string;
   /** Reject an agent's question after this many minutes without an answer, so autopilot runs don't block (0 = wait forever). */
@@ -88,6 +96,11 @@ export const defaultSettings: Settings = {
   maxOomRestarts: 3,
   workbaseLimitGiB: 5,
   diskFullPercent: 98,
+  diskRescueGiB: 5,
+  diskRescueMax: 3,
+  diskRescueMin: 30,
+  diskRescueMessage:
+    "Your machine's disk filled up ({used} of {limit}), so Pixel stopped your last step. You have {extra} extra for a short while to clean up. Delete what you no longer need on the machine ({dirs}): build trees and object files, fuzzing corpora and crashes you have already triaged, core dumps, downloaded archives, caches such as ~/.cache and pip, npm or cargo caches. Keep your workbase and anything you still need. Get usage under {goal} (check with du -sh and df -h), then carry on with your work and keep an eye on disk use from now on. The extra space goes away once you are under {goal}.",
   continueMessage: "continue your work",
   oomMessage: "continue your work, the oom killer killed you that was the reason for your stop",
   questionTimeoutMin: 30,

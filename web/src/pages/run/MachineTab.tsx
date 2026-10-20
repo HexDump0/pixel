@@ -12,6 +12,7 @@ import { Menu } from "../../components/ui/overlay.tsx";
 import { IC_SM, Join, Nil, Nothing, SectionHead, Sep } from "../../components/ui/bits.tsx";
 import { Meter } from "../../components/charts/Meter.tsx";
 import { toast } from "../../components/Toast.tsx";
+import { openSizeDialog } from "../../components/MachineSize.tsx";
 
 const series = (rows: MetricRow[], pick: (r: MetricRow) => number | null) => rows.flatMap((r) => (pick(r) == null ? [] : [[r.ts, pick(r)!] as [number, number]]));
 const pctFmt = (v: number) => `${Math.round(v)}%`;
@@ -173,7 +174,18 @@ export function MachineTab({ detail, onChange }: { detail: RunDetail; onChange: 
             </span>,
           )}
           {fact("Name", r.vm_name ?? <Nil />)}
-          {fact("Size", <Join items={[`${r.size.cpu} CPU`, `${r.size.memoryGiB} GB memory`, `${r.size.diskGiB} GB disk`]} />)}
+          {fact(
+            "Size",
+            <span className="flex items-center gap-2">
+              <span className="min-w-0 truncate">
+                <Join items={[`${r.size.cpu} CPU`, `${r.size.memoryGiB} GB memory`, `${r.size.diskGiB} GB disk`]} />
+                {r.disk_boost && <span className="text-warning"><Sep />{r.disk_boost.extraGiB} GB extra to clean up</span>}
+              </span>
+              <Button size="xs" variant="ghost" className="ml-auto font-sans" onClick={() => openSizeDialog(r.id)}>
+                Change
+              </Button>
+            </span>,
+          )}
           {fact("Runtime", r.runtime)}
           {r.endpoint && fact("opencode", r.endpoint)}
         </dl>

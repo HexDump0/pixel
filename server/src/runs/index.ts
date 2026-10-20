@@ -5,3 +5,4 @@ export { reattach, startWatchdog, stopWatchdog } from "./watchdog.ts";
 export { clientFor, publicRun, type PublicRun } from "./state.ts";
 export * as controls from "./controls.ts";
 export { canRelease, releaseRun } from "./release.ts";
+export { boostDisk, endBoost, resizeRun } from "./resize.ts";

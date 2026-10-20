@@ -501,6 +501,23 @@ function WorkbaseSection({ s, update, reset, workbases }: { s: Settings; update:
       <Row label="Stop a run when its machine disk is" hint="Full disks corrupt builds and fuzzer corpora; stopping early keeps the workbase intact." reset={reset("diskFullPercent", "%")}>
         <NumberInput label="Disk full threshold" value={s.diskFullPercent} onChange={(v) => update("diskFullPercent", v)} unit="% full" min={1} max={100} />
       </Row>
+      <Row
+        label="When a machine disk fills up, give it"
+        hint="Extra disk for a while and a message asking the agent to clean up. Once it is back under its normal disk, the extra goes away and the agent carries on."
+        reset={reset("diskRescueGiB", " GiB")}
+      >
+        <NumberInput label="Extra disk for a cleanup" value={s.diskRescueGiB} onChange={(v) => update("diskRescueGiB", v)} unit="GiB extra" zero="just stop" />
+      </Row>
+      {s.diskRescueGiB > 0 && (
+        <>
+          <Row label="Automatic cleanups per run" hint="After these, a full disk stops the run. Give more disk on the run still works." reset={reset("diskRescueMax", " times")}>
+            <NumberInput label="Automatic cleanups per run" value={s.diskRescueMax} onChange={(v) => update("diskRescueMax", v)} unit="times" zero="off" />
+          </Row>
+          <Row label="Time to clean up" hint="Not back under the normal disk by then: the run stops." reset={reset("diskRescueMin", " min")}>
+            <NumberInput label="Time to clean up" value={s.diskRescueMin} onChange={(v) => update("diskRescueMin", v)} unit="min" min={1} />
+          </Row>
+        </>
+      )}
       <Row label="Workbase history snapshots" hint="Git snapshots of each active workbase, kept outside it so agents never see them. Browse them in a run's Files tab." reset={reset("historyIntervalMin", " min")}>
         <NumberInput label="History snapshot interval" value={s.historyIntervalMin} onChange={(v) => update("historyIntervalMin", v)} unit="min" zero="off" />
       </Row>

@@ -21,6 +21,8 @@ export async function onIdle(id: string, source: "event" | "watchdog") {
   if (!run || run.status !== "running" || run.agent_status === "idle") return;
   // An idle event that waited in the queue behind a restart (say, a key switch that already sent "continue") is stale.
   if (source === "event" && run.session_id && (await clientFor(run).status().catch(() => null))?.[run.session_id]) return;
+  // Stopped or paused meanwhile (a stop aborts the agent, which is what made it idle): no continue.
+  if (getRun(id)?.status !== "running") return;
   setRun(id, { agent_status: "idle" });
   if (pendingQuestions(id)) return;
 

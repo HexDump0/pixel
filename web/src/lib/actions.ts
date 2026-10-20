@@ -49,7 +49,13 @@ export const act = {
     navigate("/");
   },
   message: (id: string, text: string) => api.message(id, text),
+  boostDisk: (id: string) =>
+    api.boostDisk(id).then((b) => (toast(`${b.boost.extraGiB} GB extra disk; the agent was asked to clean up`), void reloadRuns()), fail),
+  endBoost: (id: string) => runAct(api.endBoost(id), "Disk back to normal"),
 };
+
+/** Stopped because the machine disk filled up. */
+export const diskFull = (r: Run) => r.status_detail === "machine disk full";
 
 export const canPause = (r: Run) => r.status === "running" || r.status === "recovering";
 export const canResume = (r: Run) => r.status === "paused" || r.status === "stopped" || r.status === "done";

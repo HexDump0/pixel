@@ -74,8 +74,9 @@ export async function resumeRun(id: string, message?: string) {
 
 export async function stopRun(id: string) {
   const run = mustRun(id);
-  if (run.session_id && run.endpoint) await clientFor(run).abort(run.session_id).catch(() => {});
+  // Stopped before the abort, so the idle the abort causes doesn't send a continue.
   setStatus(id, "stopped", "Stopped by you");
+  if (run.session_id && run.endpoint) await clientFor(run).abort(run.session_id).catch(() => {});
   timeline(id, "user", "stop", "Stopped by you; machine kept");
 }
 
@@ -130,8 +131,8 @@ export function setLabel(id: string, label: unknown) {
 
 export function resetCounters(id: string) {
   mustRun(id);
-  setRun(id, { continues: 0, oom_restarts: 0 });
-  timeline(id, "user", "counters", "Reset the continue and OOM-restart counters");
+  setRun(id, { continues: 0, oom_restarts: 0, disk_rescues: 0 });
+  timeline(id, "user", "counters", "Reset the continue, OOM-restart and disk-cleanup counters");
 }
 
 export async function answerQuestion(id: string, questionId: string, answers: string[][] | null) {

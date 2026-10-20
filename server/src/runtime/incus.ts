@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import { parsePs, type ProcessInfo } from "./procs.ts";
-import type { RunRow } from "../db.ts";
+import type { RunRow, RunSize } from "../db.ts";
 import type { AgentPaths, Credentials, ExecResult, Metrics, OpencodeState, PrepareOptions, Prepared, Runtime } from "./types.ts";
 
 class IncusError extends Error {}
@@ -271,9 +271,33 @@ export class IncusRuntime implements Runtime {
         const r = await this.execByName(name, ["df", "-B1", "--output=used,size", "/"], 20_000);
         const nums = r.stdout.trim().split("\n").pop()!.trim().split(/\s+/).map(Number);
         if (nums.length === 2 && nums.every(Number.isFinite)) [out.diskUsed, out.diskTotal] = nums;
+        // VM disks only grow: after a temporary boost the run is held to its (smaller) size by Pixel.
+        const sizeBytes = (JSON.parse(run.size) as RunSize).diskGiB * 1024 ** 3;
+        if (out.diskTotal && sizeBytes < out.diskTotal) out.diskTotal = sizeBytes;
       } catch {}
     }
     return out;
+  }
+
+  /** CPU and memory change live (Incus hotplugs them); the root disk grows but never shrinks. */
+  async resize(run: RunRow, next: RunSize, prev: RunSize) {
+    const name = this.name(run);
+    const notes: string[] = [];
+    const inst = await call("GET", `/1.0/instances/${name}`);
+    const devices = { ...inst.devices };
+    if (next.diskGiB > prev.diskGiB && devices.root) devices.root = { ...devices.root, size: `${next.diskGiB}GiB` };
+    else if (next.diskGiB < prev.diskGiB) notes.push("VM disks only grow, so Pixel holds the run to the smaller disk itself");
+    const body = {
+      architecture: inst.architecture,
+      config: { ...inst.config, "limits.cpu": String(next.cpu), "limits.memory": `${next.memoryGiB}GiB` },
+      devices,
+      ephemeral: inst.ephemeral,
+      profiles: inst.profiles,
+      stateful: inst.stateful,
+      description: inst.description,
+    };
+    await call("PUT", `/1.0/instances/${name}`, body);
+    return notes;
   }
 
   async vmState(run: RunRow) {
