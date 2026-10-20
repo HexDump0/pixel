@@ -299,6 +299,8 @@ for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "cred
 for (const [column, type] of [["disk_boost", "TEXT"], ["disk_rescues", "INTEGER NOT NULL DEFAULT 0"]] as const) {
   if (!db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`);
 }
+// Who gave a finding its verdict (2026-10-20): "dashboard" or "MCP: <token name>".
+if (!db.query<{ name: string }, []>("PRAGMA table_info(findings)").all().some((c) => c.name === "verdict_by")) db.exec("ALTER TABLE findings ADD COLUMN verdict_by TEXT");
 // Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
 if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
 

@@ -225,3 +225,15 @@ describe("mcp: big lists, filters and edge cases", () => {
     expect((await tool("read_file", { run: RUN, path: "../../etc/passwd" })).text).toContain("outside the workbase");
   });
 });
+
+test("mcp: a verdict records who gave it; triaged and verdict filters", async () => {
+  const BIG = "mcp-big";
+  const set = await tool("set_finding_verdict", { run: BIG, finding: "F1", verdict: "real" });
+  expect(JSON.parse(set.text)).toMatchObject({ verdict: "real", verdictBy: "MCP: laptop claude" });
+  await apiCall("POST", `/runs/${BIG}/findings/F2/verdict`, { verdict: "not_bug" });
+  const triaged = JSON.parse((await tool("list_findings", { run: BIG, triaged: true, brief: true })).text);
+  expect(Object.fromEntries(triaged.findings.map((f: any) => [f.id, f.verdictBy]))).toEqual({ F1: "MCP: laptop claude", F2: "dashboard" });
+  expect(JSON.parse((await tool("list_findings", { run: BIG, verdict: "REAL", brief: true })).text).total).toBe(1);
+  const events = JSON.parse((await tool("finding_history", { run: BIG, finding: "F1" })).text).events;
+  expect(events[0].changes.by[1]).toBe("MCP: laptop claude");
+});

@@ -12,8 +12,11 @@ import { Hue, Join, Sev } from "../../components/ui/bits.tsx";
 function VerdictCell({ f, isNew }: { f: Finding; isNew?: boolean }) {
   const v = f.verdict;
   const text = v ? verdictLabel(v).toLowerCase() : isNew ? "new" : f.removed_at ? "removed" : STATE_WORD[f.state];
+  const by = f.verdict_by?.startsWith("MCP: ") ? `by ${f.verdict_by.slice(5)} over MCP` : "by you in the dashboard";
   return (
-    <span className={cn("justify-self-end text-[12.5px] whitespace-nowrap text-ink-3", v === "real" && "text-good", !v && isNew && "text-accent")}>{text}</span>
+    <span title={v ? `Verdict ${by}` : undefined} className={cn("justify-self-end text-[12.5px] whitespace-nowrap text-ink-3", v === "real" && "text-good", !v && isNew && "text-accent")}>
+      {text}
+    </span>
   );
 }
 
@@ -65,10 +68,16 @@ function Group({ title, n, right, children }: { title: string; n: number; right?
   );
 }
 
-/** Across runs: To triage, then Triaged. Clicking a row opens it in its run (or calls onOpen). */
+/**
+ * Across runs: To triage, then Triaged (a verdict, from you or an MCP client), then what the agents
+ * set aside themselves: leads and ruled out, which have no verdict. Clicking a row opens it in its run.
+ */
 export function FindingsTable({ findings, runs, selected, onOpen, isNew }: { findings: Finding[]; runs: Run[]; selected?: string; onOpen?: (f: Finding) => void; isNew?: (f: Finding) => boolean }) {
   const open = findings.filter(isOpen).sort(byPriority);
-  const done = findings.filter((f) => !isOpen(f)).sort((a, b) => (b.verdict_at ?? b.updated) - (a.verdict_at ?? a.updated));
+  const rest = findings.filter((f) => !isOpen(f));
+  const triaged = rest.filter((f) => f.verdict).sort((a, b) => (b.verdict_at ?? b.updated) - (a.verdict_at ?? a.updated));
+  const leads = rest.filter((f) => !f.verdict && f.state === "lead").sort(byPriority);
+  const ruledOut = rest.filter((f) => !f.verdict && f.state !== "lead").sort((a, b) => b.updated - a.updated);
   const go = onOpen ?? ((f: Finding) => openRun(f.run_id, `findings/${f.id}`));
   const byId = new Map(runs.map((r) => [r.id, r]));
   if (!findings.length) return <div className="py-6 text-[13.5px] text-ink-3">No findings.</div>;
@@ -81,12 +90,21 @@ export function FindingsTable({ findings, runs, selected, onOpen, isNew }: { fin
           ))}
         </Group>
       )}
-      {done.length > 0 && (
-        <Group title="Triaged, leads and ruled out" n={done.length}>
-          {done.map((f) => (
-            <Row key={`${f.run_id}/${f.id}`} f={f} run={byId.get(f.run_id)} showRun selected={selected === `${f.run_id}/${f.id}`} isNew={isNew?.(f)} onOpen={go} />
-          ))}
-        </Group>
+      {(
+        [
+          ["Triaged", triaged],
+          ["Leads, not yet findings", leads],
+          ["Ruled out by the agent", ruledOut],
+        ] as const
+      ).map(
+        ([title, list]) =>
+          list.length > 0 && (
+            <Group key={title} title={title} n={list.length}>
+              {list.map((f) => (
+                <Row key={`${f.run_id}/${f.id}`} f={f} run={byId.get(f.run_id)} showRun selected={selected === `${f.run_id}/${f.id}`} isNew={isNew?.(f)} onOpen={go} />
+              ))}
+            </Group>
+          ),
       )}
     </div>
   );

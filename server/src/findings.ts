@@ -50,6 +50,8 @@ export interface FindingRow {
   verdict: Verdict | null;
   verdict_note: string | null;
   verdict_at: number | null;
+  /** Who gave the verdict: "dashboard" or "MCP: <token name>"; null for older verdicts and without one. */
+  verdict_by: string | null;
   /** The finding's README, relative to the workbase. */
   path: string | null;
   /** What Pixel couldn't read in the README (bad header, clashing number), shown on the finding. */
@@ -320,6 +322,10 @@ export interface FindingQuery {
   severity?: string;
   /** One or more, comma-separated. */
   state?: string;
+  /** Only findings with a verdict (from you or an MCP client). */
+  triaged?: boolean;
+  /** These verdicts only, comma-separated (real, not_bug, duplicate). */
+  verdict?: string;
   includeRemoved?: boolean;
 }
 
@@ -351,6 +357,12 @@ export function listFindings(q: FindingQuery = {}) {
     const parts = [named.length ? `severity IN (${named.map(() => "?").join(", ")})` : "", list.includes("none") ? "severity IS NULL" : ""].filter(Boolean);
     where.push(`(${parts.join(" OR ")})`);
     params.push(...named);
+  }
+  if (q.triaged) where.push("verdict IS NOT NULL");
+  if (q.verdict) {
+    const list = q.verdict.split(",");
+    where.push(`verdict IN (${list.map(() => "?").join(", ")})`);
+    params.push(...list);
   }
   if (q.state) {
     const list = q.state.split(",");
@@ -449,16 +461,18 @@ export function writeFindingsIndex(runId: string) {
 }
 
 /** The human's verdict on one finding (null clears it). Returns the updated finding. */
-export function setVerdict(runId: string, id: string, verdict: Verdict | null, note: string | null) {
+/** `by`: where the verdict came from, "dashboard" or "MCP: <token name>". Run agents can't give verdicts. */
+export function setVerdict(runId: string, id: string, verdict: Verdict | null, note: string | null, by = "dashboard") {
   if (verdict !== null && !VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${VERDICTS.join(", ")}`);
   const before = getFinding(runId, id);
   if (!before) throw new Error(`no finding ${id}`);
   const at = Math.max(Date.now(), (before.verdict_at ?? 0) + 1);
   const cleanNote = note?.trim() || null;
-  db.query("UPDATE findings SET verdict = ?, verdict_note = ?, verdict_at = ? WHERE run_id = ? AND id = ?").run(verdict, cleanNote, verdict ? at : null, runId, id);
-  const res = insertEvent.run(runId, id, at, "verdict", JSON.stringify({ verdict: [before.verdict, verdict] }), cleanNote, null);
+  db.query("UPDATE findings SET verdict = ?, verdict_note = ?, verdict_at = ?, verdict_by = ? WHERE run_id = ? AND id = ?").run(verdict, cleanNote, verdict ? at : null, verdict ? by : null, runId, id);
+  const changes = JSON.stringify({ verdict: [before.verdict, verdict], by: [before.verdict_by, by] });
+  const res = insertEvent.run(runId, id, at, "verdict", changes, cleanNote, null);
   const finding = getFinding(runId, id)!;
-  announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "verdict", changes: JSON.stringify({ verdict: [before.verdict, verdict] }), note: cleanNote, session_id: null }), finding);
+  announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "verdict", changes, note: cleanNote, session_id: null }), finding);
   publish("*", "findings", { run: runId });
   try {
     writeFindingsIndex(runId);

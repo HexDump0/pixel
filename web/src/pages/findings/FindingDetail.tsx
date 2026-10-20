@@ -21,7 +21,9 @@ function describe(e: FindingEvent) {
   if (e.action === "remove") return "Removed";
   if (e.action === "verdict") {
     const v = e.changes?.verdict?.[1] as string | null;
-    return v ? `You: ${verdictLabel(v).toLowerCase()}` : "You cleared the verdict";
+    const by = e.changes?.by?.[1] as string | undefined;
+    const who = by?.startsWith("MCP: ") ? `${by.slice(5)} (MCP)` : "You";
+    return v ? `${who}: ${verdictLabel(v).toLowerCase()}` : `${who} cleared the verdict`;
   }
   const parts = Object.entries(e.changes ?? {}).map(([k, [a, b]]) =>
     k === "state" ? `${STATE_WORD[String(a)] ?? a} to ${STATE_WORD[String(b)] ?? b}` : k === "severity" ? `severity ${a ?? "none"} to ${b}` : `${FIELD[k] ?? k} changed`,

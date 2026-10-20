@@ -7,7 +7,7 @@ import { boostDisk, clientFor, controls, createRun, endBoost, resizeRun, exportT
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
-import { enumFilter, findingCounts, findingEvents, listFindings, setVerdict, SEVERITY_FILTERS, STATES, type Verdict } from "../findings.ts";
+import { enumFilter, findingCounts, findingEvents, listFindings, setVerdict, SEVERITY_FILTERS, STATES, VERDICTS, type Verdict } from "../findings.ts";
 import { llmBrief, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
@@ -28,6 +28,8 @@ const findingQuery = (query: URLSearchParams) => ({
   severity: enumFilter("severity", query.get("severity"), SEVERITY_FILTERS),
   state: enumFilter("state", query.get("state"), STATES),
   untriaged: query.get("untriaged") === "1",
+  triaged: query.get("triaged") === "1",
+  verdict: enumFilter("verdict", query.get("verdict"), VERDICTS),
 });
 
 function mustRun(id: string) {
@@ -162,7 +164,9 @@ get("/runs/:id/findings/events", ({ params: { id }, query }) => {
 post("/runs/:id/findings/:fid/verdict", async ({ req, params: { id, fid } }) => {
   mustRun(id);
   const b = await readJson<{ verdict?: Verdict | null; note?: string | null }>(req);
-  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null);
+  // The MCP endpoint calls this route itself and says which token it was (mcp.ts).
+  const mcp = req.headers.get("x-pixel-mcp-token");
+  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null, mcp ? `MCP: ${decodeURIComponent(mcp)}` : "dashboard");
 });
 /** The finding as one markdown text for another model, with a signed link to its files. */
 get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid } }) => {

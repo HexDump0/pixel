@@ -28,10 +28,10 @@ Runs are controlled with send_message, control_run, answer_question and create_r
 How to use it well:
 - Lists come in pages. Each answer has total, offset, returned and next; pass offset = next until next is null. A page can hold fewer rows than your limit, because answers stay under 55,000 characters.
 - To count or scan findings, use list_findings with brief: true (no summary or PoC, many rows per page), then get_finding for the ones you need in full. Don't ask for huge limits.
-- Filter on the server instead of fetching everything: run, severity (critical, high, medium, low, info, or none for no severity), state (lead, suspected, confirmed, ruled_out), untriaged. Separate several values with commas; case doesn't matter.
+- Filter on the server instead of fetching everything: run, severity (critical, high, medium, low, info, or none for no severity), state (lead, suspected, confirmed, ruled_out), untriaged, triaged (has a verdict), verdict (real, not_bug, duplicate). Separate several values with commas; case doesn't matter.
 - An error result is an error, not an empty answer: read its text and adjust the call (an unknown filter value or an answer too big says what to change).
 - Finding counts on runs (list_runs) leave out leads, which are ideas rather than findings to triage; they're counted apart as leads. list_findings includes leads unless you filter by state. In run counts, findings without a severity count as info.
-- verdict is the human's triage: real, not_bug, duplicate, or null before triage. get_report is null until the agent writes REPORT.md.
+- verdict is the triage: real, not_bug, duplicate, or null before triage. Only people (the dashboard) and MCP clients give verdicts, never the run agents; verdictBy says which ("dashboard" or "MCP: <token name>"). A finding the agent marked ruled_out or left as a lead has no verdict. get_report is null until the agent writes REPORT.md.
 - Workbase paths are relative to the workbase, e.g. findings/F3-name/README.md, with no leading slash.
 - Times are ISO 8601 UTC.
 - If a call fails with a connection error (such as ECONNRESET), retry it once before giving up.
@@ -65,6 +65,8 @@ async function api<T = any>(ctx: Ctx, method: string, path: string, body?: unkno
     const v = ctx.req.headers.get(h);
     if (v) headers.set(h, v);
   }
+  // So a verdict records which token gave it.
+  headers.set("x-pixel-mcp-token", encodeURIComponent(ctx.token.name));
   const res = await dispatch(new Request(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), url);
   const type = res.headers.get("content-type") ?? "";
   const data: any = type.includes("json") ? await res.json().catch(() => null) : await res.text();
@@ -142,6 +144,7 @@ function compactFinding(f: any, brief = false) {
     summary: f.summary && !brief ? clip(f.summary, 400) : undefined,
     verdict: f.verdict ?? null,
     verdictNote: f.verdict_note ?? undefined,
+    verdictBy: f.verdict ? (f.verdict_by ?? "dashboard") : undefined,
     duplicateOf: f.duplicate_of ?? undefined,
     problem: f.problem ? clip(f.problem, 300) : undefined,
     removed: f.removed_at ? (f.removed_reason ?? "removed") : undefined,
@@ -270,6 +273,8 @@ const TOOLS: Tool[] = [
         severity: { type: "string", description: "critical, high, medium, low, info, or none (no severity); comma-separated for several" },
         state: { type: "string", description: "lead, suspected, confirmed or ruled_out; comma-separated for several" },
         untriaged: { type: "boolean", description: "Only findings without a verdict (and not ruled out)" },
+        triaged: { type: "boolean", description: "Only findings with a verdict, given by a person or an MCP client: the checked ones" },
+        verdict: { type: "string", description: "Only these verdicts: real, not_bug, duplicate; comma-separated for several" },
         brief: { type: "boolean", description: "Leave out the summary and PoC" },
         limit: { type: "number", description: "Default 100" },
         offset: offsetArg,
@@ -281,6 +286,8 @@ const TOOLS: Tool[] = [
       if (a.severity) q.set("severity", a.severity);
       if (a.state) q.set("state", a.state);
       if (a.untriaged) q.set("untriaged", "1");
+      if (a.triaged) q.set("triaged", "1");
+      if (a.verdict) q.set("verdict", a.verdict);
       const all = await api<any[]>(ctx, "GET", `/findings?${q}`);
       return fitPage("findings", all.map((f) => compactFinding(f, !!a.brief)), a.offset, a.limit, 100);
     },
@@ -491,7 +498,7 @@ const TOOLS: Tool[] = [
     name: "pixel_api",
     title: "Pixel API",
     description:
-      "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path. GET /runs, /findings and /runs/<id>/findings take limit and offset (the findings ones also severity, state, untriaged); an answer over 55,000 characters is refused, so page big lists.",
+      "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path. GET /runs, /findings and /runs/<id>/findings take limit and offset (the findings ones also severity, state, untriaged, triaged, verdict); an answer over 55,000 characters is refused, so page big lists.",
     destructive: true,
     inputSchema: {
       type: "object",
