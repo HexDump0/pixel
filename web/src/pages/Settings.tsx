@@ -202,7 +202,7 @@ export function SettingsPage() {
             </Row>
           </Section>
 
-          <WorkbaseSection s={s} update={update} reset={reset} workbases={workbases.data} />
+          <WorkbaseSection s={s} d={d} update={update} reset={reset} workbases={workbases.data} />
 
           <EnvironmentSection s={s} update={update} providers={p} />
 
@@ -472,7 +472,7 @@ const fmtGiB = (n: number) => (Math.round(n * 10) / 10).toString();
 
 // ---- workbase and disk ----
 
-function WorkbaseSection({ s, update, reset, workbases }: { s: Settings; update: Update; reset: (k: keyof Settings, unit?: string) => { show: boolean; to: string; onReset: () => void }; workbases?: Awaited<ReturnType<typeof api.workbases>> }) {
+function WorkbaseSection({ s, d, update, reset, workbases }: { s: Settings; d: Settings; update: Update; reset: (k: keyof Settings, unit?: string) => { show: boolean; to: string; onReset: () => void }; workbases?: Awaited<ReturnType<typeof api.workbases>> }) {
   const biggest = workbases?.length ? workbases.reduce((a, b) => (b.bytes > a.bytes ? b : a)) : null;
   const near = biggest && biggest.bytes >= s.workbaseLimitGiB * GiB * 0.8;
   return (
@@ -515,6 +515,19 @@ function WorkbaseSection({ s, update, reset, workbases }: { s: Settings; update:
           </Row>
           <Row label="Time to clean up" hint="Not back under the normal disk by then: the run stops." reset={reset("diskRescueMin", " min")}>
             <NumberInput label="Time to clean up" value={s.diskRescueMin} onChange={(v) => update("diskRescueMin", v)} unit="min" min={1} />
+          </Row>
+          <Row
+            wide
+            label="Cleanup message"
+            hint={
+              <>
+                Sent to the agent with the extra disk. <span className="font-mono">{"{used}"}</span>, <span className="font-mono">{"{limit}"}</span>, <span className="font-mono">{"{extra}"}</span>,{" "}
+                <span className="font-mono">{"{goal}"}</span> and <span className="font-mono">{"{dirs}"}</span> are filled in.
+              </>
+            }
+            reset={{ show: s.diskRescueMessage !== d.diskRescueMessage, to: "text", onReset: () => update("diskRescueMessage", d.diskRescueMessage) }}
+          >
+            <textarea className="input h-28 w-full text-[13px]" aria-label="Cleanup message" value={s.diskRescueMessage} onChange={(e) => update("diskRescueMessage", e.target.value)} />
           </Row>
         </>
       )}
