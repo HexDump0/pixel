@@ -598,7 +598,7 @@ function EnvironmentSection({ s, update, providers }: { s: Settings; update: Upd
         }
         hint={
           <>
-            Optional. Copied to <span className="font-mono">~/.local/share/opencode/auth.json</span> in each machine.
+            Optional. API keys in it reach every agent through its opencode config; other logins are copied to <span className="font-mono">~/.local/share/opencode/auth.json</span>, which opencode only reads when it first starts.
           </>
         }
       >

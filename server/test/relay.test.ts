@@ -115,10 +115,10 @@ describe("relay", () => {
 
   test("a proxied run's opencode config points its providers at the relay; others are untouched", () => {
     const cfg = JSON.parse(agentCredentials(undefined, { id: "some-run", key_id: null, model: "lab/m1", proxy_id: proxyId }).env.OPENCODE_CONFIG_CONTENT);
-    expect(cfg.provider.lab.options.baseURL).toBe(relayUrl(runSubject("some-run"), "lab"));
-    expect(cfg.provider.lab.models.m1).toBeDefined();
+    expect(cfg.providers.lab.settings.baseURL).toBe(relayUrl(runSubject("some-run"), "lab"));
+    expect(cfg.providers.lab.models.m1).toBeDefined();
     const direct = JSON.parse(agentCredentials(undefined, { id: "some-run", key_id: null, model: "lab/m1", proxy_id: null }).env.OPENCODE_CONFIG_CONTENT);
-    expect(direct.provider.lab.options.baseURL).toBe(`${up}/v1`);
+    expect(direct.providers.lab.settings.baseURL).toBe(`${up}/v1`);
   });
 
   test("a test through a broken proxy says why", async () => {

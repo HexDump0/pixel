@@ -79,11 +79,11 @@ function onEvent(e: { type: string; properties: any }) {
       else finish(turn, "error", { error: `${p.error?.name ?? "error"}: ${p.error?.data?.message ?? ""}`.slice(0, 500) });
       break;
     case "permission.asked":
-      void oc?.client.replyPermission(p.id, "reject").catch(() => {});
+      void oc?.client.replyPermission(p.id, "reject", p.sessionID).catch(() => {});
       send(turn, "tool", { tool: p.permission ?? p.type ?? "tool" });
       break;
     case "question.asked":
-      void oc?.client.rejectQuestion(p.id).catch(() => {});
+      void oc?.client.rejectQuestion(p.id, "Answer in text only; no tools or questions in this chat.").catch(() => {});
       send(turn, "tool", { tool: "question" });
       break;
   }
@@ -148,7 +148,7 @@ export async function livePrompt(input: { model?: string; variant?: string; text
   const unknown = await inst.check(model);
   if (unknown) throw new Error(unknown);
   const known = input.session && turns.has(input.session) ? input.session : null;
-  const session = known ?? (await inst.client.createSession(`live test ${model}`)).id;
+  const session = known ?? (await inst.client.createSession(`live test ${model}`, model, input.variant || null)).id;
   const prev = turns.get(session);
   if (prev && !prev.done) throw new Error("this chat is still answering; stop it first");
   const turn: Turn = { id: turnId, session, model, sent: Date.now(), firstToken: null, assistant: new Set(), done: false };
@@ -162,9 +162,8 @@ export async function livePrompt(input: { model?: string; variant?: string; text
 export async function modelVariants(): Promise<Record<string, string[]>> {
   touch();
   const inst = await instance(() => {});
-  const cat = await inst.providers();
   const out: Record<string, string[]> = {};
-  for (const p of cat?.providers ?? []) for (const [id, m] of Object.entries(p.models ?? {})) if (m.variants && Object.keys(m.variants).length) out[`${p.id}/${id}`] = Object.keys(m.variants);
+  for (const m of (await inst.models()) ?? []) if (m.variants?.length) out[`${m.providerID}/${m.id}`] = m.variants.map((v) => v.id);
   return out;
 }
 

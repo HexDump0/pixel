@@ -51,7 +51,12 @@ async function openTerminal(ws: ServerWebSocket<SocketData>, d: TerminalSocket) 
       for (const m of d.pending) up.send(m);
       d.pending = [];
     };
-    up.onmessage = (e) => ws.send(typeof e.data === "string" ? e.data : new Uint8Array(e.data as ArrayBuffer));
+    up.onmessage = (e) => {
+      // Text frames starting with \x00 are opencode's control messages (e.g. {"cursor":0}), not terminal output.
+      if (typeof e.data === "string") {
+        if (!e.data.startsWith("\x00")) ws.send(e.data);
+      } else ws.send(new Uint8Array(e.data as ArrayBuffer));
+    };
     up.onclose = () => ws.close();
     up.onerror = () => ws.close(1011, "terminal connection failed");
   } catch (e: any) {

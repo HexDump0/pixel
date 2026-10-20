@@ -3,6 +3,7 @@
   "permission": "allow",
   "autoupdate": false,
   "share": "disabled",
+  "experimental": { "todo": true },
   "mcp": {
     "ghidra": {
       "type": "local",

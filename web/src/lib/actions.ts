@@ -36,6 +36,7 @@ export const act = {
     ),
   autopilot: (r: Run) => runAct(api.setAutopilot(r.id, !r.autopilot), r.autopilot ? "Autopilot off" : "Autopilot on"),
   resetCounters: (id: string) => runAct(api.control(id, "reset-counters"), "Counters reset"),
+  compact: (id: string) => runAct(api.control(id, "compact"), "Compacting after this turn"),
   markDone: (id: string) => {
     if (confirm("Mark this run done? opencode's machine will be stopped.")) void runAct(api.control(id, "done"), "Marked done");
   },

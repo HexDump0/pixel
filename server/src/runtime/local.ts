@@ -20,7 +20,8 @@ export class LocalRuntime extends ProcessRuntime {
   }
 
   protected opencodeConfig() {
-    return { $schema: "https://opencode.ai/config.json", permission: "allow", autoupdate: false, share: "disabled" };
+    // Todos are off by default in opencode 2; agents had them in opencode 1 and the dashboard shows them.
+    return { $schema: "https://opencode.ai/config.json", permission: "allow", autoupdate: false, share: "disabled", experimental: { todo: true } };
   }
 
   describeMachine() {

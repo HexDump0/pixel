@@ -221,7 +221,7 @@ function renderMessage(m: { info: any; parts: any[] }, reasoning: boolean) {
   return out.join("\n");
 }
 
-const CONTROL_ACTIONS = ["continue", "abort", "pause", "resume", "stop", "done", "retry", "restart-opencode"] as const;
+const CONTROL_ACTIONS = ["continue", "abort", "pause", "resume", "stop", "done", "retry", "restart-opencode", "compact"] as const;
 
 // ---- tools ----
 
@@ -517,17 +517,18 @@ const TOOLS: Tool[] = [
   {
     name: "send_message",
     title: "Message a run's agent",
-    description: "Send a message to the run's agent, as the dashboard does. A paused or sleeping run wakes up for it.",
-    inputSchema: { type: "object", properties: { run: runArg, text: str }, required: ["run", "text"] },
+    description:
+      "Send a message to the run's agent, as the dashboard does. A paused or sleeping run wakes up for it. By default it reaches a busy agent at its next step; queue: true waits until its current turn ends.",
+    inputSchema: { type: "object", properties: { run: runArg, text: str, queue: { type: "boolean", description: "Deliver after the agent's current turn" } }, required: ["run", "text"] },
     async run(a, ctx) {
-      return api(ctx, "POST", `/runs/${enc(a.run)}/message`, { text: a.text });
+      return api(ctx, "POST", `/runs/${enc(a.run)}/message`, { text: a.text, queue: a.queue === true });
     },
   },
   {
     name: "control_run",
     title: "Control a run",
     description:
-      "continue (send the usual continue message), abort (stop the current turn), pause, resume, stop, done (mark finished), retry (a failed prepare), restart-opencode.",
+      "continue (send the usual continue message), abort (stop the current turn), pause, resume, stop, done (mark finished), retry (a failed prepare), restart-opencode, compact (summarise the context after the current turn).",
     destructive: true,
     inputSchema: {
       type: "object",

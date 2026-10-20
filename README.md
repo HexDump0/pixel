@@ -34,9 +34,9 @@ bun test                    # unit + lifecycle tests against a fake opencode
 1. **Proxmox VM**: Ubuntu 24.04, 16 GB RAM, CPU type `host`, nested virtualization on the node (`kvm_intel nested=1` / `kvm_amd nested=1`), enough disk for ~20 GB per agent VM.
 2. **Docker** and **Incus** on that VM. Docker breaks Incus bridge networking unless you add `"ip-forward-no-drop": true` to `/etc/docker/daemon.json`. Run `incus admin init` (a ZFS or btrfs pool is best; cap the ZFS ARC with `zfs_arc_max`).
 3. **Data dir**: `sudo mkdir -p /srv/pixel`.
-4. **Agent image**: `image/build.sh` (builds `pixel-image` with opencode `1.19.0`, Docker, clang/gcc + sanitizers, AFL++, gdb/rr, valgrind, semgrep, CodeQL, Ghidra headless + pyghidra-mcp). Override versions with `OPENCODE_VERSION=… image/build.sh`.
+4. **Agent image**: `image/build.sh` (builds `pixel-image` with opencode `2.1.0`, Docker, clang/gcc + sanitizers, AFL++, gdb/rr, valgrind, semgrep, CodeQL, Ghidra headless + pyghidra-mcp). Override versions with `OPENCODE_VERSION=… image/build.sh`.
 5. **Pixel**: `cp .env.example .env`, set `PIXEL_PASSWORD` and `PIXEL_HOST` (a private address such as the Tailscale IP; never `0.0.0.0`, the agent VMs share the host network), then `docker compose up -d --build`.
-6. In the dashboard: **Settings** → models, provider keys (agent environment) or an opencode `auth.json`, notifications (ntfy / Telegram), restic backups.
+6. In the dashboard: **Settings** → models, provider keys (Models page, agent environment, or API keys in an opencode `auth.json`), notifications (ntfy / Telegram), restic backups.
 
 To use `opencode attach` from your own machine, the agent VMs' addresses (on `incusbr0`) must be reachable, e.g. advertise the bridge subnet as a Tailscale subnet route, or use an SSH tunnel; set `PIXEL_PUBLIC_HOST` if a different hostname should appear in the copied command.
 
@@ -104,7 +104,7 @@ The conventions every template should share live in `templates/parts/` and ship 
 
 ### Interrupted subagents
 
-When a run is paused, aborted, OOM-killed or restarted while task-tool subagents are running, their sessions survive in opencode but the agent normally can't see their ids, so it starts new ones and their work is lost. Every agent gets the opencode plugin [`opencode-plugins/resume-subagents.ts`](opencode-plugins/resume-subagents.ts), which adds each interrupted subagent's `task_id` and a "resume it with task_id" hint to the history the model sees. It also works in a normal opencode: copy it to `~/.config/opencode/plugin/`.
+When a run is paused, aborted, OOM-killed or restarted while subagents are running, their sessions survive in opencode, but agents tend to start new ones and redo the work. Every agent gets the opencode plugin [`opencode-plugins/resume-subagents.ts`](opencode-plugins/resume-subagents.ts), which adds a "resume it with this sessionID" hint to each interrupted subagent call in the history the model sees. It also works in a normal opencode 2: copy it to `~/.config/opencode/plugins/`.
 
 ### What Pixel does on its own
 

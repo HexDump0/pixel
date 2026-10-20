@@ -230,11 +230,12 @@ export class IncusRuntime implements Runtime {
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join("\n");
     await this.pushFile(name, "/etc/pixel/opencode.env", envFile + "\n");
-    // Plugins are baked into the image too; pushing them here keeps older images current.
+    // Plugins are baked into the image too; pushing them here keeps older images current. opencode 1's
+    // plugin folder goes: its plugins don't load in opencode 2.
+    await this.mustExec(name, ["rm", "-rf", "/root/.config/opencode/plugin", "/root/.config/opencode/plugins"], "Removing old plugins");
+    await this.mustExec(name, ["mkdir", "-p", "/root/.config/opencode/plugins"], "mkdir");
     for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts")))
-      await this.pushFile(name, `/root/.config/opencode/plugin/${f}`, readFileSync(join(config.opencodePluginsDir, f), "utf8"), "0644");
-    // The finding tools were dropped (2026-10-15); older images still have them baked in.
-    await this.mustExec(name, ["rm", "-f", "/root/.config/opencode/plugin/findings.ts"], "Removing old plugins");
+      await this.pushFile(name, `/root/.config/opencode/plugins/${f}`, readFileSync(join(config.opencodePluginsDir, f), "utf8"), "0644");
     if (creds.authJson.trim()) {
       await this.mustExec(name, ["mkdir", "-p", "/root/.local/share/opencode"], "mkdir");
       await this.pushFile(name, "/root/.local/share/opencode/auth.json", creds.authJson);

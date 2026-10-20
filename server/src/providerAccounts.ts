@@ -1,8 +1,7 @@
 /**
- * Model providers added from the dashboard. Keys go into every agent's opencode auth.json (keyed by
- * provider id, which opencode reads for catalogue and custom providers alike); custom endpoints and
- * base-URL overrides go into OPENCODE_CONFIG_CONTENT, which opencode merges over its config file, so
- * it reaches every runtime without touching the image's opencode.json.
+ * Model providers added from the dashboard. Keys, custom endpoints and base-URL overrides go into
+ * OPENCODE_CONFIG_CONTENT as opencode 2 provider entries (opencodeConfig.ts), which opencode merges
+ * over its config file, so they reach every runtime without touching the image's opencode.json.
  *
  * Accounts live in the settings table under `_providers`, so keys never travel back to the browser:
  * the API only shows a hint of each key.
@@ -15,6 +14,7 @@ import { getSettings, saveSettings, type Settings } from "./settings.ts";
 import { cachedCatalog, catalogProvider, knownModel } from "./catalog.ts";
 import { githubForAgents } from "./github.ts";
 import { opencodeModel, opencodeProviderOptions } from "./modelOverrides.ts";
+import { nativeProvider, type ProviderExtras } from "./opencodeConfig.ts";
 import { proxySubject, relayUrl, runSubject, upstreamBase } from "./relay.ts";
 import { cortexModels, snowflakeAccount, snowflakeHost, testCortexKey } from "./snowflake.ts";
 
@@ -42,7 +42,7 @@ export interface ProviderAccount {
    * `modelApi` holds the models that speak the other API (Snowflake Cortex: Claude on /messages, the rest on /chat/completions).
    */
   custom?: { api: CustomApi; models: string[]; context: number; reasoning?: boolean; modelApi?: Record<string, CustomApi> };
-  /** Send `prompt_cache_key` (the session id) so repeat requests hit the provider's cache; see opencode-plugins/prompt-cache-key.ts. */
+  /** Send `prompt_cache_key` (the session id) so repeat requests hit the provider's cache (opencode's supportsPromptCacheKey). */
   cacheKey?: boolean;
   /**
    * What the provider needs besides the key (SNOWFLAKE_ACCOUNT, AZURE_RESOURCE_NAME, CLOUDFLARE_ACCOUNT_ID…).
@@ -51,7 +51,7 @@ export interface ProviderAccount {
   vars?: Record<string, string>;
   /** Send the key as `Authorization: Bearer` on Anthropic-style calls too, for gateways that refuse x-api-key (Snowflake Cortex). */
   bearer?: boolean;
-  /** Send the output limit as max_completion_tokens on OpenAI-style calls; see opencode-plugins/max-completion-tokens.ts. */
+  /** Send the output limit as max_completion_tokens on OpenAI-style calls (opencode's maxTokensField). */
   maxCompletionTokens?: boolean;
   added: number;
 }
@@ -481,17 +481,24 @@ function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, 
   const modelOverrides = Object.entries(s.modelOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
   const providerOverrides = Object.entries(s.providerOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
   const relaySubject = run?.proxy_id ? (run.id ? runSubject(run.id) : proxySubject(run.proxy_id)) : null;
-  const completionTokens = accounts.filter((a) => a.maxCompletionTokens).map((a) => a.id);
-  if (completionTokens.length) env.PIXEL_MAX_COMPLETION_TOKENS = completionTokens.join(",");
-  if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length && !relaySubject) return { env, authJson: s.agentAuthJson };
-
+  // API keys typed into Settings' auth.json: opencode 2 doesn't read that file for them, so they go into the config.
   const auth = parseAuth(s.agentAuthJson);
   if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
-  const merged: Record<string, any> = { ...(auth ?? {}) };
+  const settingsKeys = Object.entries(auth ?? {}).filter(([id, v]) => (v as any)?.type === "api" && typeof (v as any).key === "string" && id !== bare);
+  if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length && !relaySubject && !settingsKeys.length)
+    return { env, authJson: s.agentAuthJson };
+
   const keyOf = (a: ProviderAccount) => a.keys.find((x) => x.id === run?.key_id) ?? a.keys[0];
+  // Each provider's key and switches, which only exist in opencode 2's native config shape.
+  const extras: Record<string, ProviderExtras> = {};
+  for (const [id, v] of settingsKeys) extras[id] = { apiKey: (v as any).key };
   for (const a of accounts) {
     const k = keyOf(a);
-    if (k?.key) merged[a.id] = { type: "api", key: k.key };
+    extras[a.id] = {
+      ...(k?.key && a.id !== bare && { apiKey: k.key }),
+      ...(a.cacheKey && { cacheKey: true }),
+      ...(a.maxCompletionTokens && { maxCompletionTokens: true }),
+    };
   }
 
   const provider: Record<string, any> = {};
@@ -545,20 +552,25 @@ function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, 
     p.models ??= {};
     p.models[mid] = { ...(p.models[mid] ?? {}), variants: { ...(p.models[mid]?.variants ?? {}), ...vs } };
   }
-  const cacheKey = accounts.filter((a) => a.cacheKey).map((a) => a.id);
-  if (cacheKey.length) env.PIXEL_CACHE_KEY_PROVIDERS = cacheKey.join(",");
-  if (Object.keys(provider).length || github.mcp) {
+  // opencode 2's native provider entries: everything above, plus each provider's key and switches.
+  const providers: Record<string, any> = {};
+  for (const id of new Set([...Object.keys(provider), ...Object.keys(extras)])) {
+    const entry = nativeProvider(provider[id] ?? {}, extras[id]);
+    if (Object.keys(entry).length) providers[id] = entry;
+  }
+  if (Object.keys(providers).length || github.mcp) {
     let base: Record<string, any> = {};
     try {
       base = env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT) : {};
     } catch {}
     env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
       ...base,
-      ...(Object.keys(provider).length && { provider: { ...(base.provider ?? {}), ...provider } }),
+      ...(Object.keys(providers).length && { providers: { ...(base.providers ?? {}), ...providers } }),
       ...(github.mcp && { mcp: { ...(base.mcp ?? {}), ...github.mcp } }),
     });
   }
-  return { env, authJson: !accounts.length ? s.agentAuthJson : Object.keys(merged).length ? JSON.stringify(merged, null, 2) : "" };
+  // Keys travel in the config; auth.json is only Settings' own.
+  return { env, authJson: s.agentAuthJson };
 }
 
 /** GET {base}/models with the key the way the provider takes it; the body only when it failed. */

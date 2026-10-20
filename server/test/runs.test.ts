@@ -10,6 +10,7 @@ import { saveSettings } from "../src/settings.ts";
 import { config } from "../src/config.ts";
 import { clientFor, createRun, startWatchdog, stopWatchdog, controls } from "../src/runs/index.ts";
 import { releaseIdle } from "../src/runs/release.ts";
+import { launchDir } from "../src/runtime/process.ts";
 import { seedTemplates } from "../src/templates.ts";
 import { addKey, providerKeys, saveAccount } from "../src/providerAccounts.ts";
 
@@ -110,7 +111,14 @@ describe("run lifecycle", () => {
     await saveAccount({ id: "kp", baseURL: "http://127.0.0.1:9/v1", key: "dead-key-1", custom: { models: ["m"] } });
     const live = addKey("kp", { name: "Live", key: "live-key-2", note: "spare" });
     const [dead] = providerKeys("kp");
-    const auth = (id: string) => [...new Bun.Glob(`**/${id}/home/.local/share/opencode/auth.json`).scanSync({ cwd: config.dataDir, dot: true })].map((f) => readFileSync(join(config.dataDir, f), "utf8")).join("");
+    // The key opencode is started with: its config (OPENCODE_CONFIG_CONTENT) in the run's launch file.
+    const launched = (id: string) => {
+      try {
+        return readFileSync(join(launchDir, `${id}.json`), "utf8");
+      } catch {
+        return "";
+      }
+    };
 
     const run = createRun({ repo, templateId: "audit", name: "keys-on", model: "kp/m", promptOverride: "KEYCHECK" });
     expect(getRun(run.id)!.key_failover).toBe(1);
@@ -118,7 +126,7 @@ describe("run lifecycle", () => {
     const tl = db.query<{ message: string }, [string]>("SELECT message FROM timeline WHERE run_id = ? AND kind = 'key'").all(run.id).map((r) => r.message);
     expect(tl[0]).toContain("Key Default is out of credit (HTTP 402: insufficient balance). Switched to key Live");
     expect(providerKeys("kp").find((k) => k.id === dead.id)!.status).toMatchObject({ state: "credit" });
-    await until("new key pushed", () => auth(run.id).includes("live-key-2"));
+    await until("new key pushed", () => launched(run.id).includes("live-key-2"));
     await controls.stopRun(run.id);
 
     // Both keys failing now (the dead one is marked), failover off: the run pauses and says why.

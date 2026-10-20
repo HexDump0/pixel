@@ -36,8 +36,13 @@ describe("model overrides", () => {
       providerOverrides: { anthropic: { timeout: 0, chunkTimeout: 600000 } },
     });
     const cfg = JSON.parse(agentCredentials().env.OPENCODE_CONFIG_CONTENT);
-    expect(cfg.provider.anthropic.options).toEqual({ timeout: false, chunkTimeout: 600000 });
-    expect(cfg.provider.anthropic.models["claude-x"]).toEqual({ limit: { context: 150000, output: 64000 }, reasoning: false, options: { temperature: 0.2 }, headers: { "X-Test": "1" } });
+    expect(cfg.providers.anthropic.settings).toEqual({ timeout: false, chunkTimeout: 600000, apiKey: "sk-ant-secret-1234" });
+    expect(cfg.providers.anthropic.models["claude-x"]).toEqual({
+      limit: { context: 150000, output: 64000 },
+      capabilities: { reasoning: { supported: false } },
+      settings: { temperature: 0.2 },
+      headers: { "X-Test": "1" },
+    });
     expect(effective("anthropic/claude-x", getSettings())).toMatchObject({ context: 150000, costIn: 3, overridden: true });
     expect(overriddenContext("anthropic/claude-x")).toBe(150000);
     saveSettings({ modelOverrides: {}, providerOverrides: {} });

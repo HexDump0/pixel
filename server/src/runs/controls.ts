@@ -37,12 +37,29 @@ async function reopen(run: RunRow) {
   watch(run.id);
 }
 
-export async function sendMessage(id: string, text: string) {
+/** `queue`: deliver after the agent's current turn instead of into the work in progress. */
+export async function sendMessage(id: string, text: string, queue = false) {
   if (!text?.trim()) throw new Error("empty message");
   const run = mustSession(mustRun(id));
   await reopen(run);
-  timeline(id, "user", "message", `You: ${text.slice(0, 300)}`);
-  await sendPrompt(getRun(id)!, text);
+  timeline(id, "user", "message", `You${queue ? " (after this turn)" : ""}: ${text.slice(0, 300)}`);
+  await sendPrompt(getRun(id)!, text, queue ? "queue" : undefined);
+}
+
+/** Summarise the session's context now, after the current turn, to free room in a long run. */
+export async function compactRun(id: string) {
+  const run = mustSession(mustRun(id));
+  if (run.status !== "running" && run.status !== "paused") throw new Error("the run isn't running");
+  await clientFor(run).compact(run.session_id!);
+  timeline(id, "user", "compact", "Asked opencode to compact the context after the current turn");
+}
+
+/** Live output of a command the agent is running (opencode's shell id from the tool call), from `cursor` on. */
+export async function shellOutput(id: string, shellId: string, cursor: number) {
+  const run = mustRun(id);
+  if (!run.endpoint) throw new Error("the run has no machine");
+  if (!/^sh_[A-Za-z0-9]+$/.test(shellId)) throw new Error("bad shell id");
+  return clientFor(run).shellOutput(shellId, Math.max(0, cursor | 0));
 }
 
 export const continueRun = (id: string) => sendMessage(id, getSettings().continueMessage);
@@ -138,7 +155,7 @@ export function resetCounters(id: string) {
 export async function answerQuestion(id: string, questionId: string, answers: string[][] | null) {
   const client = clientFor(mustSession(mustRun(id)));
   if (answers) await client.replyQuestion(questionId, answers);
-  else await client.rejectQuestion(questionId);
+  else await client.rejectQuestion(questionId, "The user dismissed this question. Decide for yourself and carry on.");
   db.query("UPDATE questions SET status = ? WHERE id = ?").run(answers ? "answered" : "rejected", questionId);
   timeline(id, "user", "question", answers ? `Answered: ${answers.map((a) => a.join(", ")).join(" / ")}` : "Dismissed the agent's question");
 }

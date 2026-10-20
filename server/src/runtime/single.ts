@@ -172,6 +172,8 @@ export class SingleRuntime extends ProcessRuntime {
       permission: "allow",
       autoupdate: false,
       share: "disabled",
+      // Todos are off by default in opencode 2; agents had them in opencode 1 and the dashboard shows them.
+      experimental: { todo: true },
       ...(existsSync(PYGHIDRA_MCP) && {
         mcp: {
           ghidra: { type: "local", command: [PYGHIDRA_MCP, "--transport", "stdio"], environment: { GHIDRA_INSTALL_DIR: "/opt/ghidra" }, timeout: 120000, enabled: true },

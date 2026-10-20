@@ -7,10 +7,14 @@ import { snapshotWorkbase } from "../history.ts";
 import { clientFor, credsStale, notifyRun, restartOpencode, setRun, setStatus, timeline } from "./state.ts";
 import { syncTranscript, transcript, unwatch } from "./events.ts";
 
-export async function sendPrompt(run: RunRow, text: string) {
+/** `delivery`: "steer" (default) goes into the work in progress at its next step, "queue" waits for the turn to end. */
+export async function sendPrompt(run: RunRow, text: string, delivery?: "steer" | "queue") {
   setRun(run.id, { agent_status: "busy", last_activity: Date.now() });
-  await clientFor(run).prompt(run.session_id!, text, run.model, run.variant);
+  await clientFor(run).prompt(run.session_id!, text, run.model, run.variant, delivery);
 }
+
+const childSessions = (runId: string) =>
+  db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE run_id = ? AND parent_id IS NOT NULL").all(runId).map((r) => r.id);
 
 const pendingQuestions = (runId: string) =>
   db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM questions WHERE run_id = ? AND status = 'pending'").get(runId)!.n;
@@ -19,8 +23,11 @@ const pendingQuestions = (runId: string) =>
 export async function onIdle(id: string, source: "event" | "watchdog") {
   const run = getRun(id);
   if (!run || run.status !== "running" || run.agent_status === "idle") return;
+  const active = run.session_id ? await clientFor(run).status().catch(() => null) : null;
   // An idle event that waited in the queue behind a restart (say, a key switch that already sent "continue") is stale.
-  if (source === "event" && run.session_id && (await clientFor(run).status().catch(() => null))?.[run.session_id]) return;
+  if (source === "event" && active?.[run.session_id!]) return;
+  // Subagents still working in the background: opencode wakes the agent when they finish.
+  if (active && childSessions(id).some((s) => active[s])) return;
   // Stopped or paused meanwhile (a stop aborts the agent, which is what made it idle): no continue.
   if (getRun(id)?.status !== "running") return;
   setRun(id, { agent_status: "idle" });

@@ -207,7 +207,7 @@ function KeyChoice({ value, onChange, existing, providerName, envVar, keyName = 
             {stored.length > 0 && <span className="text-warning"> Removes {stored.length === 1 ? "the stored key" : `all ${stored.length} keys`}.</span>}
           </>
         ) : value.mode === "key" ? (
-          <>Stored on the Pixel server and never shown again. Agents get it in opencode's auth.json{envVar ? `, the same as setting ${envVar}` : ""}. Prefer a key with a spending limit.</>
+          <>Stored on the Pixel server and never shown again. Agents get it in their opencode config{envVar ? `, the same as setting ${envVar}` : ""}. Prefer a key with a spending limit.</>
         ) : (
           <>More keys, notes and failover order are on the provider's panel.</>
         )}

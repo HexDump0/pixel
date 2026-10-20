@@ -137,8 +137,41 @@ const Code = ({ html, className }: { html: string; className?: string }) => (
   </pre>
 );
 
+/** Bytes of a running command's output kept on screen. */
+const LIVE_TAIL = 20_000;
+
+/** What a running command has printed so far, refreshed every 2 s (opencode keeps it in the shell's output). */
+function LiveOutput({ runId, shell }: { runId: string; shell: string }) {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    let cursor = 0;
+    let first = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        let r = await api.shellOutput(runId, shell, cursor);
+        // Joining a long command: start from its tail.
+        if (first && r.size > LIVE_TAIL) r = await api.shellOutput(runId, shell, r.size - LIVE_TAIL);
+        first = false;
+        cursor = r.cursor;
+        if (r.output) setText((t) => (t + r.output).slice(-LIVE_TAIL));
+      } catch {
+        // The command finished (its shell is gone) or the machine is busy; the finished call shows the output.
+      }
+      if (!stopped) timer = setTimeout(tick, 2000);
+    };
+    timer = setTimeout(tick, 0);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [runId, shell]);
+  return text ? <Code html={highlight(text, null)} /> : <div className="text-[12.5px] text-ink-3">No output yet.</div>;
+}
+
 /** The opened tool call: what went in and what came out, in the form that reads best for that tool. */
-function ToolBody({ p, short, onOpenSession, hasChild }: { p: Part; short: (s: string) => string; onOpenSession: (id: string) => void; hasChild: boolean }) {
+function ToolBody({ p, short, onOpenSession, hasChild, runId }: { p: Part; short: (s: string) => string; onOpenSession: (id: string) => void; hasChild: boolean; runId: string }) {
   const st = p.state ?? ({} as NonNullable<Part["state"]>);
   const i = st.input ?? {};
   const out = st.output ? short(String(st.output)) : "";
@@ -163,6 +196,8 @@ function ToolBody({ p, short, onOpenSession, hasChild }: { p: Part; short: (s: s
   } else if (!["read", "grep", "glob"].includes(p.tool ?? "")) {
     blocks.push(<Code key="input" html={highlight(JSON.stringify(i, null, 2), "json")} />);
   }
+  const shell = st.metadata?.shellID;
+  if (p.tool === "bash" && st.status === "running" && typeof shell === "string") blocks.push(<LiveOutput key="live" runId={runId} shell={shell} />);
   if (st.error) blocks.push(<Code key="err" className="text-critical" html={highlight(short(st.error), null)} />);
   else if (out && p.tool === "task") blocks.push(<Markdown key="out" text={out} className="text-[13.5px]" />);
   else if (out && !(p.tool === "write" || (p.tool === "edit" && st.metadata?.diff))) blocks.push(<Code key="out" html={highlight(out.slice(0, 100_000), null)} />);
@@ -170,7 +205,7 @@ function ToolBody({ p, short, onOpenSession, hasChild }: { p: Part; short: (s: s
   return <div className="flex flex-col gap-2 px-3 pt-1 pb-3 pl-[38px]">{blocks}</div>;
 }
 
-const ToolRow = memo(function ToolRow({ p, short, onOpenSession, hasChild }: { p: Part; short: (s: string) => string; onOpenSession: (id: string) => void; hasChild: boolean }) {
+const ToolRow = memo(function ToolRow({ p, short, onOpenSession, hasChild, runId }: { p: Part; short: (s: string) => string; onOpenSession: (id: string) => void; hasChild: boolean; runId: string }) {
   const st = p.state;
   const failed = st?.status === "error";
   const running = st?.status === "running" || st?.status === "pending";
@@ -196,7 +231,7 @@ const ToolRow = memo(function ToolRow({ p, short, onOpenSession, hasChild }: { p
           {running ? <IconLoader2 {...IC_XS} className="animate-spin text-ink-3" /> : took}
         </span>
       </button>
-      {open && <ToolBody p={p} short={short} onOpenSession={onOpenSession} hasChild={hasChild} />}
+      {open && <ToolBody p={p} short={short} onOpenSession={onOpenSession} hasChild={hasChild} runId={runId} />}
     </div>
   );
 });
@@ -439,7 +474,7 @@ export function TranscriptTab({ detail }: { detail: RunDetail }) {
                   <div key={b.id} className="divide-y divide-line-2 overflow-hidden rounded-xl border border-line-2">
                     {b.items.map((e) =>
                       e.k === "tool" ? (
-                        <ToolRow key={e.id} p={e.part} short={short} onOpenSession={setSession} hasChild={!!childOf(e.part)} />
+                        <ToolRow key={e.id} p={e.part} short={short} onOpenSession={setSession} hasChild={!!childOf(e.part)} runId={runId} />
                       ) : (
                         <div key={e.id} className="flex h-8 items-center gap-2.5 px-3 pl-[38px] font-mono text-[12.5px] text-ink-3">
                           changed {e.files.length} file{e.files.length === 1 ? "" : "s"}

@@ -2,7 +2,7 @@
 # Provision a fresh Ubuntu 24.04 VM into pixel-image. Run as root inside the VM (build.sh does this).
 set -euo pipefail
 
-OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.0}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-2.1.0}"
 GHIDRA_URL="${GHIDRA_URL:-https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip}"
 CODEQL_VERSION="${CODEQL_VERSION:-v2.27.2}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
@@ -31,9 +31,7 @@ curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
 apt-get install -y nodejs
 
 log "opencode ${OPENCODE_VERSION}"
-npm install -g "opencode-ai@${OPENCODE_VERSION}"
-ln -sf "$(command -v opencode)" /usr/local/bin/opencode
-opencode --version
+bash /root/pixel-provision/install-opencode.sh "${OPENCODE_VERSION}"
 
 log "Python security tools"
 export PIPX_HOME=/root/.local/pipx PIPX_BIN_DIR=/root/.local/bin
@@ -56,8 +54,8 @@ log "opencode config and service"
 install -d /root/.config/opencode /etc/pixel /work /scratch /workbases
 install -m 0644 /root/pixel-provision/opencode.json /root/.config/opencode/opencode.json
 # opencode plugins from the repo's opencode-plugins/ (e.g. resume interrupted subagents)
-install -d /root/.config/opencode/plugin
-install -m 0644 /root/pixel-provision/*.ts /root/.config/opencode/plugin/
+install -d /root/.config/opencode/plugins
+install -m 0644 /root/pixel-provision/*.ts /root/.config/opencode/plugins/
 install -m 0644 /root/pixel-provision/opencode.service /etc/systemd/system/opencode.service
 touch /etc/pixel/opencode.env && chmod 0600 /etc/pixel/opencode.env
 systemctl daemon-reload

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   IconArrowBackUp,
+  IconArrowsMinimize,
   IconBolt,
   IconBrain,
   IconCircleCheck,
@@ -68,6 +69,7 @@ export function runMenuItems(r: Run): MenuEntry[] {
     { label: "Download transcript", icon: <IconDownload {...IC_SM} />, onSelect: () => location.assign(api.transcriptUrl(r.id)), disabled: !hasSession },
     { label: "Restart opencode", icon: <IconRotate {...IC_SM} />, onSelect: () => act.restartOpencode(r.id), disabled: !r.endpoint },
     ["paused", "stopped"].includes(r.status) && !r.asleep && { label: "Free memory", icon: <IconZzz {...IC_SM} />, hint: "stop opencode", onSelect: () => act.release(r.id), disabled: !r.endpoint },
+    ["running", "paused"].includes(r.status) && { label: "Compact context", icon: <IconArrowsMinimize {...IC_SM} />, hint: "after this turn", onSelect: () => act.compact(r.id), disabled: !hasSession },
     { label: "Reset counters", icon: <IconArrowBackUp {...IC_SM} />, hint: `${r.continues} continues, ${r.oom_restarts} OOM`, onSelect: () => act.resetCounters(r.id) },
     "-",
     ["running", "recovering", "paused", "stopped"].includes(r.status) && { label: "Mark done", icon: <IconCircleCheck {...IC_SM} />, onSelect: () => act.markDone(r.id) },

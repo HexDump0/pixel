@@ -327,9 +327,8 @@ async function contextLimit(run: RunRow): Promise<number | null> {
   if (!run.endpoint || !ACTIVE.includes(run.status)) return null;
   try {
     const client = new OpencodeClient(run.endpoint, run.opencode_password, runtime.paths(run).target);
-    const r = await client.req<any>("GET", "/config/providers", undefined, undefined, 5000);
     const [provider, ...rest] = run.model.split("/");
-    const model = (r?.providers ?? []).find((p: any) => p.id === provider)?.models?.[rest.join("/")];
+    const model = (await client.models()).find((m) => m.providerID === provider && m.id === rest.join("/"));
     const limit = model?.limit?.context ?? null;
     contextLimits.set(run.model, limit);
     return limit;

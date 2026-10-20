@@ -185,7 +185,7 @@ export async function prepare(id: string) {
     }
     run = setRun(id, { started_at: Date.now() })!;
     const text = renderPrompt(run);
-    const session = await client.createSession(run.id);
+    const session = await client.createSession(run.id, run.model, run.variant);
     run = setStatus(id, "running", null, { session_id: session.id, prompt: text, agent_status: "busy", last_activity: Date.now() })!;
     watch(id);
     await client.prompt(session.id, text, run.model, run.variant);

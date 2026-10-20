@@ -1,7 +1,7 @@
 /** Capture of opencode's event stream into SQLite, and the per-run watcher that holds the connection. */
 import { db, getRun, updateRun } from "../db.ts";
 import { publish } from "../bus.ts";
-import type { OpencodeEvent } from "../opencode.ts";
+import { todosOf, type OpencodeEvent } from "../opencode.ts";
 import { runtime } from "../runtime/index.ts";
 import { recordCrossReads } from "../crossreads.ts";
 import { onAssistantMessage, onDelta, onPart } from "../fleet.ts";
@@ -91,6 +91,8 @@ const upsertSession = db.query(
   `INSERT INTO sessions (id, run_id, parent_id, title, agent, cost, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
    ON CONFLICT(id) DO UPDATE SET title = excluded.title, agent = excluded.agent, cost = excluded.cost, tokens = excluded.tokens, parent_id = excluded.parent_id`,
 );
+const partIdsOf = db.query<{ id: string }, [string]>("SELECT id FROM parts WHERE message_id = ?");
+const deletePart = db.query("DELETE FROM parts WHERE id = ?");
 const upsertTodos = db.query("INSERT INTO todos (session_id, run_id, data) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET data = excluded.data");
 
 function storeSession(runId: string, info: any) {
@@ -176,11 +178,11 @@ function storePart(runId: string, w: Watcher, part: any) {
   if (others.length) timeline(runId, "agent", "crossread", `Looked at ${others.map((o) => (o === "*" ? "the workbases index" : o)).join(", ")} (${part.tool})`);
 }
 
-export function autoApprove(runId: string, req: { id: string; permission?: string; patterns?: string[] }) {
+export function autoApprove(runId: string, req: { id: string; sessionID?: string; permission?: string; patterns?: string[] }) {
   const run = getRun(runId);
   if (!run) return;
   clientFor(run)
-    .replyPermission(req.id, "always")
+    .replyPermission(req.id, "always", req.sessionID)
     .then(() => timeline(runId, "pixel", "permission", `Auto-approved permission ${req.permission ?? ""} ${(req.patterns ?? []).join(" ")}`.slice(0, 300)))
     .catch((e) => console.error("permission reply failed", e));
 }
@@ -231,6 +233,11 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
       onPartActivity(p.messageID);
       onDelta(id, p.messageID, p.delta);
       break;
+    case "tool.input.delta":
+      // A tool call's arguments streaming in: output tokens, but nothing to show yet.
+      onPartActivity(p.messageID);
+      onDelta(id, p.messageID, p.delta);
+      break;
     case "message.removed":
       for (const [pid, x] of pendingParts) if (x.part.messageID === p.messageID) pendingParts.delete(pid);
       db.query("DELETE FROM messages WHERE id = ?").run(p.messageID);
@@ -248,6 +255,8 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
       break;
     case "session.status":
       if (isRoot && (p.status?.type === "busy" || p.status?.type === "retry")) setRun(id, { agent_status: p.status.type });
+      // A running run's idle goes through onIdle; a paused or stopped one just shows it.
+      if (isRoot && p.status?.type === "idle" && run.status !== "running" && run.agent_status !== "idle") setRun(id, { agent_status: "idle" });
       if (isRoot && p.status?.type === "retry") publish(id, "retry", p.status);
       if (p.status?.type === "retry") {
         onRetry(id, run.model, p.sessionID ?? "", p.status);
@@ -295,18 +304,23 @@ export async function syncTranscript(id: string) {
     try {
       storeSession(id, await client.getSession(sid));
       const msgs = await client.messages(sid);
+      let todos: any[] | null = null;
       db.transaction(() => {
         for (const m of msgs) {
           upsertMessage.run(m.info.id, id, m.info.sessionID, m.info.role, JSON.stringify(m.info), m.info.time?.created ?? Date.now());
+          // A message's parts are exactly what opencode has now (a run started on opencode 1 has
+          // parts with older ids for the same messages).
+          const keep = new Set(m.parts.map((part) => part.id));
+          for (const old of partIdsOf.all(m.info.id)) if (!keep.has(old.id)) deletePart.run(old.id);
           for (const part of m.parts) {
             pendingParts.delete(part.id);
             upsertPart.run(part.id, id, part.sessionID, part.messageID, part.type, JSON.stringify(part), Date.now());
             if (part.type === "tool") w?.seenCalls.add(part.id);
+            todos = todosOf(part) ?? todos;
           }
         }
+        if (todos) upsertTodos.run(sid, id, JSON.stringify(todos));
       })();
-      const todos = await client.todos(sid).catch(() => null);
-      if (todos) upsertTodos.run(sid, id, JSON.stringify(todos));
       for (const c of await client.children(sid).catch(() => [])) queue.push(c.id);
     } catch (e) {
       console.error(`sync of session ${sid} failed`, e);

@@ -1,81 +1,84 @@
 /**
  * opencode plugin: let an agent resume subagents that were interrupted instead of starting them again.
  *
- * When a session is stopped (or opencode dies) while task-tool subagents are running, each task call
- * ends as "Tool execution aborted" (or "[Tool execution was interrupted]" after a crash). The child
- * session survives with all its messages and tool output, and the task tool can continue it via
- * `task_id`, but the model never sees that id: it lives only in the call's metadata. So the agent
- * spawns fresh subagents and their work is lost.
+ * When a session is stopped (or opencode dies) while subagents are running, each subagent call ends as
+ * "Tool execution interrupted (sessionID: ses_...)". The child session survives with everything it did,
+ * and the subagent tool can continue it when given that sessionID, but models tend to spawn a fresh
+ * subagent and redo the work.
  *
- * This plugin rewrites those calls in the copy of the history sent to the model (never the stored
- * session) so the error names the task_id and says how to resume it. Only the latest call per
- * subagent session gets the hint, so a subagent that was already resumed isn't offered again.
+ * This plugin adds a short hint to those calls in the copy of the history sent to the model (never
+ * the stored session): the child's sessionID and how to resume it. Only the latest call per child
+ * session gets the hint, so a subagent that was already resumed isn't offered again.
  *
- * Only the plugin itself is exported: opencode calls every exported function in a plugin file as a plugin.
- *
- * Install: copy this file to ~/.config/opencode/plugin/ (or <project>/.opencode/plugin/).
- * Uses the experimental `experimental.chat.messages.transform` hook (checked on opencode 1.18.23 / 1.19.0).
+ * opencode 2 plugin API (`setup` + `ctx.session.hook("context")`), checked on opencode 2.1.0.
+ * Install: copy this file to ~/.config/opencode/plugins/ (or <project>/.opencode/plugins/).
  */
 
-interface Part {
-  id: string;
+interface ToolResult {
   type: string;
-  tool?: string;
-  state?: { status: string; error?: string; input?: Record<string, unknown>; metadata?: Record<string, unknown>; [k: string]: unknown };
+  id?: string;
+  name?: string;
+  result?: { type?: string; value?: any };
   [k: string]: unknown;
 }
 interface Message {
-  info: unknown;
-  parts: Part[];
+  role: string;
+  content: unknown;
+  [k: string]: unknown;
 }
 
-const isTask = (p: Part) => p.type === "tool" && p.tool === "task" && !!p.state;
+const SESSION_ID = /sessionID:\s*(ses_[A-Za-z0-9]+)/;
 
-/** The subagent session a task call created or resumed. */
-function subagentOf(p: Part): string | undefined {
-  const id = p.state?.metadata?.sessionId ?? p.state?.input?.task_id;
-  return typeof id === "string" ? id : undefined;
+/** The child session an interrupted subagent call left behind, if this part is one. */
+export function interruptedChild(part: ToolResult): string | undefined {
+  if (part?.type !== "tool-result" || part.name !== "subagent" || part.result?.type !== "error") return;
+  const err = part.result.value?.error;
+  if (err?.type !== "aborted") return;
+  return SESSION_ID.exec(String(err.message ?? ""))?.[1];
 }
 
-function interruptedReason(p: Part): string | undefined {
-  const s = p.state!;
-  if (s.metadata?.background === true) return; // background tasks report back on their own
-  if (s.status === "pending" || s.status === "running") return "[Tool execution was interrupted]";
-  if (s.status === "error" && (s.metadata?.interrupted === true || /abort/i.test(s.error ?? ""))) return s.error;
-}
-
-const hint = (sessionId: string) =>
-  `The subagent was stopped before it finished, but its session (task_id "${sessionId}") still holds everything it did. ` +
-  `To pick it up where it stopped, call the task tool again with task_id "${sessionId}" and a prompt saying to continue, ` +
+export const hint = (sessionId: string) =>
+  `The subagent was stopped before it finished, but its session (sessionID "${sessionId}") still holds everything it did. ` +
+  `To pick it up where it stopped, call the subagent tool again with sessionID "${sessionId}" and a prompt saying to continue, ` +
   `instead of starting a new subagent. Don't resume it if that work is no longer needed.`;
 
-/** Returns the messages with interrupted task calls rewritten. */
-function annotateInterruptedTasks(messages: Message[]): Message[] {
-  const latest = new Map<string, string>();
-  for (const m of messages) for (const p of m.parts) if (isTask(p)) {
-    const sid = subagentOf(p);
-    if (sid) latest.set(sid, p.id);
-  }
+const parts = (m: Message): ToolResult[] => (Array.isArray(m.content) ? (m.content as ToolResult[]) : []);
+
+/** Messages with the latest interrupted call per child session given the resume hint. */
+export function annotateInterruptedSubagents(messages: Message[]): Message[] {
+  // Per child session: its latest interrupted call, and whether a call resumed it after that.
+  const latest = new Map<string, ToolResult>();
+  const resumedAfter = new Set<string>();
+  for (const m of messages)
+    for (const p of parts(m)) {
+      const child = interruptedChild(p);
+      if (child) {
+        latest.set(child, p);
+        resumedAfter.delete(child);
+      }
+      const input = (p as any).input;
+      if (p.type === "tool-call" && p.name === "subagent" && typeof input?.sessionID === "string" && latest.has(input.sessionID)) resumedAfter.add(input.sessionID);
+    }
+  if (!latest.size) return messages;
   return messages.map((m) => {
     let changed = false;
-    const parts = m.parts.map((p) => {
-      if (!isTask(p)) return p;
-      const sid = subagentOf(p);
-      const reason = interruptedReason(p);
-      if (!sid || !reason || latest.get(sid) !== p.id) return p;
+    const content = parts(m).map((p) => {
+      const child = interruptedChild(p);
+      if (!child || latest.get(child) !== p || resumedAfter.has(child)) return p;
       changed = true;
-      // As an error without `interrupted`, opencode shows the model exactly this text.
-      const { interrupted: _, ...metadata } = p.state!.metadata ?? {};
-      return { ...p, state: { ...p.state!, status: "error", error: `${reason}. ${hint(sid)}`, metadata, time: p.state!.time ?? { start: Date.now(), end: Date.now() } } };
+      const err = p.result!.value.error;
+      return { ...p, result: { ...p.result, value: { ...p.result!.value, error: { ...err, message: `${err.message}. ${hint(child)}` } } } };
     });
-    return changed ? { ...m, parts } : m;
+    return changed ? { ...m, content } : m;
   });
 }
 
-export const ResumeSubagents = async () => ({
-  "experimental.chat.messages.transform": async (_input: unknown, output: { messages: Message[] }) => {
-    const next = annotateInterruptedTasks(output.messages);
-    // opencode keeps using this same array, so swap the entries in place; the stored messages are untouched.
-    output.messages.splice(0, output.messages.length, ...next);
+export default {
+  id: "pixel.resume-subagents",
+  async setup(ctx: any) {
+    await ctx.session.hook("context", (event: { messages: Message[] }) => {
+      const next = annotateInterruptedSubagents(event.messages);
+      if (next !== event.messages) event.messages.splice(0, event.messages.length, ...next);
+    });
   },
-});
+};

@@ -179,7 +179,10 @@ export const api = {
 
   /** Simple POST controls: continue, abort, pause, stop, done, retry, restart-opencode, reset-counters, sync. */
   control: (id: string, action: string, body: unknown = {}) => request("POST", `${r(id)}/${action}`, body),
-  message: (id: string, text: string) => request("POST", `${r(id)}/message`, { text }),
+  /** `queue`: deliver after the agent's current turn instead of into the work in progress. */
+  message: (id: string, text: string, queue = false) => request("POST", `${r(id)}/message`, { text, ...(queue && { queue }) }),
+  /** Live output of a command the agent is running (opencode shell id), from byte `cursor` on. */
+  shellOutput: (id: string, shell: string, cursor = 0) => request<{ output: string; cursor: number; size: number; truncated: boolean }>("GET", `${r(id)}/shell/${shell}${q({ cursor })}`),
   resume: (id: string, message?: string) => request("POST", `${r(id)}/resume`, { message }),
   setModel: (id: string, model: string, variant?: string | null) => request("POST", `${r(id)}/model`, { model, variant }),
   setAutopilot: (id: string, on: boolean) => request("POST", `${r(id)}/autopilot`, { on }),

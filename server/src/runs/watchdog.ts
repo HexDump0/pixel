@@ -59,7 +59,7 @@ async function safetyNets(run: RunRow, w: Watcher, client: OpencodeClient, s: Se
       .query<{ id: string }, [string, number]>("SELECT id FROM questions WHERE run_id = ? AND status = 'pending' AND created_at < ?")
       .all(run.id, Date.now() - s.questionTimeoutMin * 60_000);
     for (const q of stale) {
-      await client.rejectQuestion(q.id).catch(() => {});
+      await client.rejectQuestion(q.id, `Nobody answered within ${s.questionTimeoutMin} minutes. Decide for yourself and carry on.`).catch(() => {});
       db.query("UPDATE questions SET status = 'rejected' WHERE id = ?").run(q.id);
       timeline(run.id, "pixel", "question", `No answer after ${s.questionTimeoutMin} min; dismissed the agent's question so it carries on`);
     }

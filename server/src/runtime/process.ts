@@ -118,7 +118,10 @@ export abstract class ProcessRuntime implements Runtime {
     const env = this.xdgEnv(run);
     mkdirSync(join(env.XDG_CONFIG_HOME, "opencode"), { recursive: true });
     writeFileSync(join(env.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify(this.opencodeConfig(), null, 2));
-    const plugins = join(env.XDG_CONFIG_HOME, "opencode", "plugin");
+    // opencode 1's plugin folder: its plugins don't load in opencode 2, so they go.
+    rmSync(join(env.XDG_CONFIG_HOME, "opencode", "plugin"), { recursive: true, force: true });
+    const plugins = join(env.XDG_CONFIG_HOME, "opencode", "plugins");
+    rmSync(plugins, { recursive: true, force: true });
     mkdirSync(plugins, { recursive: true });
     for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts"))) copyFileSync(join(config.opencodePluginsDir, f), join(plugins, f));
     if (authJson.trim()) {

@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 ALIAS="${1:-pixel-image}"
 BASE_IMAGE="${BASE_IMAGE:-images:ubuntu/24.04/cloud}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.0}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-2.1.0}"
 BUILD="pixel-build-$(date +%s)"
 
 cleanup() { incus delete -f "$BUILD" >/dev/null 2>&1 || true; }
@@ -20,7 +20,7 @@ for _ in $(seq 1 120); do incus exec "$BUILD" -- true 2>/dev/null && break; slee
 incus exec "$BUILD" -- cloud-init status --wait >/dev/null 2>&1 || true
 
 incus exec "$BUILD" -- mkdir -p /root/pixel-provision
-for f in provision.sh opencode.json opencode.service; do incus file push "$f" "$BUILD/root/pixel-provision/$f"; done
+for f in provision.sh install-opencode.sh opencode.json opencode.service; do incus file push "$f" "$BUILD/root/pixel-provision/$f"; done
 for f in ../opencode-plugins/*.ts; do incus file push "$f" "$BUILD/root/pixel-provision/$(basename "$f")"; done
 incus exec "$BUILD" -- env OPENCODE_VERSION="$OPENCODE_VERSION" ${GHIDRA_URL:+GHIDRA_URL="$GHIDRA_URL"} ${CODEQL_VERSION:+CODEQL_VERSION="$CODEQL_VERSION"} bash /root/pixel-provision/provision.sh
 

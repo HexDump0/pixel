@@ -158,7 +158,7 @@ describe("speed test", () => {
     expect(fast.total_ms).toBeGreaterThanOrEqual(fast.ttft_ms + 250);
     expect(fast.tps).toBeGreaterThan(300 / 0.6);
     expect(fast.tps).toBeLessThan(300 / 0.25);
-    expect(by("fake/broken")).toMatchObject({ ok: 0, error: "APIError: boom" });
+    expect(by("fake/broken")).toMatchObject({ ok: 0, error: "provider.api: boom" });
     expect(by("fake/tool")).toMatchObject({ ok: 0, error: expect.stringContaining("tried to use a tool") });
     expect(by("fake/missing")).toMatchObject({ ok: 0, error: "unknown model for fake" });
     expect(by("nope/x")).toMatchObject({ ok: 0, error: expect.stringContaining("provider nope not configured") });

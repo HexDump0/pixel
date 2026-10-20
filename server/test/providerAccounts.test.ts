@@ -9,6 +9,10 @@ import { accountBaseURL, addKey, agentCredentials, connectedProviders, NO_KEY, d
 import { classifyKeyError, nextKey } from "../src/runs/keys.ts";
 import { db } from "../src/db.ts";
 
+/** opencode config the agents get, and one provider's key in it. */
+const cfgOf = (c: { env: Record<string, string> }) => JSON.parse(c.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+const keyIn = (c: { env: Record<string, string> }, id: string) => cfgOf(c).providers?.[id]?.settings?.apiKey;
+
 beforeAll(() => {
   // A tiny catalogue in place of models.dev (PIXEL_MODELS_URL is empty in tests, so nothing is downloaded).
   writeFileSync(
@@ -33,25 +37,27 @@ describe("catalogue", () => {
 });
 
 describe("provider accounts", () => {
-  test("a catalogue provider's key goes into auth.json, merged with Settings", async () => {
-    saveSettings({ agentAuthJson: JSON.stringify({ other: { type: "api", key: "o-1" } }), agentEnv: { GITHUB_TOKEN: "gh" } });
+  test("a catalogue provider's key goes into the opencode config, with Settings' API keys", async () => {
+    const settingsAuth = JSON.stringify({ other: { type: "api", key: "o-1" }, sso: { type: "oauth", refresh: "r" } });
+    saveSettings({ agentAuthJson: settingsAuth, agentEnv: { GITHUB_TOKEN: "gh" } });
     await saveAccount({ id: "anthropic", key: "sk-ant-secret-1234" });
     const c = agentCredentials();
-    expect(JSON.parse(c.authJson)).toEqual({ other: { type: "api", key: "o-1" }, anthropic: { type: "api", key: "sk-ant-secret-1234" } });
-    expect(c.env).toEqual({ GITHUB_TOKEN: "gh" });
+    expect(cfgOf(c).providers).toEqual({ anthropic: { settings: { apiKey: "sk-ant-secret-1234" } }, other: { settings: { apiKey: "o-1" } } });
+    // auth.json stays what Settings has (opencode imports its logins on first start).
+    expect(c.authJson).toBe(settingsAuth);
+    expect(c.env.GITHUB_TOKEN).toBe("gh");
 
     // Editing without a key keeps the stored one.
     await saveAccount({ id: "anthropic", baseURL: "https://proxy.example.com/v1/" });
     const again = agentCredentials();
-    expect(JSON.parse(again.authJson).anthropic.key).toBe("sk-ant-secret-1234");
-    expect(JSON.parse(again.env.OPENCODE_CONFIG_CONTENT).provider.anthropic).toEqual({ options: { baseURL: "https://proxy.example.com/v1" } });
+    expect(cfgOf(again).providers.anthropic).toEqual({ settings: { baseURL: "https://proxy.example.com/v1", apiKey: "sk-ant-secret-1234" } });
 
     // noKey drops every key; the provider stays connected and agents get no key for it.
     addKey("anthropic", { name: "Second", key: "sk-ant-second-5678" });
     await saveAccount({ id: "anthropic", noKey: true });
     expect(providerKeys("anthropic")).toEqual([]);
     expect(connectedProviders().find((p) => p.id === "anthropic")?.via).toContain("pixel");
-    expect(JSON.parse(agentCredentials().authJson).anthropic).toBeUndefined();
+    expect(keyIn(agentCredentials(), "anthropic")).toBeUndefined();
     await saveAccount({ id: "anthropic", key: "sk-ant-secret-1234" });
   });
 
@@ -62,20 +68,20 @@ describe("provider accounts", () => {
     const cfg = JSON.parse(agentCredentials().env.OPENCODE_CONFIG_CONTENT);
     expect(cfg.share).toBe("disabled");
     expect(cfg.provider.keep).toEqual({ options: {} });
-    expect(cfg.provider.gw).toMatchObject({ npm: "@ai-sdk/anthropic", name: "Gateway", options: { baseURL: "https://gw.example.com/v1" } });
-    expect(Object.keys(cfg.provider.gw.models)).toEqual(["m-a", "m-b"]);
-    expect(cfg.provider.gw.models["m-a"].limit.context).toBe(64000);
-    expect(cfg.provider.home).toMatchObject({ npm: "@ai-sdk/openai-compatible", options: { baseURL: "http://10.0.0.5:11434/v1" } });
-    expect(cfg.provider.home.models.qwen.limit.context).toBe(128000);
-    // No key, no auth.json entry.
-    expect(JSON.parse(agentCredentials().authJson).home).toBeUndefined();
+    expect(cfg.providers.gw).toMatchObject({ package: "aisdk:@ai-sdk/anthropic", name: "Gateway", settings: { baseURL: "https://gw.example.com/v1", apiKey: "gw-key" } });
+    expect(Object.keys(cfg.providers.gw.models)).toEqual(["m-a", "m-b"]);
+    expect(cfg.providers.gw.models["m-a"]).toMatchObject({ capabilities: { tools: true }, limit: { context: 64000 } });
+    expect(cfg.providers.home).toMatchObject({ package: "aisdk:@ai-sdk/openai-compatible", settings: { baseURL: "http://10.0.0.5:11434/v1" } });
+    expect(cfg.providers.home.models.qwen.limit.context).toBe(128000);
+    // No key, none in the config.
+    expect(cfg.providers.home.settings.apiKey).toBeUndefined();
   });
 
-  test("Coral Bricks gets a prompt cache key through the plugin", async () => {
+  test("Coral Bricks gets a prompt cache key", async () => {
     await saveAccount({ id: "coralbricks", key: "cb-1" });
-    expect(agentCredentials().env.PIXEL_CACHE_KEY_PROVIDERS).toBe("coralbricks");
+    expect(cfgOf(agentCredentials()).providers.coralbricks.compatibility).toEqual({ supportsPromptCacheKey: true });
     await saveAccount({ id: "coralbricks", cacheKey: false });
-    expect(agentCredentials().env.PIXEL_CACHE_KEY_PROVIDERS).toBeUndefined();
+    expect(cfgOf(agentCredentials()).providers.coralbricks.compatibility).toBeUndefined();
     removeAccount("coralbricks");
   });
 
@@ -206,10 +212,10 @@ describe("several keys per provider", () => {
 
   test("each run gets its own key for its provider, the default otherwise", () => {
     const [first, second] = providerKeys("groq");
-    expect(JSON.parse(agentCredentials().authJson).groq.key).toBe(first.key);
-    expect(JSON.parse(agentCredentials(undefined, { key_id: second.id }).authJson).groq.key).toBe(second.key);
+    expect(keyIn(agentCredentials(), "groq")).toBe(first.key);
+    expect(keyIn(agentCredentials(undefined, { key_id: second.id }), "groq")).toBe(second.key);
     // A key from another provider (the run changed model) falls back to the default.
-    expect(JSON.parse(agentCredentials(undefined, { key_id: "k_elsewhere" }).authJson).groq.key).toBe(first.key);
+    expect(keyIn(agentCredentials(undefined, { key_id: "k_elsewhere" }), "groq")).toBe(first.key);
     expect(keyFor({ key_id: second.id }, "groq")!.id).toBe(second.id);
     expect(findKey(second.id)!.provider).toBe("groq");
   });
@@ -218,10 +224,10 @@ describe("several keys per provider", () => {
     saveSettings({ agentEnv: { GROQ_API_KEY: "gsk-env", OTHER: "x" } });
     const run = { key_id: NO_KEY, model: "groq/llama-3.3-70b" };
     const c = agentCredentials(undefined, run);
-    const auth = c.authJson ? JSON.parse(c.authJson) : {};
-    expect(auth.groq).toBeUndefined();
+    expect(keyIn(c, "groq")).toBeUndefined();
     // Every other provider keeps its key.
-    expect(Object.keys(auth)).toEqual(Object.keys(JSON.parse(agentCredentials().authJson)).filter((k) => k !== "groq"));
+    const keyed = (x: typeof c) => Object.entries(cfgOf(x).providers ?? {}).filter(([, p]: [string, any]) => p.settings?.apiKey).map(([id]) => id);
+    expect(keyed(c)).toEqual(keyed(agentCredentials()).filter((k) => k !== "groq"));
     expect(c.env.GROQ_API_KEY).toBeUndefined();
     expect(c.env.OTHER).toBe("x");
     expect(keyFor(run, "groq")).toBeNull();
@@ -279,7 +285,7 @@ describe("variables, mixed APIs and how requests go out", () => {
     await saveAccount({ id: "snowflake-cortex", vars: { SNOWFLAKE_ACCOUNT: "https://abc-xy123.snowflakecomputing.com/", EXTRA_TOKEN: "tok-abcdefghijk" } });
     const c = agentCredentials();
     expect(c.env).toMatchObject({ SNOWFLAKE_ACCOUNT: "abc-xy123", EXTRA_TOKEN: "tok-abcdefghijk" });
-    expect(cfg().provider["snowflake-cortex"].options.baseURL).toBe("https://abc-xy123.snowflakecomputing.com/api/v2/cortex/v1");
+    expect(cfg().providers["snowflake-cortex"].settings.baseURL).toBe("https://abc-xy123.snowflakecomputing.com/api/v2/cortex/v1");
     expect(accountBaseURL("snowflake-cortex")).toBe("https://abc-xy123.snowflakecomputing.com/api/v2/cortex/v1");
     const p = connectedProviders().find((x) => x.id === "snowflake-cortex")!;
     expect(p.missingVars).toEqual([]);
@@ -311,18 +317,23 @@ describe("variables, mixed APIs and how requests go out", () => {
       custom: { api: "openai", models: ["claude-x", "gpt-z"], context: 100000, modelApi: { "claude-x": "anthropic", "gpt-z": "openai", "not-listed": "anthropic" } },
     });
     expect(connectedProviders().find((p) => p.id === "cx")?.custom?.modelApi).toEqual({ "claude-x": "anthropic" });
-    const p = cfg().provider.cx;
-    expect(p).toMatchObject({ npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://a1.example.com/v1", headers: { Authorization: "Bearer pat-abcdefghijkl", "X-Extra": "1" } } });
+    const p = cfg().providers.cx;
+    expect(p).toMatchObject({
+      package: "aisdk:@ai-sdk/openai-compatible",
+      settings: { baseURL: "https://a1.example.com/v1", apiKey: "pat-abcdefghijkl" },
+      headers: { Authorization: "Bearer pat-abcdefghijkl", "X-Extra": "1" },
+      compatibility: { maxTokensField: "max_completion_tokens" },
+    });
     // A model the catalogue knows takes its name and limits; the other gets the endpoint's.
-    expect(p.models["claude-x"]).toMatchObject({ name: "Claude X", provider: { npm: "@ai-sdk/anthropic" }, limit: { context: 200000, output: 64000 } });
+    expect(p.models["claude-x"]).toMatchObject({ name: "Claude X", package: "aisdk:@ai-sdk/anthropic", limit: { context: 200000, output: 64000 } });
     expect(p.models["gpt-z"]).toMatchObject({ name: "gpt-z", limit: { context: 100000, output: 25000 } });
-    expect(p.models["gpt-z"].provider).toBeUndefined();
-    expect(agentCredentials().env.PIXEL_MAX_COMPLETION_TOKENS).toBe("cx");
+    expect(p.models["gpt-z"].package).toBeUndefined();
 
     // The header carries the run's own key, and nothing for a run set to go without one.
     const second = addKey("cx", { name: "Second", key: "pat-second-12345" });
-    expect(cfg({ key_id: second.id, model: "cx/claude-x" }).provider.cx.options.headers.Authorization).toBe("Bearer pat-second-12345");
-    expect(cfg({ key_id: NO_KEY, model: "cx/claude-x" }).provider.cx.options.headers).toEqual({ "X-Extra": "1" });
+    expect(cfg({ key_id: second.id, model: "cx/claude-x" }).providers.cx.headers.Authorization).toBe("Bearer pat-second-12345");
+    expect(cfg({ key_id: NO_KEY, model: "cx/claude-x" }).providers.cx.headers).toEqual({ "X-Extra": "1" });
+    expect(cfg({ key_id: NO_KEY, model: "cx/claude-x" }).providers.cx.settings.apiKey).toBeUndefined();
     saveSettings({ providerOverrides: {} });
     removeAccount("cx");
   });

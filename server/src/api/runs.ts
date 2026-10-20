@@ -72,13 +72,13 @@ function mustRun(id: string) {
 
 const countBy = (sql: string) => new Map(db.query<{ run_id: string; n: number }, []>(sql).all().map((r) => [r.run_id, r.n]));
 
-/** `opencode attach` command for the user's own terminal. */
+/** Command to open the run's opencode from the user's own terminal (opencode 2: `opencode --server`). */
 function attachCommand(run: RunRow) {
   if (!run.endpoint) return null;
   const ep = new URL(run.endpoint);
   const host = config.publicHost || ep.hostname;
   const session = run.session_id ? ` --session ${run.session_id}` : "";
-  return `OPENCODE_SERVER_PASSWORD='${run.opencode_password}' opencode attach http://${host}:${ep.port}${session} --dir ${runtime.paths(run).target}`;
+  return `OPENCODE_PASSWORD='${run.opencode_password}' opencode --server http://${host}:${ep.port}${session} ${runtime.paths(run).target}`;
 }
 
 get("/runs", ({ query }) => {
@@ -265,7 +265,12 @@ get("/runs/:id/history/:commit", async ({ params: { id, commit }, query }) => ({
 
 // ---- controls ----
 
-post("/runs/:id/message", async ({ req, params: { id } }) => controls.sendMessage(id, (await readJson(req)).text));
+post("/runs/:id/message", async ({ req, params: { id } }) => {
+  const b = await readJson(req);
+  return controls.sendMessage(id, b.text, b.queue === true);
+});
+post("/runs/:id/compact", ({ params: { id } }) => controls.compactRun(id));
+get("/runs/:id/shell/:shell", ({ params: { id, shell }, query }) => controls.shellOutput(id, shell, Number(query.get("cursor") ?? 0)));
 post("/runs/:id/continue", ({ params: { id } }) => controls.continueRun(id));
 post("/runs/:id/abort", ({ params: { id } }) => controls.abortRun(id));
 post("/runs/:id/pause", ({ params: { id } }) => controls.pauseRun(id));

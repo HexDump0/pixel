@@ -1,65 +1,61 @@
-/** The resume-subagents opencode plugin, driven through its real hook with opencode-shaped messages. */
+/** The resume-subagents opencode plugin, driven through its real hook with opencode 2-shaped model messages. */
 import { describe, expect, test } from "bun:test";
-import { ResumeSubagents } from "../../opencode-plugins/resume-subagents.ts";
+import plugin from "../../opencode-plugins/resume-subagents.ts";
 
-const task = (id: string, state: Record<string, unknown>) => ({ id, type: "tool", tool: "task", callID: `call_${id}`, state: { input: { description: "audit parser", prompt: "…", subagent_type: "general" }, ...state } });
-const msg = (...parts: any[]) => ({ info: { role: "assistant" }, parts });
+const call = (id: string, input: Record<string, unknown> = {}) => ({ type: "tool-call", id, name: "subagent", input: { agent: "general", description: "audit parser", prompt: "...", ...input } });
+const interrupted = (id: string, child: string, name = "subagent") => ({
+  type: "tool-result",
+  id,
+  name,
+  result: { type: "error", value: { error: { type: "aborted", message: `Tool execution interrupted: ${name} (sessionID: ${child})` }, content: [] } },
+});
+const assistant = (...content: any[]) => ({ role: "assistant", content });
+const tool = (...content: any[]) => ({ role: "tool", content });
+const message = (p: any) => p.result?.value?.error?.message as string;
 
 async function transform(messages: any[]) {
-  const hooks = await ResumeSubagents();
-  const output = { messages };
-  await hooks["experimental.chat.messages.transform"]({}, output);
-  return output.messages;
+  let hook: (e: { messages: any[] }) => void = () => {};
+  await plugin.setup({ session: { hook: async (name: string, fn: any) => name === "context" && (hook = fn) } });
+  const event = { messages };
+  hook(event);
+  return event.messages;
 }
 
 describe("resume-subagents plugin", () => {
-  test("aborted task gets its task_id; stored message is not mutated", async () => {
-    const aborted = task("p1", { status: "error", error: "Tool execution aborted", metadata: { sessionId: "ses_child1", interrupted: true }, time: { start: 1, end: 2 } });
-    const original = structuredClone(aborted);
-    const [m] = await transform([msg(aborted)]);
-    const p = m.parts[0];
-    expect(p.state.status).toBe("error");
-    expect(p.state.error).toStartWith("Tool execution aborted. ");
-    expect(p.state.error).toContain('task_id "ses_child1"');
-    expect(p.state.metadata.interrupted).toBeUndefined();
-    expect(aborted).toEqual(original);
+  test("interrupted subagent gets the resume hint; the input messages are not mutated", async () => {
+    const result = interrupted("c1", "ses_child1");
+    const original = structuredClone(result);
+    const out = await transform([assistant(call("c1")), tool(result)]);
+    expect(message(out[1].content[0])).toStartWith("Tool execution interrupted: subagent (sessionID: ses_child1). ");
+    expect(message(out[1].content[0])).toContain('sessionID "ses_child1"');
+    expect(result).toEqual(original);
   });
 
-  test("task left running by a crash becomes an error with the hint", async () => {
-    const [m] = await transform([msg(task("p1", { status: "running", metadata: { sessionId: "ses_crash" }, time: { start: 1 } }))]);
-    expect(m.parts[0].state.status).toBe("error");
-    expect(m.parts[0].state.error).toContain("[Tool execution was interrupted]");
-    expect(m.parts[0].state.error).toContain('task_id "ses_crash"');
+  test("three parallel subagents each get their own id", async () => {
+    const out = await transform([assistant(call("a"), call("b"), call("c")), tool(interrupted("a", "ses_a"), interrupted("b", "ses_b"), interrupted("c", "ses_c"))]);
+    expect(out[1].content.map((p: any) => /call the subagent tool again with sessionID "(ses_\w)"/.exec(message(p))?.[1])).toEqual(["ses_a", "ses_b", "ses_c"]);
   });
 
-  test("three parallel subagents all get their own id", async () => {
-    const parts = ["a", "b", "c"].map((x) => task(x, { status: "error", error: "Tool execution aborted", metadata: { sessionId: `ses_${x}`, interrupted: true } }));
-    const [m] = await transform([msg(...parts)]);
-    expect(m.parts.map((p: any) => /task_id "(ses_\w)"/.exec(p.state.error)?.[1])).toEqual(["ses_a", "ses_b", "ses_c"]);
+  test("a resumed subagent is not offered again; one interrupted again is", async () => {
+    const first = interrupted("c1", "ses_x");
+    let out = await transform([assistant(call("c1")), tool(first), assistant(call("c2", { sessionID: "ses_x" }))]);
+    expect(message(out[1].content[0])).not.toContain("call the subagent tool again");
+
+    out = await transform([assistant(call("c1")), tool(first), assistant(call("c2", { sessionID: "ses_x" })), tool(interrupted("c2", "ses_x"))]);
+    expect(message(out[1].content[0])).not.toContain("call the subagent tool again");
+    expect(message(out[3].content[0])).toContain('sessionID "ses_x"');
   });
 
-  test("an already resumed subagent is not offered again; a re-interrupted one is", async () => {
-    const first = task("p1", { status: "error", error: "Tool execution aborted", metadata: { sessionId: "ses_x", interrupted: true } });
-    const resumed = task("p2", { status: "completed", output: "done", input: { task_id: "ses_x" }, metadata: { sessionId: "ses_x" } });
-    let out = await transform([msg(first), msg(resumed)]);
-    expect(out[0].parts[0].state.error).toBe("Tool execution aborted");
-
-    const again = task("p3", { status: "error", error: "Tool execution aborted", input: { task_id: "ses_x" }, metadata: { sessionId: "ses_x", interrupted: true } });
-    out = await transform([msg(first), msg(again)]);
-    expect(out[0].parts[0].state.error).toBe("Tool execution aborted");
-    expect(out[1].parts[0].state.error).toContain('task_id "ses_x"');
-  });
-
-  test("leaves completed, failed, background and non-task calls alone", async () => {
-    const parts = [
-      task("ok", { status: "completed", output: "fine", metadata: { sessionId: "ses_ok" } }),
-      task("bad", { status: "error", error: "Subagent failed (task_id: ses_bad): boom", metadata: { sessionId: "ses_bad" } }),
-      task("bg", { status: "running", metadata: { sessionId: "ses_bg", background: true } }),
-      { id: "b1", type: "tool", tool: "bash", state: { status: "error", error: "Tool execution aborted", metadata: { interrupted: true } } },
-      { id: "t1", type: "text", text: "hi" },
+  test("leaves completed calls, other failures, other tools and text alone", async () => {
+    const msgs = [
+      assistant({ type: "text", text: "hi" }, call("ok"), call("bad")),
+      tool(
+        { type: "tool-result", id: "ok", name: "subagent", result: { type: "text", value: "done" } },
+        { type: "tool-result", id: "bad", name: "subagent", result: { type: "error", value: { error: { type: "tool", message: "Subagent failed (sessionID: ses_bad): boom" } } } },
+        interrupted("sh", "ses_none", "shell"),
+      ),
     ];
-    const input = [msg(...parts)];
-    const out = await transform(input);
-    expect(out[0]).toBe(input[0]);
+    const out = await transform(structuredClone(msgs));
+    expect(out).toEqual(msgs);
   });
 });

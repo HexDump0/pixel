@@ -318,17 +318,69 @@ function rejectTools(client: OpencodeClient, tries: { n: number }) {
     while (on) {
       for (const p of await client.pendingPermissions().catch(() => [])) {
         tries.n++;
-        await client.replyPermission(p.id, "reject").catch(() => {});
+        await client.replyPermission(p.id, "reject", p.sessionID).catch(() => {});
       }
       for (const q of await client.pendingQuestions().catch(() => [])) {
         tries.n++;
-        await client.rejectQuestion(q.id).catch(() => {});
+        await client.rejectQuestion(q.id, "Answer in text only; no tools or questions in this test.").catch(() => {});
       }
       await Bun.sleep(300);
     }
   };
   void loop();
   return { stop: () => void (on = false) };
+}
+
+/**
+ * Send one prompt and follow it on the event stream until the session goes idle: when it was sent,
+ * the first streamed token, when the last answer finished, output tokens, the text, or the error.
+ */
+async function promptAndWait(client: OpencodeClient, session: string, text: string, model: string, timeoutMs: number) {
+  const r = { created: Date.now(), first: null as number | null, completed: null as number | null, out: 0, text: "", error: null as string | null };
+  const ctl = new AbortController();
+  const done = Promise.withResolvers<void>();
+  const timer = setTimeout(() => {
+    r.error ??= `no answer within ${timeoutMs / 1000}s`;
+    done.resolve();
+  }, timeoutMs);
+  const texts = new Map<string, string>();
+  const outs = new Map<string, number>();
+  const finishedMsgs = new Set<string>();
+  const connected = Promise.withResolvers<void>();
+  void client
+    .streamEvents((e) => {
+      const p = e.properties ?? {};
+      if (e.type === "server.connected") return connected.resolve();
+      const sid = p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID;
+      if (sid !== session) return;
+      if (e.type === "message.part.delta" && p.field === "text") r.first ??= Date.now();
+      else if (e.type === "message.part.updated" && p.part?.type === "text") texts.set(p.part.id, p.part.text ?? "");
+      else if (e.type === "message.updated" && p.info?.role === "assistant") {
+        const info = p.info;
+        // Timed on Pixel's clock like the start and the first token, when the answer is seen finishing.
+        if (info.time?.completed && !finishedMsgs.has(info.id)) {
+          finishedMsgs.add(info.id);
+          r.completed = Date.now();
+        }
+        outs.set(info.id, (info.tokens?.output ?? 0) + (info.tokens?.reasoning ?? 0));
+        if (info.error && info.error.name !== "MessageAbortedError") r.error = `${info.error.name}: ${info.error.data?.message ?? ""}`.slice(0, 300);
+      } else if (e.type === "session.error" && p.error?.name !== "MessageAbortedError") r.error ??= `${p.error?.name ?? "error"}: ${p.error?.data?.message ?? ""}`.slice(0, 300);
+      else if (e.type === "session.idle") done.resolve();
+    }, ctl.signal)
+    .catch(() => {})
+    .finally(() => connected.resolve());
+  await connected.promise;
+  try {
+    r.created = Date.now();
+    await client.prompt(session, text, model, null);
+    await done.promise;
+  } finally {
+    clearTimeout(timer);
+    ctl.abort();
+  }
+  r.text = [...texts.values()].join("");
+  r.out = [...outs.values()].reduce((a, b) => a + b, 0);
+  return r;
 }
 
 async function runSpeedTest(batch: string, models: string[]) {
@@ -352,8 +404,6 @@ async function runSpeedTest(batch: string, models: string[]) {
     for (const model of models) {
       if (speedRunning) speedRunning.current = model;
       publish("*", "speedtest", { batch, current: model });
-      const [providerID, ...rest] = model.split("/");
-      const modelID = rest.join("/");
       const unknown = await oc.check(model);
       if (unknown) {
         record(model, { ok: false, error: unknown });
@@ -362,38 +412,24 @@ async function runSpeedTest(batch: string, models: string[]) {
       const toolTries = { n: 0 };
       const guard = rejectTools(client, toolTries);
       try {
-        const session = await client.createSession(`speed test ${model}`);
-        const started = Date.now();
-        const res = await client.req<{ info: any; parts: any[] }>(
-          "POST",
-          `/session/${session.id}/message`,
-          { parts: [{ type: "text", text: SPEED_PROMPT }], model: { providerID, modelID } },
-          undefined,
-          SPEED_TIMEOUT_MS,
-        );
-        const info = res?.info ?? {};
+        const session = await client.createSession(`speed test ${model}`, model);
+        const r = await promptAndWait(client, session.id, SPEED_PROMPT, model, SPEED_TIMEOUT_MS);
         if (toolTries.n) {
           record(model, { ok: false, error: "tried to use a tool instead of answering in text (rejected)" });
           continue;
         }
-        if (info.error) {
-          record(model, { ok: false, error: `${info.error.name}: ${info.error.data?.message ?? ""}`.slice(0, 300) });
+        if (r.error) {
+          record(model, { ok: false, error: r.error });
           continue;
         }
-        const created = info.time?.created ?? started;
-        const completed = info.time?.completed ?? Date.now();
-        const starts = (res.parts ?? []).map((p: any) => p.time?.start).filter((t: any) => typeof t === "number");
-        const first = starts.length ? Math.min(...starts) : null;
-        const out = (info.tokens?.output ?? 0) + (info.tokens?.reasoning ?? 0);
-        const text = (res.parts ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text ?? "").join("");
-        const streamS = first ? (completed - first) / 1000 : null;
+        const streamS = r.first && r.completed ? (r.completed - r.first) / 1000 : null;
         record(model, {
-          ttft: first ? first - created : null,
-          total: completed - created,
-          out,
-          tps: streamS && streamS > 0.2 ? out / streamS : null,
-          ok: text.trim().length > 0,
-          error: text.trim() ? null : "empty answer",
+          ttft: r.first ? r.first - r.created : null,
+          total: (r.completed ?? Date.now()) - r.created,
+          out: r.out,
+          tps: streamS && streamS > 0.2 ? r.out / streamS : null,
+          ok: r.text.trim().length > 0,
+          error: r.text.trim() ? null : "empty answer",
         });
       } catch (e: any) {
         record(model, { ok: false, error: String(e.message ?? e).slice(0, 300) });

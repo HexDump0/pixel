@@ -7,7 +7,7 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
-import { OpencodeClient } from "./opencode.ts";
+import { OpencodeClient, type ModelInfo } from "./opencode.ts";
 import { agentCredentials } from "./providerAccounts.ts";
 
 export interface ScratchOpencode {
@@ -16,8 +16,8 @@ export interface ScratchOpencode {
   creds: string;
   /** Is provider/model in this opencode's catalogue? An unknown model gets a bare 500 otherwise. */
   check(model: string): Promise<string | null>;
-  /** The providers and models this opencode can use (with each model's variants = thinking levels). */
-  providers(): Promise<Catalogue | null>;
+  /** The models this opencode can use (with each model's variants = thinking levels). */
+  models(): Promise<ModelInfo[] | null>;
   stop(): Promise<void>;
 }
 
@@ -31,8 +31,6 @@ function withoutMcp(env: Record<string, string>) {
     return env;
   }
 }
-
-type Catalogue = { providers: { id: string; models: Record<string, { variants?: Record<string, unknown> }> }[] };
 
 const freePort = () => {
   const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
@@ -49,7 +47,7 @@ export async function startScratchOpencode(kind: string, creds = agentCredential
   const xdg = { XDG_CONFIG_HOME: join(dir, "config"), XDG_DATA_HOME: join(dir, "data"), XDG_STATE_HOME: join(dir, "state"), XDG_CACHE_HOME: join(dir, "cache") };
   mkdirSync(join(xdg.XDG_CONFIG_HOME, "opencode"), { recursive: true });
   // Same plugins as the agents, so tests see the requests agents send.
-  const plugins = join(xdg.XDG_CONFIG_HOME, "opencode", "plugin");
+  const plugins = join(xdg.XDG_CONFIG_HOME, "opencode", "plugins");
   mkdirSync(plugins, { recursive: true });
   for (const f of readdirSync(config.opencodePluginsDir).filter((f) => f.endsWith(".ts"))) copyFileSync(join(config.opencodePluginsDir, f), join(plugins, f));
   writeFileSync(join(xdg.XDG_CONFIG_HOME, "opencode", "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", autoupdate: false, share: "disabled", permission: "ask" }));
@@ -93,16 +91,15 @@ export async function startScratchOpencode(kind: string, creds = agentCredential
     throw new Error(`opencode did not start: ${e.message}`);
   }
 
-  let catalogue: Catalogue | null | undefined;
-  const providers = async () => (catalogue ??= await client.req<Catalogue>("GET", "/config/providers").catch(() => null));
+  let catalogue: ModelInfo[] | null | undefined;
+  const models = async () => (catalogue ??= await client.models().catch(() => null));
   const check = async (model: string) => {
-    await providers();
-    if (!catalogue?.providers) return null;
+    await models();
+    if (!catalogue) return null;
     const [providerID, ...rest] = model.split("/");
-    const p = catalogue.providers.find((x) => x.id === providerID);
-    if (!p) return `provider ${providerID} not configured (add it on the Models page)`;
-    return rest.join("/") in (p.models ?? {}) ? null : `unknown model for ${providerID}`;
+    if (!catalogue.some((m) => m.providerID === providerID)) return `provider ${providerID} not configured (add it on the Models page)`;
+    return catalogue.some((m) => m.providerID === providerID && m.id === rest.join("/")) ? null : `unknown model for ${providerID}`;
   };
 
-  return { client, creds: JSON.stringify(creds), check, providers, stop };
+  return { client, creds: JSON.stringify(creds), check, models, stop };
 }

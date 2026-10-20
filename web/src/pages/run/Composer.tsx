@@ -1,6 +1,9 @@
-/** The one-line message box at the bottom of a run. Quick messages show only while it has focus; ⌘↵ sends. */
+/**
+ * The one-line message box at the bottom of a run. Quick messages show only while it has focus; ⌘↵ sends
+ * into the work in progress, and while the agent is busy ⇧⌘↵ (or the second button) waits for its turn to end.
+ */
 import { useRef, useState } from "react";
-import { IconArrowUp, IconCommand, IconCornerDownLeft, IconTerminal2 } from "@tabler/icons-react";
+import { IconArrowUp, IconCommand, IconCornerDownLeft, IconPlaylistAdd, IconTerminal2 } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
 import { runName } from "../../lib/fleet.ts";
 import type { Run } from "../../lib/types.ts";
@@ -16,14 +19,15 @@ export function Composer({ run }: { run: Run }) {
   const ta = useRef<HTMLTextAreaElement>(null);
   if (!run.session_id) return null;
   const live = run.status === "running" || run.status === "recovering";
-  const send = async () => {
+  const busy = live && run.agent_status !== "idle";
+  const send = async (queue = false) => {
     const t = text.trim();
     if (!t || sending) return;
     setSending(true);
     try {
-      await api.message(run.id, t);
+      await api.message(run.id, t, queue && busy);
       setText("");
-      toast("Sent");
+      toast(queue && busy ? "Queued for after this turn" : "Sent");
     } catch (e: any) {
       toast(e.message ?? String(e), "error");
     } finally {
@@ -69,7 +73,7 @@ export function Composer({ run }: { run: Run }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              void send();
+              void send(e.shiftKey);
             }
             if (e.key === "Escape") e.currentTarget.blur();
           }}
@@ -85,6 +89,11 @@ export function Composer({ run }: { run: Run }) {
             <IconCornerDownLeft size={12} stroke={2} />
           </Kbd>
         </span>
+        {busy && (
+          <Button type="button" size="sm" icon variant="ghost" title="Send after this turn (add Shift to the send keys)" aria-label="Send after this turn" disabled={!text.trim() || sending} onClick={() => void send(true)}>
+            <IconPlaylistAdd {...IC_SM} />
+          </Button>
+        )}
         <Button type="submit" size="sm" icon variant="primary" aria-label="Send" disabled={!text.trim() || sending}>
           <IconArrowUp {...IC_SM} />
         </Button>
