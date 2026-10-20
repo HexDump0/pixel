@@ -18,6 +18,7 @@ import { SystemPage } from "./pages/System.tsx";
 import { ActivityPage } from "./pages/Activity.tsx";
 import { ModelsPage } from "./pages/Models.tsx";
 import { StatsPage } from "./pages/Stats.tsx";
+import { ModelStatsPage } from "./pages/stats/ModelStats.tsx";
 
 function Routes() {
   const { path, search } = useLocation();
@@ -40,6 +41,7 @@ function Routes() {
   else if (path === "/settings") page = <SettingsPage />;
   else if (path === "/system") page = <SystemPage />;
   else if (path === "/stats") page = <StatsPage />;
+  else if (path === "/stats/model") page = <ModelStatsPage />;
   return <PageBody>{page}</PageBody>;
 }
 

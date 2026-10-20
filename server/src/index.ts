@@ -22,7 +22,7 @@ import { liveShutdown } from "./liveTest.ts";
 import { serveMcp } from "./mcp.ts";
 
 /** Client-side routes of the dashboard SPA. */
-const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/stats", "/findings", "/login"];
+const SPA_ROUTES = ["/", "/runs/*", "/new", "/activity", "/models", "/knowledge", "/templates", "/templates/*", "/settings", "/system", "/stats", "/stats/*", "/findings", "/login"];
 
 async function handleAuth(req: Request, url: URL): Promise<Response | null> {
   switch (url.pathname) {

@@ -6,7 +6,7 @@
  */
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { arc, area, curveMonotoneX, line, pie, stack } from "d3-shape";
-import { IconAlertTriangle, IconArrowRight, IconCircleCheck } from "@tabler/icons-react";
+import { IconAlertTriangle, IconArrowRight, IconChevronRight, IconCircleCheck } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import { Link, navigate, useLocation } from "../lib/router.tsx";
@@ -23,7 +23,7 @@ import { ChartTip, TipRow, TipTitle, niceMax, useSize, type TipState } from "../
 type Totals = Stats["totals"];
 type Bucket = Stats["series"][number];
 
-const WINDOWS: [number, string][] = [
+export const WINDOWS: [number, string][] = [
   [1, "24h"],
   [7, "7d"],
   [30, "30d"],
@@ -31,7 +31,7 @@ const WINDOWS: [number, string][] = [
 ];
 
 /** Token kinds in stack order (bottom up), in the token colours. */
-const KINDS = [
+export const KINDS = [
   { key: "cacheRead", label: "Cache read", color: "var(--t-cr)" },
   { key: "input", label: "Input", color: "var(--t-in)" },
   { key: "cacheWrite", label: "Cache write", color: "var(--t-cw)" },
@@ -39,19 +39,19 @@ const KINDS = [
 ] as const;
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const pct = (v: number | null | undefined, digits = 1) => (v == null ? "" : `${(v * 100).toFixed(digits)}%`);
-const ms = (n: number | null | undefined) => (n == null ? "" : n < 1000 ? `${Math.round(n)} ms` : n < 60_000 ? `${(n / 1000).toFixed(1)} s` : duration(n));
-const int = (n: number) => n.toLocaleString();
-const allTokens = (t: Pick<Totals, "input" | "output" | "cacheRead" | "cacheWrite">) => t.input + t.output + t.cacheRead + t.cacheWrite;
+export const pct = (v: number | null | undefined, digits = 1) => (v == null ? "" : `${(v * 100).toFixed(digits)}%`);
+export const ms = (n: number | null | undefined) => (n == null ? "" : n < 1000 ? `${Math.round(n)} ms` : n < 60_000 ? `${(n / 1000).toFixed(1)} s` : duration(n));
+export const int = (n: number) => n.toLocaleString();
+export const allTokens = (t: Pick<Totals, "input" | "output" | "cacheRead" | "cacheWrite">) => t.input + t.output + t.cacheRead + t.cacheWrite;
 
-function bucketLabel(t: number, size: number) {
+export function bucketLabel(t: number, size: number) {
   const d = new Date(t);
   if (size < 6 * 3600_000) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   if (size < 24 * 3600_000) return d.toLocaleString([], { weekday: "short", hour: "2-digit" });
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-const card = "min-w-0 rounded-2xl border border-line-2 bg-s1";
+export const card = "min-w-0 rounded-2xl border border-line-2 bg-s1";
 
 export function StatsPage() {
   const loc = useLocation();
@@ -158,7 +158,7 @@ function Body({ s }: { s: Stats }) {
         <Tools rows={s.tools} />
       </div>
 
-      <Models rows={s.byModel} />
+      <Models rows={s.byModel} days={s.window.days} />
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <TopRuns rows={s.byRun} />
@@ -170,7 +170,7 @@ function Body({ s }: { s: Stats }) {
 
 // ---- small pieces ----
 
-function Figure({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export function Figure({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="min-w-0">
       <div className="text-[12.5px] text-ink-3">{label}</div>
@@ -180,7 +180,7 @@ function Figure({ label, value, sub }: { label: string; value: ReactNode; sub?: 
   );
 }
 
-function Head({ title, meta, right }: { title: ReactNode; meta?: ReactNode; right?: ReactNode }) {
+export function Head({ title, meta, right }: { title: ReactNode; meta?: ReactNode; right?: ReactNode }) {
   return (
     <div className="mb-3 flex items-baseline gap-2.5">
       <h2 className="m-0 text-[13.5px] font-medium">{title}</h2>
@@ -219,7 +219,7 @@ function Health({ checks }: { checks: Stats["system"]["checks"] }) {
 
 // ---- tokens over time ----
 
-function TokenArea({ series, bucketMs }: { series: Bucket[]; bucketMs: number }) {
+export function TokenArea({ series, bucketMs }: { series: Bucket[]; bucketMs: number }) {
   const [ref, { w }] = useSize<HTMLDivElement>();
   const gid = useId().replace(/:/g, "");
   const [hi, setHi] = useState<number | null>(null);
@@ -319,7 +319,7 @@ function TokenArea({ series, bucketMs }: { series: Bucket[]; bucketMs: number })
 }
 
 /** The token mix as a ring with the cache hit rate in the middle. */
-function Mix({ t, savings }: { t: Totals; savings: number }) {
+export function Mix({ t, savings }: { t: Totals; savings: number }) {
   const [hi, setHi] = useState<string | null>(null);
   const total = allTokens(t);
   const S = 152;
@@ -371,7 +371,7 @@ function Mix({ t, savings }: { t: Totals; savings: number }) {
 
 // ---- small charts ----
 
-function Mini({ title, value, unit, children }: { title: string; value: ReactNode; unit?: ReactNode; children: ReactNode }) {
+export function Mini({ title, value, unit, children }: { title: string; value: ReactNode; unit?: ReactNode; children: ReactNode }) {
   return (
     <section className={cn(card, "px-5 pt-4 pb-3")}>
       <div className="mb-3 flex items-baseline gap-2">
@@ -384,7 +384,7 @@ function Mini({ title, value, unit, children }: { title: string; value: ReactNod
   );
 }
 
-function Bars({ series, bucketMs, values, bad, color, fmt }: { series: Bucket[]; bucketMs: number; values: number[]; bad?: number[]; color: string; fmt: (n: number) => string }) {
+export function Bars({ series, bucketMs, values, bad, color, fmt }: { series: Bucket[]; bucketMs: number; values: number[]; bad?: number[]; color: string; fmt: (n: number) => string }) {
   const [ref, { w }] = useSize<HTMLDivElement>();
   const [hi, setHi] = useState<number | null>(null);
   const [tip, setTip] = useState<TipState | null>(null);
@@ -438,7 +438,7 @@ function Bars({ series, bucketMs, values, bad, color, fmt }: { series: Bucket[];
   );
 }
 
-function HitLine({ series, bucketMs }: { series: Bucket[]; bucketMs: number }) {
+export function HitLine({ series, bucketMs }: { series: Bucket[]; bucketMs: number }) {
   const [ref, { w }] = useSize<HTMLDivElement>();
   const gid = useId().replace(/:/g, "");
   const [hi, setHi] = useState<number | null>(null);
@@ -495,11 +495,11 @@ function HitLine({ series, bucketMs }: { series: Bucket[]; bucketMs: number }) {
   );
 }
 
-const per = (bucket: number) => (bucket >= 86_400_000 ? "day" : bucket >= 6 * 3600_000 ? "6 h" : "hour");
+export const per = (bucket: number) => (bucket >= 86_400_000 ? "day" : bucket >= 6 * 3600_000 ? "6 h" : "hour");
 const KIND_LABEL: Record<string, string> = { shell: "Shell", read: "Read", edit: "Edit", task: "Subagents", web: "Web", other: "Other" };
 
 /** Bars per bucket stacked by layer, with a legend of the layers that have anything. */
-function StackBars({ series, bucketMs, layers, height, fmt }: { series: Bucket[]; bucketMs: number; layers: { key: string; label: string; color: string; values: number[] }[]; height: number; fmt: (n: number) => string }) {
+export function StackBars({ series, bucketMs, layers, height, fmt }: { series: Bucket[]; bucketMs: number; layers: { key: string; label: string; color: string; values: number[] }[]; height: number; fmt: (n: number) => string }) {
   const [ref, { w }] = useSize<HTMLDivElement>();
   const [hi, setHi] = useState<number | null>(null);
   const [tip, setTip] = useState<TipState | null>(null);
@@ -578,7 +578,7 @@ function StackBars({ series, bucketMs, layers, height, fmt }: { series: Bucket[]
 }
 
 /** One value per bucket as a line with its latest reading; gaps where a bucket had nothing. */
-function MiniLine({ label, series, bucketMs, values, color, fmt }: { label: string; series: Bucket[]; bucketMs: number; values: (number | null)[]; color: string; fmt: (n: number) => string }) {
+export function MiniLine({ label, series, bucketMs, values, color, fmt }: { label: string; series: Bucket[]; bucketMs: number; values: (number | null)[]; color: string; fmt: (n: number) => string }) {
   const [ref, { w }] = useSize<HTMLDivElement>();
   const gid = useId().replace(/:/g, "");
   const [hi, setHi] = useState<number | null>(null);
@@ -714,9 +714,12 @@ function Tools({ rows }: { rows: Stats["tools"] }) {
 
 // ---- per model ----
 
-const MODEL_COLS = "grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_64px_72px_80px_64px_72px] items-center gap-4 px-5 max-md:grid-cols-[minmax(0,1fr)_auto]";
+const MODEL_COLS =
+  "grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_44px_64px_64px_72px_72px_80px_56px_72px_14px] items-center gap-4 px-5 max-xl:grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_64px_72px_72px_56px_72px_14px] max-md:grid-cols-[minmax(0,1fr)_auto_14px]";
 
-function Models({ rows }: { rows: Stats["byModel"] }) {
+export const modelUrl = (key: string, days: number) => `/stats/model?key=${encodeURIComponent(key)}${days === 7 ? "" : `&days=${days}`}`;
+
+function Models({ rows, days }: { rows: Stats["byModel"]; days: number }) {
   const max = Math.max(1, ...rows.map(allTokens));
   return (
     <section className={cn(card, "overflow-hidden")}>
@@ -726,14 +729,22 @@ function Models({ rows }: { rows: Stats["byModel"] }) {
       <div className={cn(MODEL_COLS, "h-8 border-y border-line-2 text-xs text-ink-3 max-md:hidden")}>
         <span>Model</span>
         <span>Tokens</span>
-        <span className="text-right">Calls</span>
+        <span className="text-right max-xl:hidden">Runs</span>
+        <span className="text-right max-xl:hidden">Calls</span>
+        <span className="text-right" title="Output tokens per second, median call">Tok/s</span>
+        <span className="text-right">First token</span>
         <span className="text-right">Cache hits</span>
-        <span className="text-right">Median call</span>
+        <span className="text-right max-xl:hidden">Median call</span>
         <span className="text-right">Failed</span>
         <span className="text-right">Cost</span>
+        <span />
       </div>
       {rows.map((m, i) => (
-        <div key={`${m.provider}/${m.model}`} className={cn(MODEL_COLS, "min-h-12 border-t border-line-2 py-2 first-of-type:border-t-0 hover:bg-s2")}>
+        <Link
+          key={`${m.provider}/${m.model}`}
+          to={modelUrl(`${m.provider}/${m.model}`, days)}
+          className={cn(MODEL_COLS, "min-h-12 border-t border-line-2 py-2 text-ink no-underline first-of-type:border-t-0 hover:bg-s2")}
+        >
           <span className="flex min-w-0 items-center gap-2.5">
             <i className="size-2.5 shrink-0 rounded-[3px]" style={{ background: `var(--r${i % 6})` }} />
             <span className="min-w-0">
@@ -749,12 +760,16 @@ function Models({ rows }: { rows: Stats["byModel"] }) {
             </span>
             <span className="w-14 text-right font-mono text-xs tabular-nums">{tokens(allTokens(m))}</span>
           </span>
-          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{int(m.calls)}</span>
+          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-xl:hidden">{int(m.runs)}</span>
+          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-xl:hidden">{int(m.calls)}</span>
+          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{m.tpsP50 == null ? "" : Math.round(m.tpsP50)}</span>
+          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{ms(m.ttftP50)}</span>
           <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{pct(m.hitRate, 0)}</span>
-          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-md:hidden">{ms(m.medianMs)}</span>
+          <span className="text-right font-mono text-xs text-ink-2 tabular-nums max-xl:hidden">{ms(m.medianMs)}</span>
           <span className={cn("text-right font-mono text-xs tabular-nums max-md:hidden", m.errors ? "text-critical" : "text-ink-4")}>{int(m.errors)}</span>
           <span className="text-right font-mono text-xs tabular-nums">{money(m.cost)}</span>
-        </div>
+          <IconChevronRight {...IC_XS} className="text-ink-4" />
+        </Link>
       ))}
       {!rows.length && <div className="px-5 py-6 text-sm text-ink-3">No model calls in this window</div>}
     </section>
@@ -831,7 +846,7 @@ const PIXEL_KIND: Record<string, string> = {
   failed: "Runs failed",
 };
 
-function Num({ label, value, tone }: { label: string; value: ReactNode; tone?: "warn" | "bad" }) {
+export function Num({ label, value, tone }: { label: string; value: ReactNode; tone?: "warn" | "bad" }) {
   return (
     <div className="min-w-0">
       <div className={cn("font-mono text-[17px] font-medium tabular-nums", tone === "bad" ? "text-critical" : tone === "warn" ? "text-warning" : "")}>{value}</div>

@@ -22,7 +22,7 @@ const NAV: { to: string; label: string; match: (p: string) => boolean }[] = [
   { to: "/findings", label: "Findings", match: (p) => p === "/findings" },
   { to: "/activity", label: "Activity", match: (p) => p === "/activity" },
   { to: "/models", label: "Models", match: (p) => p === "/models" },
-  { to: "/stats", label: "Stats", match: (p) => p === "/stats" },
+  { to: "/stats", label: "Stats", match: (p) => p === "/stats" || p.startsWith("/stats/") },
   { to: "/knowledge", label: "Knowledge", match: (p) => p.startsWith("/knowledge") },
   { to: "/templates", label: "Templates", match: (p) => p.startsWith("/templates") },
   { to: "/system", label: "System", match: (p) => p === "/system" },

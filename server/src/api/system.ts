@@ -15,7 +15,7 @@ import { validateModelOverrides, validateProviderOverrides } from "../modelOverr
 import { getProxy } from "../proxies.ts";
 import { backupStatus, runBackup } from "../backup.ts";
 import { checkGithub, githubPublic, saveGithub } from "../github.ts";
-import { stats } from "../stats.ts";
+import { modelStats, stats } from "../stats.ts";
 import { healthSamples } from "../health.ts";
 import { compactDb, dbBytes, startMeasure, startTidy, tidyState } from "../tidy.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
@@ -158,3 +158,4 @@ del("/system/pre-upgrade", () => {
   return { ok: true };
 });
 get("/stats", ({ query }) => stats(Number(query.get("days") ?? 7), Number(query.get("tz") ?? 0)));
+get("/stats/model", ({ query }) => modelStats(query.get("key") ?? "", Number(query.get("days") ?? 7), Number(query.get("tz") ?? 0)));

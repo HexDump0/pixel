@@ -262,4 +262,4 @@
 
 - **Machine size on the fly** (user: "easily able to change the machine type of a run on the fly"). Machine size dialog in the run menu and the Machine tab: a preset or CPU/memory/disk by hand, applied live.
 - **Disk rescue instead of a plain stop** (user: when a machine stops because its disk is full, "temp increase its limit by like a few gigs and ask it to clean up … if it does … decrease the limit back to normal and let it do its stuff (this all happens automatically)", plus "a button incase the machine disk is full"). Defaults: 5 GiB extra, 3 automatic cleanups per run, 30 min to get under 90% of the normal stop point; Settings, Workbase and disk. The button is Give more disk (run menu and the run header's notice when stopped for a full disk). Details in design.md.
-
+- **Stats per model** (user: "more stats for each model type, eachs models tps, total tokens spent on a model, and other such model related stuff"). A page per model, opened from Stats, By model; the table also gained runs, tok/s and first token.

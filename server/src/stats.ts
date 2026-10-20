@@ -18,7 +18,7 @@ import { effective } from "./modelOverrides.ts";
 import { runtime } from "./runtime/index.ts";
 import { isWatching } from "./runs/events.ts";
 import { kindOf } from "./fleet.ts";
-import { pct, tpsOf, ttftOf, type CallRow as LlmCall } from "./providers.ts";
+import { leaderboard, pct, tpsOf, ttftOf, type CallRow as LlmCall } from "./providers.ts";
 
 db.exec("CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at)");
 
@@ -210,14 +210,27 @@ async function system() {
   };
 }
 
+/** The window ending now, in buckets that start on the viewer's clock (`tzOffsetMin`: their UTC offset in minutes). */
+function windowFor(days: number, tzOffsetMin: number) {
+  days = Math.max(1, Math.min(90, Math.round(days) || 7));
+  const bucket = bucketFor(days);
+  const tzMs = Math.max(-840, Math.min(840, Math.round(tzOffsetMin) || 0)) * 60_000;
+  const shift = tzMs % bucket;
+  const to = Math.ceil((Date.now() + shift) / bucket) * bucket - shift;
+  const from = to - Math.ceil((days * DAY) / bucket) * bucket;
+  return { days, bucket, from, to, tzMs };
+}
+
+const LLM_COLUMNS = "provider, model, run_id, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error";
+type LlmRow = LlmCall & { run_id: string };
+const nums = (xs: (number | null)[]) => xs.filter((x): x is number => x != null);
+
 /** `tzOffsetMin`: the viewer's UTC offset in minutes, so hour and day buckets start on their clock. */
 export async function stats(days: number, tzOffsetMin = 0) {
-  days = Math.max(1, Math.min(90, Math.round(days) || 7));
   const now = Date.now();
-  const bucket = bucketFor(days);
-  const shift = (Math.max(-840, Math.min(840, Math.round(tzOffsetMin) || 0)) * 60_000) % bucket;
-  const to = Math.ceil((now + shift) / bucket) * bucket - shift;
-  const from = to - Math.ceil((days * DAY) / bucket) * bucket;
+  const win = windowFor(days, tzOffsetMin);
+  days = win.days;
+  const { bucket, from, to } = win;
   // Load the model catalogue (cached for a day) so cache savings can be priced.
   await catalogProviders().catch(() => null);
   const calls = db.query<CallRow, [number]>(`SELECT ${CALL_COLUMNS} FROM model_calls WHERE created >= ? ORDER BY created`).all(from);
@@ -228,9 +241,8 @@ export async function stats(days: number, tzOffsetMin = 0) {
   const perRun = new Map<string, TokenTotals>();
   // Model calls by the viewer's weekday (0 = Monday) and hour, for the when-do-agents-work heatmap.
   const heatmap = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
-  const tzMs = (Math.max(-840, Math.min(840, Math.round(tzOffsetMin) || 0))) * 60_000;
   for (const c of calls) {
-    const local = new Date(c.t + tzMs);
+    const local = new Date(c.t + win.tzMs);
     heatmap[(local.getUTCDay() + 6) % 7][local.getUTCHours()]++;
     add(totals, c);
     const b = series[Math.floor((c.t - from) / bucket)];
@@ -250,7 +262,7 @@ export async function stats(days: number, tzOffsetMin = 0) {
   const byModel = [...models.values()]
     .map(({ durations, ...m }) => {
       durations.sort((a, b) => a - b);
-      return { ...finish(m), medianMs: durations.length ? durations[Math.floor(durations.length / 2)] : null };
+      return { ...finish(m), medianMs: durations.length ? durations[Math.floor(durations.length / 2)] : null, tpsP50: null as number | null, ttftP50: null as number | null, runs: 0 };
     })
     .sort((a, b) => b.input + b.cacheRead + b.output - (a.input + a.cacheRead + a.output));
 
@@ -268,7 +280,16 @@ export async function stats(days: number, tzOffsetMin = 0) {
     m.cost[i] += c.cost;
     m.tokens[i] += c.i + c.o + c.cr + c.cw;
   }
-  const llm = db.query<LlmCall, [number]>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls WHERE created >= ?").all(from);
+  const llm = db.query<LlmRow, [number]>(`SELECT ${LLM_COLUMNS} FROM llm_calls WHERE created >= ?`).all(from);
+  // Speed per model (llm_calls has the first token; model_calls doesn't) and how many runs used it.
+  const llmByModel = Map.groupBy(llm, (c) => `${c.provider}/${c.model}`);
+  const runsByModel = Map.groupBy(calls, (c) => `${c.provider ?? "?"}/${c.model ?? "?"}`);
+  for (const m of byModel) {
+    const key = `${m.provider}/${m.model}`;
+    const cs = llmByModel.get(key) ?? [];
+    const tps = nums(cs.map(tpsOf));
+    Object.assign(m, { tpsP50: pct(tps, 50), ttftP50: pct(nums(cs.map(ttftOf)), 50), runs: new Set((runsByModel.get(key) ?? []).map((c) => c.run)).size });
+  }
   const speedBuckets = Array.from({ length: nB }, () => ({ ttft: [] as number[], tps: [] as number[] }));
   for (const c of llm) {
     const b = speedBuckets[at(c.created)];
@@ -368,3 +389,133 @@ export async function stats(days: number, tzOffsetMin = 0) {
 }
 
 export type Stats = Awaited<ReturnType<typeof stats>>;
+
+/**
+ * One model over the window: tokens, cost and calls over time, speed (output tok/s and first token,
+ * p50 and p90, over time and as a spread), what a call looks like on average, errors by kind,
+ * provider trouble, the runs that used it, its catalogue facts and how its runs did.
+ */
+export async function modelStats(key: string, days: number, tzOffsetMin = 0) {
+  const slash = key.indexOf("/");
+  if (slash <= 0) throw new Error("model must look like provider/model");
+  const provider = key.slice(0, slash);
+  const model = key.slice(slash + 1);
+  const win = windowFor(days, tzOffsetMin);
+  const { bucket, from, to } = win;
+  await catalogProviders().catch(() => null);
+
+  const calls = db.query<CallRow, [string, string, number]>(`SELECT ${CALL_COLUMNS} FROM model_calls WHERE provider = ? AND model = ? AND created >= ? ORDER BY created`).all(provider, model, from);
+  const llm = db.query<LlmRow, [string, string, number]>(`SELECT ${LLM_COLUMNS} FROM llm_calls WHERE provider = ? AND model = ? AND created >= ?`).all(provider, model, from);
+  const nB = (to - from) / bucket;
+  const at = (t: number) => Math.floor((t - from) / bucket);
+
+  const totals = zero();
+  const series = Array.from({ length: nB }, (_, i) => ({ t: from + i * bucket, ...zero() }));
+  const perRun = new Map<string, TokenTotals>();
+  const durations: number[] = [];
+  const errors: Record<string, number> = {};
+  let aborted = 0;
+  for (const c of calls) {
+    add(totals, c);
+    const b = series[at(c.t)];
+    if (b) add(b, c);
+    let r = perRun.get(c.run);
+    if (!r) perRun.set(c.run, (r = zero()));
+    add(r, c);
+    if (c.done && c.done > c.t) durations.push(c.done - c.t);
+    if (c.err === "MessageAbortedError") aborted++;
+    else if (c.err) errors[c.err] = (errors[c.err] ?? 0) + 1;
+  }
+  finish(totals);
+  series.forEach(finish);
+
+  // Speed over time and overall; a call counts for tok/s once it streamed at least 30 tokens.
+  const speedBuckets = Array.from({ length: nB }, () => ({ ttft: [] as number[], tps: [] as number[] }));
+  const tpsByRun = new Map<string, number[]>();
+  const allTps: number[] = [];
+  const allTtft: number[] = [];
+  for (const c of llm) {
+    const v = tpsOf(c);
+    const f = ttftOf(c);
+    const b = speedBuckets[at(c.created)];
+    if (v != null) {
+      allTps.push(v);
+      b?.tps.push(v);
+      (tpsByRun.get(c.run_id) ?? tpsByRun.set(c.run_id, []).get(c.run_id)!).push(v);
+    }
+    if (f != null) {
+      allTtft.push(f);
+      b?.ttft.push(f);
+    }
+  }
+  const speed = speedBuckets.map((b) => ({ ttft: pct(b.ttft, 50), tps: pct(b.tps, 50), tpsP90: pct(b.tps, 90) }));
+  // Spread of output speed: 12 equal bins from 0 to the 98th percentile.
+  const top = pct(allTps, 98) ?? 0;
+  const binW = top > 0 ? Math.max(1, Math.ceil(top / 12)) : 1;
+  const tpsSpread = Array.from({ length: 12 }, (_, i) => ({ from: i * binW, to: (i + 1) * binW, n: 0 }));
+  for (const v of allTps) tpsSpread[Math.min(11, Math.floor(v / binW))].n++;
+
+  const runs = listRuns();
+  const runById = new Map(runs.map((r) => [r.id, r]));
+  const byRun = [...perRun.entries()]
+    .map(([id, t]) => {
+      const r = runById.get(id);
+      return { id, label: r?.label ?? null, hue: r?.hue ?? null, status: r?.status ?? null, tpsP50: pct(tpsByRun.get(id) ?? [], 50), ...finish(t) };
+    })
+    .sort((a, b) => b.input + b.cacheRead + b.output - (a.input + a.cacheRead + a.output))
+    .slice(0, 20);
+
+  const life = db
+    .query<Omit<TokenTotals, "hitRate"> & { first: number | null }, [string, string]>(
+      `SELECT COUNT(*) AS calls, COALESCE(SUM(input), 0) AS input, COALESCE(SUM(output), 0) AS output, COALESCE(SUM(reasoning), 0) AS reasoning,
+         COALESCE(SUM(cache_read), 0) AS cacheRead, COALESCE(SUM(cache_write), 0) AS cacheWrite, COALESCE(SUM(cost), 0) AS cost,
+         COALESCE(SUM(error IS NOT NULL AND error != 'MessageAbortedError'), 0) AS errors, MIN(created) AS first
+       FROM model_calls WHERE provider = ? AND model = ?`,
+    )
+    .get(provider, model)!;
+  const { first, ...lifeTotals } = life;
+
+  const cat = cachedCatalog()?.get(provider)?.models.find((x) => x.id === model) ?? null;
+  const c = effective(key, getSettings(), cat);
+  const done = calls.length - aborted;
+  const sorted = [...durations].sort((a, b) => a - b);
+  const allTokensOf = (t: TokenTotals) => t.input + t.output + t.cacheRead + t.cacheWrite;
+  const lb = leaderboard().find((x) => x.model === key) ?? null;
+
+  return {
+    key,
+    provider,
+    model,
+    window: { days: win.days, from, to, bucketMs: bucket },
+    totals,
+    allTime: { ...finish({ ...lifeTotals, hitRate: null }), since: first },
+    savings: cacheSavings([{ provider, model, cacheRead: totals.cacheRead }]),
+    series,
+    speed,
+    tpsSpread,
+    speedSummary: {
+      tpsP50: pct(allTps, 50),
+      tpsP90: pct(allTps, 90),
+      ttftP50: pct(allTtft, 50),
+      ttftP90: pct(allTtft, 90),
+      durationP50: pct(sorted, 50),
+      durationP90: pct(sorted, 90),
+      measured: allTps.length,
+    },
+    perCall: {
+      prompt: done ? (totals.input + totals.cacheRead + totals.cacheWrite) / done : null,
+      output: done ? totals.output / done : null,
+      reasoning: done ? totals.reasoning / done : null,
+      cost: done ? totals.cost / done : null,
+    },
+    costPerMTokens: allTokensOf(totals) ? (totals.cost / allTokensOf(totals)) * 1e6 : null,
+    errors,
+    aborted,
+    providerEvents: counts<string>("SELECT kind AS k, COUNT(*) AS n FROM provider_events WHERE provider = ? AND model = ? AND ts >= ? GROUP BY kind", provider, model, from),
+    byRun,
+    catalog: { name: cat?.name ?? null, context: c.context, output: c.output, costIn: c.costIn, costOut: c.costOut, costCacheRead: c.costCacheRead, reasoning: c.reasoning },
+    runs: lb && { total: lb.runs, active: lb.active, finished: lb.finished, gaveUp: lb.gaveUp, finishRate: lb.finishRate, medianDuration: lb.medianDuration, real: lb.real, triaged: lb.triaged, realRate: lb.realRate, costPerReal: lb.costPerReal },
+  };
+}
+
+export type ModelStats = Awaited<ReturnType<typeof modelStats>>;

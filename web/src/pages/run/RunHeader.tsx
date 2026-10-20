@@ -128,7 +128,7 @@ export function RunHeader({ detail, fleet, h, railHidden, onShowRail, onClose }:
         <div className={cn("mt-2 flex items-center gap-3 rounded-[10px] px-3 py-2 font-mono text-[12.5px] leading-normal text-ink", r.status === "failed" ? "bg-[var(--bad-tint)]" : "bg-[var(--warn-tint)]")}>
           <span className="min-w-0 flex-1">{r.status_detail}</span>
           {diskFull(r) && (
-            <Button size="xs" onClick={() => void act.boostDisk(r.id)}>
+            <Button size="xs" className="font-sans" onClick={() => void act.boostDisk(r.id)}>
               <IconDatabasePlus {...IC_SM} />
               Give more disk
             </Button>

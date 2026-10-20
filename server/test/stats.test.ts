@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { db } from "../src/db.ts";
-import { stats } from "../src/stats.ts";
+import { modelStats, stats } from "../src/stats.ts";
 
 const now = Date.now();
 const H = 3_600_000;
@@ -67,4 +67,33 @@ test("stats: buckets start on the viewer's clock", async () => {
   expect((s.window.to + 330 * 60_000) % H).toBe(0);
   const d = await stats(30, 330);
   expect((d.window.to + 330 * 60_000) % (24 * H)).toBe(0);
+});
+
+test("one model: totals, speed from llm_calls, per-call averages, errors, runs; byModel gets speed", async () => {
+  const llm = db.query(
+    "INSERT INTO llm_calls (id, run_id, session_id, provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning) VALUES (?, 'st-1', 'st-root', 'stp', 'm1', ?, ?, ?, 0, ?, 0)",
+  );
+  // 100 tok/s after 500 ms, 200 tok/s after 1500 ms; a 10-token answer says nothing about speed.
+  llm.run("st-l1", now - 4 * H, now - 4 * H + 500, now - 4 * H + 1500, 100);
+  llm.run("st-l2", now - 4 * H, now - 4 * H + 1500, now - 4 * H + 2500, 200);
+  llm.run("st-l3", now - 4 * H, now - 4 * H + 100, now - 4 * H + 200, 10);
+
+  const m = await modelStats("stp/m1", 7);
+  expect(m.totals.calls).toBe(4);
+  expect(m.allTime.calls).toBe(5);
+  expect(m.speedSummary.measured).toBe(2);
+  expect(m.speedSummary.tpsP50).toBe(200);
+  expect(m.speedSummary.ttftP50).toBe(500);
+  expect(m.errors).toEqual({ APIError: 1 });
+  expect(m.aborted).toBe(1);
+  // Per call, over the three that weren't aborted.
+  expect(m.perCall.output).toBeCloseTo(200 / 3);
+  expect(m.byRun[0]).toMatchObject({ id: "st-1", calls: 4, tpsP50: 200 });
+  expect(m.series.reduce((n, b) => n + b.calls, 0)).toBe(4);
+  expect(m.tpsSpread.reduce((n, b) => n + b.n, 0)).toBe(2);
+  expect(m.speed.some((b) => b.tps === 200)).toBe(true);
+
+  const s = await stats(7);
+  expect(s.byModel.find((x) => x.provider === "stp")).toMatchObject({ tpsP50: 200, ttftP50: 500, runs: 1 });
+  await expect(modelStats("nomodel", 7)).rejects.toThrow("provider/model");
 });
