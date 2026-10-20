@@ -40,7 +40,7 @@ export const TONE_BG: Record<string, string> = {
 };
 export function buildView(run: Run, fleet: FleetRun | undefined, h: Health, all: Finding[], seen: number): RunView {
   const mine = all.filter((f) => f.run_id === run.id && !f.removed_at);
-  const findings = mine.filter((f) => (f.state === "confirmed" || f.state === "suspected") && f.verdict !== "not_bug" && f.verdict !== "duplicate").sort(byPriority);
+  const findings = mine.filter((f) => (f.state === "confirmed" || f.state === "suspected") && (!f.disposition || f.disposition === "report")).sort(byPriority);
   const lead = mine.filter((f) => f.state === "lead").sort((a, b) => b.updated - a.updated)[0];
   return { run, fleet, h, findings, lead, unseen: mine.some((f) => f.updated > seen) };
 }
@@ -166,7 +166,7 @@ function FindingLine({ v }: { v: RunView }) {
   if (f)
     return (
       <div className="flex min-w-0 items-baseline gap-2.5 px-[18px] pt-2.5 text-[13.5px] leading-[1.45]" title={[f.id, f.severity, STATE_WORD[f.state]].filter(Boolean).join(", ")}>
-        <Sev sev={sevOf(f)} done={!!f.verdict} className="translate-y-[-1px]" />
+        <Sev sev={sevOf(f)} done={!!f.disposition} className="translate-y-[-1px]" />
         <span className="line-clamp-2 min-w-0 flex-1">{f.title}</span>
         {v.findings.length > 1 && <span className="shrink-0 font-mono text-xs text-ink-3">+{v.findings.length - 1}</span>}
       </div>
@@ -326,7 +326,7 @@ export function FinishedRow({ v, selected, onSelect }: { v: RunView; selected: b
       <span className="truncate font-medium">{runName(r)}</span>
       <span className="inline-flex items-center gap-1" title={`${v.findings.length} finding${v.findings.length === 1 ? "" : "s"}`}>
         {v.findings.map((f) => (
-          <Sev key={f.id} sev={sevOf(f)} done={!!f.verdict} />
+          <Sev key={f.id} sev={sevOf(f)} done={!!f.disposition} />
         ))}
       </span>
       <span className="min-w-0 truncate text-[12.5px] text-ink-3 max-lg:hidden">{r.findings?.outcome ?? (r.status === "triaged" ? r.triage_verdict : "")}</span>
@@ -386,7 +386,7 @@ export function ListRow({ v, picked, onPick, selected, onSelect }: { v: RunView;
       <span className="h-6 max-lg:hidden">{live && v.fleet ? <Wave values={v.fleet.tps.slice(-90)} hue={r.hue} /> : null}</span>
       <span className="inline-flex items-center gap-1 max-lg:hidden">
         {v.findings.map((f) => (
-          <Sev key={f.id} sev={sevOf(f)} done={!!f.verdict} />
+          <Sev key={f.id} sev={sevOf(f)} done={!!f.disposition} />
         ))}
       </span>
       <span className="truncate font-mono text-xs text-ink-2 max-lg:hidden">{r.model.split("/").slice(1).join("/").replace(/^claude-/, "")}</span>

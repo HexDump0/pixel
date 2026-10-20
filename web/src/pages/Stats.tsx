@@ -888,7 +888,7 @@ function RunsCard({ s }: { s: Stats }) {
           <div className="mb-2 flex items-baseline gap-2 text-[12.5px] text-ink-3">
             Findings <span className="font-mono text-ink">{s.findings.total}</span>
             <span className="ml-auto font-mono text-[11px]">
-              {s.findings.byState.confirmed ?? 0} confirmed <Sep /> {r.verdicts.real ?? 0} real
+              {s.findings.byState.confirmed ?? 0} confirmed <Sep /> {r.dispositions.report ?? 0} to report
             </span>
           </div>
           <div className="flex h-2.5 gap-[3px] overflow-hidden rounded-full">

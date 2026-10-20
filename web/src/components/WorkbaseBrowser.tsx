@@ -60,7 +60,7 @@ function Row({ e, depth, t }: { e: FileEntry; depth: number; t: TreeProps }) {
         className="grid h-7 w-full cursor-pointer grid-cols-[12px_15px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md pr-2 text-left text-[13px] text-ink-2 hover:bg-s2 hover:text-ink aria-[current=true]:bg-s3 aria-[current=true]:text-ink"
       >
         {e.dir ? expanded ? <IconChevronDown {...IC_XS} className="text-ink-4" /> : <IconChevronRight {...IC_XS} className="text-ink-4" /> : <span />}
-        {f ? <Sev sev={sevOf(f)} done={!!f.verdict} className="justify-self-center" /> : <Icon {...IC_SM} className="text-ink-4" />}
+        {f ? <Sev sev={sevOf(f)} done={!!f.disposition && f.disposition !== "report"} className="justify-self-center" /> : <Icon {...IC_SM} className="text-ink-4" />}
         <span className="truncate">{f ? <><span className="font-mono text-[12px] text-ink-3">{f.id}</span> {f.title}</> : e.name}</span>
         <span className="font-mono text-[11px] text-ink-4 tabular-nums">{e.dir ? "" : bytes(e.size)}</span>
       </button>

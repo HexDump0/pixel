@@ -16,7 +16,7 @@ process.env.PIXEL_RUNTIME ??= "local";
 const { db, addTimeline } = await import("../src/db.ts");
 const { config } = await import("../src/config.ts");
 const { workbasePath, ensureWorkbase } = await import("../src/knowledge.ts");
-const { syncFindings, setVerdict } = await import("../src/findings.ts");
+const { syncFindings, triageFinding, setDisclosure } = await import("../src/findings.ts");
 const { seedTemplates, render } = await import("../src/templates.ts");
 
 seedTemplates();
@@ -360,8 +360,10 @@ run({
   report: "# sqlite fts5\n\nOne integer overflow that needs a 2 GB document.\n",
   findings: [finding("F1", "Integer overflow in fts5HashAddPoslistSize", "confirmed", "info", now - 23 * H, { location: "fts5_hash.c:212" })],
 });
-await setVerdict("sqlite-fts5-2026-10-12", "F1", "not_bug", "Needs a single 2 GB document; not reachable with the default SQLITE_MAX_LENGTH.");
-await setVerdict("yaml-cpp-2026-10-12", "F2", "real", null);
+triageFinding("sqlite-fts5-2026-10-12", "F1", { disposition: "invalid", note: "Needs a single 2 GB document; not reachable with the default SQLITE_MAX_LENGTH." });
+triageFinding("yaml-cpp-2026-10-12", "F1", { disposition: "report", note: "Reachable from YAML::Load on any untrusted document." });
+setDisclosure("yaml-cpp-2026-10-12", "F1", { disclosure: "reported", report_url: "https://github.com/jbeder/yaml-cpp/security/advisories/GHSA-demo-0001", reported_at: now - 9 * H });
+triageFinding("yaml-cpp-2026-10-12", "F2", { disposition: "weak", severity: "info", note: "Stack exhaustion on 40 000 nested brackets; denial of service only." });
 
 
 // ---- Models page: providers with keys, offered models, an hour of model calls, a speed test ----

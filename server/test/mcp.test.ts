@@ -85,8 +85,8 @@ describe("mcp", () => {
     expect(brief.text).toContain("Freed twice on the error path");
     expect(brief.text).toContain("http://pixel.test/api/share/");
 
-    const set = JSON.parse((await tool("set_finding_verdict", { run: RUN, finding: "F1", verdict: "real", note: "checked" })).text);
-    expect(set.verdict).toBe("real");
+    const set = JSON.parse((await tool("triage_finding", { run: RUN, finding: "F1", disposition: "report", note: "checked" })).text);
+    expect(set).toMatchObject({ disposition: "report", disclosure: "ready", dispositionNote: "checked" });
 
     expect((await tool("list_files", { run: RUN })).text).toContain("NOTES.md");
     expect((await tool("read_file", { run: RUN, path: "NOTES.md" })).text).toBe("hello from the agent\n");
@@ -125,7 +125,9 @@ describe("mcp", () => {
     expect(names).toContain("list_findings");
     expect(names).not.toContain("send_message");
     expect(names).not.toContain("pixel_api");
-    const refused = await tool("set_finding_verdict", { run: RUN, finding: "F1", verdict: null }, read);
+    expect(names).toContain("search_findings");
+    expect(names).not.toContain("triage_findings");
+    const refused = await tool("triage_finding", { run: RUN, finding: "F1", disposition: null }, read);
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain("read only");
     expect(JSON.parse((await tool("get_run", { run: RUN }, read)).text).attach).toBeUndefined();
@@ -169,13 +171,13 @@ describe("mcp: big lists, filters and edge cases", () => {
     return JSON.parse(t.text);
   };
 
-  test("list_findings pages and stays parseable; brief fits more; verdict is always there", async () => {
+  test("list_findings pages and stays parseable; brief fits more; disposition is always there", async () => {
     const first = parse(await tool("list_findings", { run: BIG, limit: 150 }));
     expect(first.total).toBe(150);
     expect(first.returned).toBeLessThan(150);
     expect(first.next).toBe(first.returned);
     expect(first.note).toContain("offset");
-    expect(first.findings[0]).toHaveProperty("verdict", null);
+    expect(first.findings[0]).toHaveProperty("disposition", null);
     expect(first.findings[0].created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     const second = parse(await tool("list_findings", { run: BIG, limit: 10, offset: first.next }));
     expect(second.offset).toBe(first.next);
@@ -226,14 +228,38 @@ describe("mcp: big lists, filters and edge cases", () => {
   });
 });
 
-test("mcp: a verdict records who gave it; triaged and verdict filters", async () => {
+test("mcp: triage records who gave it; filters, search, many at once; no disclosure over MCP", async () => {
   const BIG = "mcp-big";
-  const set = await tool("set_finding_verdict", { run: BIG, finding: "F1", verdict: "real" });
-  expect(JSON.parse(set.text)).toMatchObject({ verdict: "real", verdictBy: "MCP: laptop claude" });
-  await apiCall("POST", `/runs/${BIG}/findings/F2/verdict`, { verdict: "not_bug" });
+  const set = await tool("triage_finding", { run: BIG, finding: "F1", disposition: "report", severity: "critical" });
+  expect(JSON.parse(set.text)).toMatchObject({ disposition: "report", severityFinal: "critical", dispositionBy: "MCP: laptop claude" });
+  await apiCall("POST", `/runs/${BIG}/findings/F2/triage`, { disposition: "invalid" });
   const triaged = JSON.parse((await tool("list_findings", { run: BIG, triaged: true, brief: true })).text);
-  expect(Object.fromEntries(triaged.findings.map((f: any) => [f.id, f.verdictBy]))).toEqual({ F1: "MCP: laptop claude", F2: "dashboard" });
-  expect(JSON.parse((await tool("list_findings", { run: BIG, verdict: "REAL", brief: true })).text).total).toBe(1);
+  expect(Object.fromEntries(triaged.findings.map((f: any) => [f.id, f.dispositionBy]))).toEqual({ F1: "MCP: laptop claude", F2: "dashboard" });
+  expect(JSON.parse((await tool("list_findings", { run: BIG, disposition: "REPORT", brief: true })).text).total).toBe(1);
+  expect(JSON.parse((await tool("list_findings", { run: BIG, final_severity: "critical", brief: true })).text).total).toBe(1);
+  expect(JSON.parse((await tool("list_findings", { run: BIG, view: "report", brief: true })).text).findings.map((f: any) => f.id)).toEqual(["F1"]);
+  expect((await tool("list_findings", { run: BIG, disposition: "real" })).isError).toBe(true);
   const events = JSON.parse((await tool("finding_history", { run: BIG, finding: "F1" })).text).events;
   expect(events[0].changes.by[1]).toBe("MCP: laptop claude");
+
+  const many = JSON.parse(
+    (
+      await tool("triage_findings", {
+        items: [
+          { run: BIG, finding: "F3", disposition: "duplicate", duplicate_of: "F1" },
+          { run: BIG, finding: "F4", disposition: "duplicate" },
+        ],
+      })
+    ).text,
+  );
+  expect(many).toMatchObject({ ok: 1, failed: 1 });
+  expect(many.errors[0]).toMatchObject({ finding: "F4" });
+  expect(JSON.parse((await tool("list_findings", { duplicate_of: `${BIG}/F1`, brief: true })).text).findings.map((f: any) => f.id)).toEqual(["F3"]);
+
+  const found = JSON.parse((await tool("search_findings", { query: "bug", run: BIG, disposition: "report,duplicate" })).text);
+  expect(found.findings.map((f: any) => f.id).sort()).toEqual(["F1", "F3"]);
+
+  const disclosed = await tool("pixel_api", { method: "POST", path: `/runs/${BIG}/findings/F1/disclosure`, body: { disclosure: "reported" } });
+  expect(disclosed.isError).toBe(true);
+  expect(disclosed.text).toContain("dashboard");
 });

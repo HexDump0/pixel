@@ -37,38 +37,42 @@ export function hasReport(runId: string) {
 }
 
 const SEV_ORDER = ["critical", "high", "medium", "low", "info"];
-export interface VerdictCounts {
-  real: number;
-  not_bug: number;
+export interface DispositionCounts {
+  report: number;
+  known: number;
   duplicate: number;
-  realBySeverity: Record<string, number>;
+  weak: number;
+  invalid: number;
+  /** Findings to report, by final severity. */
+  reportBySeverity: Record<string, number>;
 }
 
-/** The human's finding verdicts per run (removed findings left out): what a run's result is made of. */
-export function verdictCounts(runId?: string) {
+/** The triage per run (removed findings left out): what a run's result is made of. */
+export function dispositionCounts(runId?: string) {
   const rows = db
-    .query<{ run_id: string; verdict: string; severity: string | null; n: number }, any[]>(
-      `SELECT run_id, verdict, severity, COUNT(*) AS n FROM findings WHERE verdict IS NOT NULL AND removed_at IS NULL ${runId ? "AND run_id = ?" : ""} GROUP BY run_id, verdict, severity`,
+    .query<{ run_id: string; disposition: string; severity: string | null; n: number }, any[]>(
+      `SELECT run_id, disposition, COALESCE(severity_final, severity) AS severity, COUNT(*) AS n FROM findings WHERE disposition IS NOT NULL AND removed_at IS NULL ${runId ? "AND run_id = ?" : ""} GROUP BY run_id, disposition, 3`,
     )
     .all(...(runId ? [runId] : []));
-  const out: Record<string, VerdictCounts> = {};
+  const out: Record<string, DispositionCounts> = {};
   for (const r of rows) {
-    const c = (out[r.run_id] ??= { real: 0, not_bug: 0, duplicate: 0, realBySeverity: {} });
-    if (r.verdict === "real") {
-      c.real += r.n;
-      const sev = r.severity ?? "info";
-      c.realBySeverity[sev] = (c.realBySeverity[sev] ?? 0) + r.n;
-    } else if (r.verdict === "not_bug" || r.verdict === "duplicate") c[r.verdict] += r.n;
+    const c = (out[r.run_id] ??= { report: 0, known: 0, duplicate: 0, weak: 0, invalid: 0, reportBySeverity: {} });
+    if (!(r.disposition in c)) continue;
+    c[r.disposition as "report"] += r.n;
+    if (r.disposition === "report") {
+      const sev = !r.severity || r.severity === "none" ? "info" : r.severity;
+      c.reportBySeverity[sev] = (c.reportBySeverity[sev] ?? 0) + r.n;
+    }
   }
   return out;
 }
 
-/** A run's result in a few words, from its finding verdicts: "2 real (1 high, 1 low)", "nothing real", or null before any verdict. */
-export function outcomeText(c: VerdictCounts | undefined) {
-  if (!c || c.real + c.not_bug + c.duplicate === 0) return null;
-  if (!c.real) return "nothing real";
-  const sev = SEV_ORDER.filter((s) => c.realBySeverity[s]).map((s) => `${c.realBySeverity[s]} ${s}`);
-  return `${c.real} real (${sev.join(", ")})`;
+/** A run's result in a few words, from its triage: "2 to report (1 high, 1 low)", "nothing to report", or null before any. */
+export function outcomeText(c: DispositionCounts | undefined) {
+  if (!c || c.report + c.known + c.duplicate + c.weak + c.invalid === 0) return null;
+  if (!c.report) return "nothing to report";
+  const sev = SEV_ORDER.filter((s) => c.reportBySeverity[s]).map((s) => `${c.reportBySeverity[s]} ${s}`);
+  return `${c.report} to report (${sev.join(", ")})`;
 }
 
 /** .pixel/run.json: facts about the run, for the user and for other agents browsing workbases. */
@@ -87,33 +91,99 @@ export function writeRunJson(run: RunRow) {
     started: run.started_at ? new Date(run.started_at).toISOString() : null,
     finished: run.finished_at ? new Date(run.finished_at).toISOString() : null,
     report: hasReport(run.id),
-    triage: outcomeText(verdictCounts(run.id)[run.id]),
+    triage: outcomeText(dispositionCounts(run.id)[run.id]),
     follow_up_of: run.parent_run,
   };
   writeAtomic(join(dir, "run.json"), JSON.stringify(info, null, 2) + "\n");
 }
 
-/** TRIAGE.md: the user's triage notes and verdicts on findings, so other agents know which findings held up. */
+const DISPOSITION_TEXT: Record<string, string> = {
+  report: "report: a real, novel bug to disclose",
+  known: "known: already public",
+  duplicate: "duplicate: same root cause as another finding",
+  weak: "weak: real, but the preconditions or impact don't justify a disclosure",
+  invalid: "invalid: not a bug",
+};
+const DISCLOSURE_TEXT: Record<string, string> = { reported: "reported upstream", fixed: "fixed upstream", dropped: "disclosure dropped" };
+
+type TriagedRow = {
+  run_id: string;
+  id: string;
+  title: string;
+  location: string | null;
+  severity: string | null;
+  severity_final: string | null;
+  disposition: string;
+  disposition_note: string | null;
+  duplicate_of: string | null;
+  disclosure: string | null;
+  path: string | null;
+  repo: string | null;
+};
+const TRIAGED_SQL = `SELECT f.run_id, f.id, f.title, f.location, f.severity, f.severity_final, f.disposition, f.disposition_note, f.duplicate_of, f.disclosure, f.path, r.repo
+  FROM findings f LEFT JOIN runs r ON r.id = f.run_id WHERE f.disposition IS NOT NULL AND f.removed_at IS NULL`;
+
+/** "report, medium (agent: high), fixed upstream" */
+function triageLine(v: TriagedRow) {
+  const sev = v.severity_final && v.severity_final !== v.severity ? `${v.severity_final === "none" ? "no impact" : v.severity_final} (agent: ${v.severity ?? "none"})` : v.severity;
+  return [v.disposition === "duplicate" && v.duplicate_of ? `duplicate of ${v.duplicate_of}` : v.disposition, sev, v.disposition === "report" && v.disclosure && DISCLOSURE_TEXT[v.disclosure]].filter(Boolean).join(", ");
+}
+const oneLine = (s: string | null, max = 300) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+/** TRIAGE.md: the user's triage notes and the triage of each finding, so other agents know which findings held up. */
 export function writeTriage(run: RunRow) {
-  const verdicts = db
-    .query<{ id: string; title: string; verdict: string; verdict_note: string | null }, [string]>(
-      "SELECT id, title, verdict, verdict_note FROM findings WHERE run_id = ? AND verdict IS NOT NULL ORDER BY CAST(SUBSTR(id, 2) AS INTEGER)",
-    )
-    .all(run.id);
-  if (!run.triage_notes && !run.triage_verdict && !verdicts.length) return;
-  const outcome = outcomeText(verdictCounts(run.id)[run.id]);
-  const word: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
+  const rows = db.query<TriagedRow, [string]>(`${TRIAGED_SQL} AND f.run_id = ? ORDER BY CAST(SUBSTR(f.id, 2) AS INTEGER)`).all(run.id);
+  const path = join(workbasePath(run.id), "TRIAGE.md");
+  if (!run.triage_notes && !run.triage_verdict && !rows.length) {
+    // Nothing left to say (the last triage was cleared): an old file would say otherwise.
+    if (existsSync(path)) writeAtomic(path, `# Triage of ${run.id}\n\nNothing triaged.\n`);
+    return;
+  }
+  const outcome = outcomeText(dispositionCounts(run.id)[run.id]);
   const lines = [`# Triage of ${run.id}`, "", "Written by the human who reviewed this run's findings and REPORT.md.", ""];
   if (outcome) lines.push(`Result: ${outcome}.`, "");
   // Runs triaged before findings had verdicts carry a typed overall verdict.
   if (run.triage_verdict) lines.push(`Earlier overall verdict: ${run.triage_verdict}`, "");
   if (run.triage_notes) lines.push(run.triage_notes, "");
-  if (verdicts.length) {
-    lines.push("## Findings", "");
-    for (const v of verdicts) lines.push(`- ${v.id} ${v.title}: **${word[v.verdict] ?? v.verdict}**${v.verdict_note ? `. ${v.verdict_note}` : ""}`);
+  if (rows.length) {
+    lines.push("## Findings", "", ...Object.values(DISPOSITION_TEXT).map((t) => `- ${t}`), "");
+    for (const v of rows) lines.push(`- ${v.id} ${v.title}: **${triageLine(v)}**${v.disposition_note ? `. ${oneLine(v.disposition_note, 2000)}` : ""}`);
     lines.push("");
   }
-  writeAtomic(join(workbasePath(run.id), "TRIAGE.md"), lines.join("\n"));
+  writeAtomic(path, lines.join("\n"));
+}
+
+/**
+ * TRIAGED.md at the top of /workbases: every triaged finding across runs, grouped by repository, so an agent can
+ * check whether a bug it found was already reported, known, or judged weak or invalid before writing it up.
+ */
+export function writeTriaged() {
+  if (!existsSync(config.workbasesDir)) return;
+  const rows = db.query<TriagedRow, []>(`${TRIAGED_SQL} ORDER BY r.repo, f.run_id, CAST(SUBSTR(f.id, 2) AS INTEGER)`).all();
+  const byRepo = new Map<string, TriagedRow[]>();
+  for (const r of rows) byRepo.set(r.repo ?? "unknown", [...(byRepo.get(r.repo ?? "unknown") ?? []), r]);
+  const cell = (s: string | null) => oneLine(s, 400).replace(/\|/g, "\\|");
+  const lines = [
+    "# Triaged findings",
+    "",
+    "Written by Pixel: every finding a human has triaged, across all runs, by repository. Before writing up a bug as new, look for its project here and compare the sink and the preconditions. The finding column links to its README (relative to this folder).",
+    "",
+    ...Object.values(DISPOSITION_TEXT).map((t) => `- ${t}`),
+    "",
+    "The severity is the triage's, with the agent's in brackets when they differ. It was judged for that bug's own preconditions; a neighbouring bug usually has different ones.",
+    "",
+  ];
+  if (!rows.length) lines.push("Nothing triaged yet.", "");
+  for (const [repo, list] of byRepo) {
+    lines.push(`## ${repo}`, "", "| Finding | Triage | Location | Title | Note |", "|---|---|---|---|---|");
+    for (const v of list) {
+      const ref = `${v.run_id}/${v.id}`;
+      const link = v.path ? `[${ref}](${`${v.run_id}/${v.path}`.replace(/ /g, "%20")})` : ref;
+      lines.push(`| ${link} | ${cell(triageLine(v))} | ${cell(v.location)} | ${cell(v.title)} | ${cell(v.disposition_note)} |`);
+    }
+    lines.push("");
+  }
+  writeAtomic(join(config.workbasesDir, "TRIAGED.md"), lines.join("\n"));
 }
 
 const STATUS_WORD: Record<string, string> = {
@@ -130,7 +200,7 @@ const STATUS_WORD: Record<string, string> = {
 /** INDEX.md at the top of /workbases: one line per run. */
 export function writeIndex() {
   const runs = listRuns().filter((r) => existsSync(workbasePath(r.id)));
-  const verdicts = verdictCounts();
+  const verdicts = dispositionCounts();
   const rows = runs.map((r) => {
     const cells = [
       r.id,
@@ -147,7 +217,7 @@ export function writeIndex() {
   const body = [
     "# Workbases",
     "",
-    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report), `findings/` (one folder per finding: README.md with the details, PoCs next to it), `FINDINGS.md` (an index of those, by state) and sometimes `TRIAGE.md` (a human's verdicts on the findings and the report).",
+    "One folder per audit run. Each has `.pixel/run.json` (facts about the run), usually `REPORT.md` (the agent's final report), `findings/` (one folder per finding: README.md with the details, PoCs next to it), `FINDINGS.md` (an index of those, by state) and sometimes `TRIAGE.md` (a human's triage of the findings and the report). `TRIAGED.md` next to this file lists every triaged finding across runs, by repository.",
     "",
     "| Run | Repository | Language | Status | Started | Model | Report | Triage |",
     "|---|---|---|---|---|---|---|---|",
@@ -155,6 +225,7 @@ export function writeIndex() {
     "",
   ].join("\n");
   writeAtomic(join(config.workbasesDir, "INDEX.md"), body);
+  writeTriaged();
 }
 
 export function refreshRunFiles(runId: string) {

@@ -7,8 +7,23 @@ import { boostDisk, clientFor, controls, createRun, endBoost, resizeRun, exportT
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
-import { enumFilter, findingCounts, findingEvents, listFindings, setVerdict, SEVERITY_FILTERS, STATES, VERDICTS, type Verdict } from "../findings.ts";
-import { llmBrief, originOf } from "../findingShare.ts";
+import {
+  DISCLOSURE_FILTERS,
+  DISPOSITION_FILTERS,
+  enumFilter,
+  findingCounts,
+  findingEvents,
+  listFindings,
+  setDisclosure,
+  SEVERITY_FILTERS,
+  STATES,
+  triageFinding,
+  triageFindings,
+  VIEWS,
+  type DisclosureInput,
+  type TriageInput,
+} from "../findings.ts";
+import { LLM_PURPOSES, llmBrief, llmList, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, chooseProxy, nextKey, setFailover } from "../runs/keys.ts";
@@ -24,13 +39,28 @@ function page<T>(list: T[], query: URLSearchParams): T[] {
 }
 
 /** Filters shared by /findings and /runs/:id/findings. */
-const findingQuery = (query: URLSearchParams) => ({
-  severity: enumFilter("severity", query.get("severity"), SEVERITY_FILTERS),
-  state: enumFilter("state", query.get("state"), STATES),
-  untriaged: query.get("untriaged") === "1",
-  triaged: query.get("triaged") === "1",
-  verdict: enumFilter("verdict", query.get("verdict"), VERDICTS),
-});
+const findingQuery = (query: URLSearchParams) => {
+  if (query.has("verdict")) throw new HttpError(400, "verdict was replaced by disposition (report, known, duplicate, weak, invalid, none)");
+  return {
+    severity: enumFilter("severity", query.get("severity"), SEVERITY_FILTERS),
+    finalSeverity: enumFilter("final_severity", query.get("final_severity"), SEVERITY_FILTERS),
+    state: enumFilter("state", query.get("state"), STATES),
+    untriaged: query.get("untriaged") === "1",
+    triaged: query.get("triaged") === "1",
+    disposition: enumFilter("disposition", query.get("disposition"), DISPOSITION_FILTERS),
+    disclosure: enumFilter("disclosure", query.get("disclosure"), DISCLOSURE_FILTERS),
+    duplicateOf: query.get("duplicate_of") || undefined,
+    repo: query.get("repo") || undefined,
+    view: enumFilter("view", query.get("view"), VIEWS),
+    q: query.get("q") || undefined,
+  };
+};
+
+/** Who is triaging: the MCP endpoint calls the API itself and says which token it was (mcp.ts). */
+const triager = (req: Request) => {
+  const mcp = req.headers.get("x-pixel-mcp-token");
+  return mcp ? `MCP: ${decodeURIComponent(mcp)}` : "dashboard";
+};
 
 function mustRun(id: string) {
   const r = getRun(id);
@@ -161,17 +191,39 @@ get("/runs/:id/findings/events", ({ params: { id }, query }) => {
   mustRun(id);
   return findingEvents({ run: id, finding: query.get("finding") ?? undefined, since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 1000) });
 });
-post("/runs/:id/findings/:fid/verdict", async ({ req, params: { id, fid } }) => {
+/** Triage: disposition, final severity, duplicate_of and note; fields left out stay as they are. */
+post("/runs/:id/findings/:fid/triage", async ({ req, params: { id, fid } }) => {
   mustRun(id);
-  const b = await readJson<{ verdict?: Verdict | null; note?: string | null }>(req);
-  // The MCP endpoint calls this route itself and says which token it was (mcp.ts).
-  const mcp = req.headers.get("x-pixel-mcp-token");
-  return setVerdict(id, fid, b.verdict ?? null, b.note ?? null, mcp ? `MCP: ${decodeURIComponent(mcp)}` : "dashboard");
+  return triageFinding(id, fid, await readJson<TriageInput>(req), triager(req));
 });
-/** The finding as one markdown text for another model, with a signed link to its files. */
-get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid } }) => {
+/** Many at once (imports, a triage agent's batch): each item reports ok or its error; files are written once. */
+post("/findings/triage", async ({ req }) => {
+  const b = await readJson<{ items?: (TriageInput & { run: string; finding: string })[] }>(req);
+  if (!Array.isArray(b.items) || !b.items.length) throw new HttpError(400, "items: a list of {run, finding, disposition, severity, duplicate_of, note}");
+  if (b.items.length > 500) throw new HttpError(400, "at most 500 items at once");
+  if (b.items.some((it) => typeof it?.run !== "string" || typeof it?.finding !== "string")) throw new HttpError(400, "each item needs run and finding");
+  const results = triageFindings(b.items, triager(req));
+  return { ok: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results: results.map((r) => (r.ok ? { run: r.run, finding: r.finding, ok: true, finding_row: r.finding_row } : r)) };
+});
+/** Disclosure (ready, reported, fixed, dropped): set by hand in the dashboard only, so no agent marks something as sent. */
+post("/runs/:id/findings/:fid/disclosure", async ({ req, params: { id, fid } }) => {
   mustRun(id);
-  return llmBrief(id, fid, originOf(req));
+  if (req.headers.get("x-pixel-mcp-token")) throw new HttpError(403, "disclosure is set by a person in the dashboard, not over MCP");
+  return setDisclosure(id, fid, await readJson<DisclosureInput>(req));
+});
+/** The finding as one markdown text for another model, with a signed link to its files. purpose: verify, disclose or variants. */
+get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid }, query }) => {
+  mustRun(id);
+  const purpose = enumFilter("purpose", query.get("purpose"), LLM_PURPOSES) as (typeof LLM_PURPOSES)[number] | undefined;
+  return llmBrief(id, fid, originOf(req), purpose);
+});
+/** Several findings as one markdown text (a list on the Findings page): ids as run/id, purpose: list, triage, verify, disclose or variants. */
+post("/findings/llm", async ({ req }) => {
+  const b = await readJson<{ ids?: string[]; purpose?: string; title?: string }>(req);
+  if (!Array.isArray(b.ids) || !b.ids.length) throw new HttpError(400, "ids: a list of run/finding ids");
+  if (b.ids.length > 500) throw new HttpError(400, "at most 500 findings at once");
+  const purpose = enumFilter("purpose", b.purpose, ["list", ...LLM_PURPOSES, "triage"]) ?? "list";
+  return llmList(b.ids, purpose as any, b.title);
 });
 get("/findings", ({ query }) => page(listFindings({ run: query.get("run") ?? undefined, ...findingQuery(query) }), query));
 get("/findings/events", ({ query }) => findingEvents({ since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 200) }));

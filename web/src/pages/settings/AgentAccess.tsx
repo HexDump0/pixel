@@ -21,7 +21,7 @@ const ACCESS: [McpToken["access"], ReactNode][] = [
 ];
 const ACCESS_HINT: Record<McpToken["access"], string> = {
   read: "Runs, findings, transcripts, workbase files, reports and token usage. Can't change anything.",
-  full: "Also start, message and control runs, answer questions, set verdicts, and call any Pixel API route.",
+  full: "Also start, message and control runs, answer questions, triage findings, and call any Pixel API route.",
 };
 const EXPIRY: [string, string][] = [
   ["0", "Never expires"],

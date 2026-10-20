@@ -27,9 +27,13 @@ States:
 
 Pixel owns `FINDINGS.md` (index) and `TRIAGE.md` (verdicts) at the workbase root and never writes inside `findings/`.
 
-## Verdicts
+## Triage (2026-10-20, replaced the verdicts)
 
-The human's, per finding: **R** real, **N** not a bug, **D** duplicate, with a note. Written to TRIAGE.md and FINDINGS.md for later agents; they never message the run. The run's result ("2 real (1 high, 1 low)") comes from them.
+The human's (or an MCP client's), per finding, in two parts:
+- **Disposition**, once: **R** report (real, novel, disclose it), **K** known (already public), **D** duplicate (of another finding, named), **W** weak (real, not worth disclosing), **I** invalid (not a bug); a final severity when it differs from the agent's; a note.
+- **Disclosure**, only for report, set by hand in the dashboard: not sent, sent (with the advisory link), fixed (version or commit), or dropped with a reason.
+
+Written to TRIAGE.md, FINDINGS.md and TRIAGED.md (all runs) for later agents; they never message the run. The run's result ("2 to report (1 high, 1 low)") comes from them. The Findings page has four lists over them: To triage, Report, Resolved, Reviewed (plus Set aside for leads and ruled out).
 
 ## UI (see spec.md)
 

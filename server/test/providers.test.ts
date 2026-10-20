@@ -102,7 +102,7 @@ describe("health", () => {
 });
 
 describe("leaderboard", () => {
-  test("finish rate, finding verdicts, cost per real finding", () => {
+  test("finish rate, finding triage, cost per real finding and per one to report", () => {
     const h = 3_600_000;
     const t = Date.now() - 10 * h;
     addRun("lb-1", "lb/a", { status: "triaged", report_ready: 1, started_at: t, finished_at: t + 2 * h, cost: 3, tokens_in: 1000, tokens_out: 500, continues: 1 });
@@ -110,23 +110,25 @@ describe("leaderboard", () => {
     addRun("lb-3", "lb/a", { status: "stopped", started_at: t, cost: 1, oom_restarts: 2 });
     addRun("lb-4", "lb/a", { status: "running", started_at: t, cost: 1 });
     addRun("lb-5", "lb/b", { status: "failed" });
-    const verdict = db.query("INSERT INTO findings (run_id, id, state, severity, title, created, updated, verdict, removed_at) VALUES (?, ?, 'confirmed', ?, 't', 1, 1, ?, ?)");
-    verdict.run("lb-1", "F1", "high", "real", null);
-    verdict.run("lb-1", "F2", "low", "not_bug", null);
+    const verdict = db.query("INSERT INTO findings (run_id, id, state, severity, title, created, updated, disposition, removed_at) VALUES (?, ?, 'confirmed', ?, 't', 1, 1, ?, ?)");
+    verdict.run("lb-1", "F1", "high", "report", null);
+    verdict.run("lb-1", "F2", "low", "invalid", null);
     verdict.run("lb-2", "F1", "medium", "duplicate", null);
-    verdict.run("lb-2", "F2", "medium", "real", 5); // removed: doesn't count
+    verdict.run("lb-2", "F3", "low", "weak", null);
+    verdict.run("lb-2", "F2", "medium", "report", 5); // removed: doesn't count
 
     const a = leaderboard().find((m) => m.model === "lb/a")!;
-    expect(a).toMatchObject({ runs: 4, active: 1, finished: 2, gaveUp: 1, triaged: 3, real: 1, totalCost: 10 });
+    // Duplicates count through the finding they repeat: triaged = report, weak, invalid.
+    expect(a).toMatchObject({ runs: 4, active: 1, finished: 2, gaveUp: 1, triaged: 3, real: 2, report: 1, totalCost: 10, costPerReport: 10 });
     expect(a.finishRate).toBeCloseTo(2 / 3);
-    expect(a.realRate).toBeCloseTo(1 / 3);
-    expect(a.costPerReal).toBe(10);
+    expect(a.realRate).toBeCloseTo(2 / 3);
+    expect(a.costPerReal).toBe(5);
     expect(a.avgCost).toBe(2.5);
     expect(a.avgTokens).toBe(1250);
     expect(a.avgContinues).toBe(0.25);
     expect(a.avgOom).toBe(0.5);
     expect(a.medianDuration).toBe(4 * h); // upper median of [2h, 4h]
-    expect(a.verdicts).toEqual({ "real high": 1, "not a bug": 1, duplicate: 1 });
+    expect(a.verdicts).toEqual({ "report high": 1, invalid: 1, duplicate: 1, weak: 1 });
 
     const b = leaderboard().find((m) => m.model === "lb/b")!;
     expect(b).toMatchObject({ runs: 1, finished: 0, gaveUp: 1, finishRate: 0, realRate: null, costPerReal: null, medianDuration: null });

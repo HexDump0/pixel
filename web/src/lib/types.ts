@@ -7,7 +7,7 @@ import type { PixelHealth } from "../../../server/src/health.ts";
 import type { PreUpgrade } from "../../../server/src/db.ts";
 export type { TidyChoices, TidyFolder, TidyState } from "../../../server/src/tidy.ts";
 import type { Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries } from "../../../server/src/fleet.ts";
-import type { FindingEvent, FindingRow, Verdict } from "../../../server/src/findings.ts";
+import type { Disclosure, DisclosureInput, Disposition, FindingEvent, FindingRow, TriageInput } from "../../../server/src/findings.ts";
 import type { Leaderboard, ProviderHealth } from "../../../server/src/providers.ts";
 import type { ModelStats, Stats } from "../../../server/src/stats.ts";
 import type { CatalogList, CatalogModel, CatalogProvider } from "../../../server/src/catalog.ts";
@@ -17,7 +17,7 @@ import type { ProxyInput, ProxyTest, PublicProxy } from "../../../server/src/pro
 
 export type { Settings, AgentPaths, Activity, FleetRun, FleetSnapshot, Lanes, RecentActivity, RunSeries, Leaderboard, ProviderHealth, Stats, ModelStats };
 export type Finding = FindingRow;
-export type { FindingEvent, Verdict };
+export type { Disclosure, DisclosureInput, Disposition, FindingEvent, TriageInput };
 export type { CatalogList, CatalogModel, CatalogProvider, ConnectedProvider, PublicKey };
 export type { ProcessInfo, ProcessKind, PixelHealth, NotifyStatus, Sent, ProxyInput, ProxyTest, PublicProxy };
 
@@ -35,15 +35,16 @@ export interface SpeedTestRow {
   error: string | null;
 }
 
-/** Per run: findings that aren't leads, how many still need a verdict, by severity; the result from the verdicts. */
+/** Per run: findings that aren't leads, how many still need triage, by severity; the result from the triage. */
 export interface FindingCounts {
   total: number;
   untriaged: number;
   confirmed: number;
   bySeverity: Record<string, number>;
   untriagedBySeverity: Record<string, number>;
-  real: number;
-  /** "2 real (1 high, 1 low)", "nothing real", or null before any verdict. */
+  /** Findings triaged as report. */
+  report: number;
+  /** "2 to report (1 high, 1 low)", "nothing to report", or null before any triage. */
   outcome: string | null;
 }
 

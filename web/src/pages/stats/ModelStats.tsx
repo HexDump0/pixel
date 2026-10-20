@@ -208,6 +208,8 @@ function Trouble({ m }: { m: ModelStats }) {
         {r && r.finishRate != null && <Num label="Runs finished" value={pct(r.finishRate, 0)} />}
         {r && <Num label="Real findings" value={int(r.real)} />}
         {r && r.costPerReal != null && <Num label="Per real finding" value={money(r.costPerReal)} />}
+        {r && <Num label="To report" value={int(r.report)} />}
+        {r && r.costPerReport != null && <Num label="Per one to report" value={money(r.costPerReport)} />}
       </div>
       {errs.length > 0 && (
         <div className="border-t border-line-2 pt-3">

@@ -10,7 +10,7 @@
  * switching off tools breaks free and Go models.
  */
 import { db, getRun, listRuns } from "./db.ts";
-import { verdictCounts } from "./knowledge.ts";
+import { dispositionCounts } from "./knowledge.ts";
 import { keyFor } from "./providerAccounts.ts";
 import { publish } from "./bus.ts";
 import { getSettings } from "./settings.ts";
@@ -222,7 +222,7 @@ export function health(minutes = 60) {
 
 export function leaderboard() {
   const runs = listRuns();
-  const verdictsByRun = verdictCounts();
+  const byRun = dispositionCounts();
   const callStats = db
     .query<CallRow, []>("SELECT provider, model, created, first_token, completed, tokens_in, tokens_out, tokens_reasoning, error FROM llm_calls")
     .all();
@@ -234,17 +234,21 @@ export function leaderboard() {
       const gaveUp = rs.filter((r) => ["stopped", "failed"].includes(r.status) && !r.report_ready);
       const closed = finished.length + gaveUp.length;
       const durations = finished.filter((r) => r.started_at && r.finished_at).map((r) => r.finished_at! - r.started_at!);
-      // Finding verdicts across the model's runs: how many of its findings held up.
+      // Triage across the model's runs: how many of its findings held up, and how many were worth reporting.
       const verdicts: Record<string, number> = {};
+      let real = 0;
+      let report = 0;
+      let triaged = 0;
       for (const r of rs) {
-        const v = verdictsByRun[r.id];
+        const v = byRun[r.id];
         if (!v) continue;
-        for (const [sev, n] of Object.entries(v.realBySeverity)) verdicts[`real ${sev}`] = (verdicts[`real ${sev}`] ?? 0) + n;
-        if (v.not_bug) verdicts["not a bug"] = (verdicts["not a bug"] ?? 0) + v.not_bug;
-        if (v.duplicate) verdicts.duplicate = (verdicts.duplicate ?? 0) + v.duplicate;
+        for (const [sev, n] of Object.entries(v.reportBySeverity)) verdicts[`report ${sev}`] = (verdicts[`report ${sev}`] ?? 0) + n;
+        for (const k of ["known", "duplicate", "weak", "invalid"] as const) if (v[k]) verdicts[k] = (verdicts[k] ?? 0) + v[k];
+        // Real bugs: new, already public, or not worth disclosing. Duplicates count once, through the finding they repeat.
+        real += v.report + v.known + v.weak;
+        report += v.report;
+        triaged += v.report + v.known + v.weak + v.invalid;
       }
-      const real = rs.reduce((a, r) => a + (verdictsByRun[r.id]?.real ?? 0), 0);
-      const triaged = rs.reduce((a, r) => a + (verdictsByRun[r.id] ? verdictsByRun[r.id].real + verdictsByRun[r.id].not_bug + verdictsByRun[r.id].duplicate : 0), 0);
       const cost = rs.reduce((a, r) => a + r.cost, 0);
       const tokens = rs.reduce((a, r) => a + r.tokens_in + r.tokens_out + r.tokens_reasoning, 0);
       const cs = callStats.filter((c) => `${c.provider}/${c.model}` === model);
@@ -265,6 +269,8 @@ export function leaderboard() {
         real,
         realRate: triaged ? real / triaged : null,
         costPerReal: real ? cost / real : null,
+        report,
+        costPerReport: report ? cost / report : null,
         verdicts,
         calls: cs.length,
         ttftP50: pct(cs.map(ttftOf).filter((x): x is number => x != null), 50),

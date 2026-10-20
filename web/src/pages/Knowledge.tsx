@@ -74,8 +74,8 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
   const [lang, setLang] = useState("");
   const [verdict, setVerdict] = useState("");
   const langs = [...new Set((wbs.data ?? []).map((w) => w.language).filter(Boolean))] as string[];
-  // verdict is the run's result ("2 real (1 high)", "nothing real") or an older typed overall verdict.
-  const result = (v: string | null) => (!v ? "untriaged" : /^\d+ real\b/.test(v) ? "real" : "other");
+  // verdict is the run's result ("2 to report (1 high)", "nothing to report") or an older typed overall verdict.
+  const result = (v: string | null) => (!v ? "untriaged" : /^\d+ (to report|real)\b/.test(v) ? "real" : "other");
   const shown = (wbs.data ?? []).filter((w) => (!lang || w.language === lang) && (!verdict || result(w.verdict) === verdict)).sort((a, b) => b.last - a.last);
   return (
     <div>
@@ -87,8 +87,8 @@ function WorkbasesPane({ onOpen }: { onOpen: (run: string) => void }) {
           onChange={setVerdict}
           options={[
             ["", "Any triage result"],
-            ["real", "With real findings"],
-            ["other", "Nothing real"],
+            ["real", "With findings to report"],
+            ["other", "Nothing to report"],
             ["untriaged", "Not triaged"],
           ]}
         />

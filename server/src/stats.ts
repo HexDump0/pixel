@@ -339,7 +339,7 @@ export async function stats(days: number, tzOffsetMin = 0) {
   }
 
   const status = counts<string>("SELECT status AS k, COUNT(*) AS n FROM runs GROUP BY status");
-  const verdicts = counts<string>("SELECT verdict AS k, COUNT(*) AS n FROM findings WHERE verdict IS NOT NULL AND removed_at IS NULL GROUP BY verdict");
+  const dispositions = counts<string>("SELECT disposition AS k, COUNT(*) AS n FROM findings WHERE disposition IS NOT NULL AND removed_at IS NULL GROUP BY disposition");
   const runTotals = db
     .query<{ continues: number; oom: number; created: number; finished: number }, [number, number]>(
       "SELECT COALESCE(SUM(continues), 0) AS continues, COALESCE(SUM(oom_restarts), 0) AS oom, SUM(created_at >= ?) AS created, SUM(finished_at >= ?) AS finished FROM runs",
@@ -373,7 +373,7 @@ export async function stats(days: number, tzOffsetMin = 0) {
     runs: {
       total: runs.length,
       status,
-      verdicts,
+      dispositions,
       createdInWindow: runTotals.created ?? 0,
       finishedInWindow: runTotals.finished ?? 0,
       continues: runTotals.continues,
@@ -514,7 +514,7 @@ export async function modelStats(key: string, days: number, tzOffsetMin = 0) {
     providerEvents: counts<string>("SELECT kind AS k, COUNT(*) AS n FROM provider_events WHERE provider = ? AND model = ? AND ts >= ? GROUP BY kind", provider, model, from),
     byRun,
     catalog: { name: cat?.name ?? null, context: c.context, output: c.output, costIn: c.costIn, costOut: c.costOut, costCacheRead: c.costCacheRead, reasoning: c.reasoning },
-    runs: lb && { total: lb.runs, active: lb.active, finished: lb.finished, gaveUp: lb.gaveUp, finishRate: lb.finishRate, medianDuration: lb.medianDuration, real: lb.real, triaged: lb.triaged, realRate: lb.realRate, costPerReal: lb.costPerReal },
+    runs: lb && { total: lb.runs, active: lb.active, finished: lb.finished, gaveUp: lb.gaveUp, finishRate: lb.finishRate, medianDuration: lb.medianDuration, real: lb.real, report: lb.report, triaged: lb.triaged, realRate: lb.realRate, costPerReal: lb.costPerReal, costPerReport: lb.costPerReport },
   };
 }
 

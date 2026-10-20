@@ -9,7 +9,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { config } from "./config.ts";
 import { db, getRun } from "./db.ts";
-import { getFinding, type FindingRow } from "./findings.ts";
+import { disclosureWord, dispositionWord, getFinding, listFindings, triageText, type FindingRow } from "./findings.ts";
 import { safeWorkbasePath, workbasePath } from "./knowledge.ts";
 
 const TOKEN_MS = 7 * 24 * 3_600_000;
@@ -20,7 +20,21 @@ const POC_BYTES = 32 * 1024;
 const FILE_BYTES = 8 * 1024;
 const INLINE_BYTES = 64 * 1024;
 
-const VERDICT_WORDS: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate" };
+/** What the copied text asks the model to do. */
+export const LLM_PURPOSES = ["verify", "disclose", "variants"] as const;
+export type LlmPurpose = (typeof LLM_PURPOSES)[number];
+
+const TASKS: Record<LlmPurpose | "triage" | "list", string> = {
+  verify:
+    "Check this finding independently. Reproduce it with the PoC against the target, confirm the root cause in the source, and say whether it is real, how severe it is and how it can be reached. Compare it with the findings already triaged in this project (above): if it has the same sink and preconditions as one of them, say which. Then look for variants: the same mistake elsewhere in the code.",
+  disclose:
+    "Write the security report to send to the project's maintainers (their security contact or a private advisory). First check that the bug is still present at the latest upstream commit. Then write: a one-paragraph summary; affected versions or commits; the root cause with file and line references; how it is reached and the preconditions; the impact; a severity with your reasoning (a CVSS vector if it fits); exact reproduction steps with the PoC; and a suggested fix. Stick to what the PoC and the code show. Plain markdown, no marketing tone.",
+  variants:
+    "Use this finding as a pattern. Find its root cause in the source, then search the rest of the codebase for the same mistake: other callers of the same function, copies of the same code, sibling parsers or handlers that make the same assumption. For each candidate say where it is, whether it is reachable, and how you would confirm it. Skip the ones already triaged in this project (above).",
+  triage:
+    "Triage each finding. For each, decide one of: report (a real, novel bug worth disclosing), known (the same bug is already public: say where), duplicate (same root cause as another finding here: say which), weak (real, but the preconditions or impact don't justify a disclosure) or invalid (not a bug). Give the severity you would assign (critical, high, medium, low, info or none) judged on this bug's own preconditions, and one line of why. Answer as a table: finding, disposition, severity, why.",
+  list: "",
+};
 
 const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -95,23 +109,16 @@ function fenced(text: string, lang = "") {
 const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 /** Everything about one finding as one markdown text. `origin` is where the download commands point. */
-export function llmBrief(runId: string, fid: string, origin: string) {
+export function llmBrief(runId: string, fid: string, origin: string, purpose?: LlmPurpose) {
   const f = getFinding(runId, fid);
   if (!f) throw new Error(`no finding ${fid} in ${runId}`);
   const run = getRun(runId);
   const { folder, files } = findingFiles(f);
   const share = files.length ? mintToken(runId, fid) : null;
 
-  const facts = [
-    run && `- Target: ${run.repo}${run.ref ? ` (${run.ref})` : ""}${run.commit_sha ? ` at commit ${run.commit_sha}` : ""}`,
-    `- Finding: ${f.id}, ${f.state.replace("_", " ")}${f.severity ? `, ${f.severity} severity` : ""}${f.class ? `, ${f.class}` : ""}`,
-    f.location && `- Location: ${f.location}`,
-    f.removed_at && `- Removed: ${f.removed_reason ?? "its folder was deleted"} (kept for the record; not in list_findings)`,
-    f.verdict && `- Human verdict: ${VERDICT_WORDS[f.verdict] ?? f.verdict}${f.verdict_note ? `: ${f.verdict_note}` : ""}`,
-    run && `- Found by: ${run.model}, Pixel run ${run.label ?? run.id}`,
-  ].filter(Boolean);
-
-  const parts = [`# ${f.id}: ${f.title}`, facts.join("\n")];
+  // Default: write the disclosure for a finding that is ready to send, else check it.
+  const task: LlmPurpose = purpose ?? (f.disposition === "report" && (f.disclosure ?? "ready") === "ready" ? "disclose" : "verify");
+  const parts = [`# ${f.id}: ${f.title}`, factLines(f, run).join("\n")];
 
   let readme = f.summary;
   if (f.path) {
@@ -171,11 +178,82 @@ export function llmBrief(runId: string, fid: string, origin: string) {
     );
   }
 
-  parts.push(
-    "## Task",
-    "Check this finding independently. Reproduce it with the PoC against the target, confirm the root cause in the source, and say whether it is real, how severe it is and how it can be reached. Then look for variants: the same mistake elsewhere in the code.",
-  );
-  return { text: parts.join("\n\n") + "\n", expires: share?.expires ?? null };
+  if (task !== "disclose") {
+    const prior = priorArt(f);
+    if (prior) parts.push(prior);
+  }
+  parts.push("## Task", TASKS[task]);
+  return { text: parts.join("\n\n") + "\n", expires: share?.expires ?? null, purpose: task };
+}
+
+const day = (ts: number | null) => (ts ? new Date(ts).toISOString().slice(0, 10) : "");
+
+/** The facts about a finding as markdown list lines: target, the agent's claim, and the human's triage and disclosure. */
+function factLines(f: FindingRow, run: ReturnType<typeof getRun>, withRun = true) {
+  const agentSev = f.severity ? `, ${f.severity} severity` : "";
+  return [
+    withRun && run && `- Target: ${run.repo}${run.ref ? ` (${run.ref})` : ""}${run.commit_sha ? ` at commit ${run.commit_sha}` : ""}`,
+    `- Finding: ${f.run_id}/${f.id}, the agent says ${f.state.replace("_", " ")}${agentSev}${f.class ? `, ${f.class}` : ""}`,
+    f.location && `- Location: ${f.location}`,
+    f.removed_at && `- Removed: ${f.removed_reason ?? "its folder was deleted"} (kept for the record)`,
+    f.disposition && `- Triage (human): ${triageText(f)}${f.severity_final && f.severity_final !== f.severity ? ` (the agent said ${f.severity ?? "no severity"})` : ""}`,
+    f.disposition === "duplicate" && f.duplicate_of && dupTitle(f.duplicate_of) && `- Duplicate of: ${f.duplicate_of}, ${dupTitle(f.duplicate_of)}`,
+    f.disposition_note && `- Triage note: ${f.disposition_note.replace(/\s+/g, " ").trim()}`,
+    !f.disposition && f.agent_duplicate_of && `- The agent says it duplicates ${f.agent_duplicate_of}`,
+    f.disposition === "report" && f.disclosure && `- Disclosure: ${disclosureWord(f.disclosure)}${f.reported_at ? `, sent ${day(f.reported_at)}` : ""}${f.report_url ? ` (${f.report_url})` : ""}${f.fix_ref ? `, fix ${f.fix_ref}` : ""}${f.fixed_at ? ` on ${day(f.fixed_at)}` : ""}${f.disclosure_note ? `: ${f.disclosure_note}` : ""}`,
+    withRun && run && `- Found by: ${run.model}, Pixel run ${run.label ?? run.id}`,
+  ].filter(Boolean) as string[];
+}
+
+function dupTitle(ref: string) {
+  const i = ref.lastIndexOf("/");
+  return getFinding(ref.slice(0, i), ref.slice(i + 1))?.title ?? null;
+}
+
+/** Findings already triaged in the same repository (other than this one), so the model can spot a repeat. */
+function priorArt(f: FindingRow, max = 40) {
+  if (!f.repo) return null;
+  const rows = listFindings({ triaged: true }).filter((x) => x.repo === f.repo && !(x.run_id === f.run_id && x.id === f.id));
+  if (!rows.length) return null;
+  const lines = rows.slice(0, max).map((x) => `- ${x.run_id}/${x.id} (${triageText(x)}${x.severity_final ? "" : x.severity ? `, ${x.severity}` : ""}): ${x.title}${x.location ? `, at ${x.location}` : ""}`);
+  return [`## Already triaged in this project (${rows.length})`, lines.join("\n") + (rows.length > max ? `\n- and ${rows.length - max} more` : "")].join("\n\n");
+}
+
+/** Per finding in a list copy: the README up to this much, shrinking when the list is long. */
+const LIST_BYTES = 160 * 1024;
+
+/**
+ * Several findings as one markdown text: the facts and README of each (cut to share LIST_BYTES), grouped by
+ * project, and a task for the purpose. No download tokens: copy one finding on its own for its files.
+ */
+export function llmList(ids: string[], purpose: LlmPurpose | "triage" | "list", title?: string) {
+  const found: FindingRow[] = [];
+  const missing: string[] = [];
+  for (const ref of [...new Set(ids)]) {
+    const i = ref.lastIndexOf("/");
+    const f = i > 0 ? getFinding(ref.slice(0, i), ref.slice(i + 1)) : null;
+    if (f) found.push(f);
+    else missing.push(ref);
+  }
+  if (!found.length) throw new Error(`no such findings: ${missing.slice(0, 5).join(", ")}`);
+  const per = Math.max(1500, Math.floor(LIST_BYTES / found.length));
+  const runs = new Map(found.map((f) => [f.run_id, getRun(f.run_id)]));
+  const byRepo = new Map<string, FindingRow[]>();
+  for (const f of found) byRepo.set(f.repo ?? "unknown", [...(byRepo.get(f.repo ?? "unknown") ?? []), f]);
+  const parts = [`# ${title?.trim() || "Findings"} (${found.length})`];
+  if (purpose === "list") parts.push("Findings from Pixel's audit runs, each with the agent's claim and the human's triage where there is one. Each README is cut to fit; ask for one finding on its own for the full text and its files.");
+  for (const [repo, list] of byRepo) {
+    parts.push(`## ${repo}`);
+    for (const f of list) {
+      const run = runs.get(f.run_id) ?? null;
+      const target = run ? `- Commit: ${run.commit_sha ?? run.ref ?? "unknown"}` : null;
+      const body = f.summary.length > per ? `${f.summary.slice(0, per)}\n\n[cut: ${f.summary.length - per} more characters]` : f.summary;
+      parts.push(`### ${f.run_id}/${f.id}: ${f.title}`, [...factLines(f, run, false), target].filter(Boolean).join("\n"), fenced(body || "(no text)", "markdown"));
+    }
+  }
+  if (missing.length) parts.push(`(Not found: ${missing.join(", ")})`);
+  if (TASKS[purpose]) parts.push("## Task", TASKS[purpose]);
+  return { text: parts.join("\n\n") + "\n", count: found.length };
 }
 
 /** The .tar.gz of a finding: `<fid>/…` with its files. */

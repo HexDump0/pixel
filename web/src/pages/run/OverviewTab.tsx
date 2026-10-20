@@ -209,12 +209,19 @@ function storyText(e: TimelineEntry): { main: string; note?: string } {
         ? "Found"
         : d.action === "remove"
           ? "Removed"
-          : d.action === "verdict"
-            ? "You marked it"
+          : d.action === "verdict" || d.action === "triage"
+            ? "Triaged"
+            : d.action === "disclosure"
+              ? (({ ready: "Back to not sent", reported: "Sent upstream", fixed: "Fixed upstream", dropped: "Disclosure dropped" }) as Record<string, string>)[d.changes?.disclosure?.[1]] ?? "Disclosure updated"
             : d.changes?.state
               ? (({ confirmed: "Confirmed", ruled_out: "Ruled out", suspected: "Now suspected", lead: "Back to a lead" }) as Record<string, string>)[d.changes.state[1]] ?? "Updated"
               : "Updated";
-    const v = d.action === "verdict" ? ` ${(d.changes?.verdict?.[1] ?? "untriaged").replace("_", " ").replace("not bug", "not a bug")}` : "";
+    const v =
+      d.action === "verdict"
+        ? ` ${(d.changes?.verdict?.[1] ?? "untriaged").replace("_", " ").replace("not bug", "not a bug")}`
+        : d.action === "triage" && d.changes?.disposition
+          ? ` ${d.changes.disposition[1] ?? "untriaged"}`
+          : "";
     return { main: `${what}${v}: ${d.title} (${d.finding})`, note: d.note ?? undefined };
   }
   return { main: e.message.replace(/^You: /, "You: ") };

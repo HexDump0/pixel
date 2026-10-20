@@ -25,8 +25,8 @@ export function useFeed(limit = 50, since?: number) {
       queryKey: [...keys.feed, limit, since ?? 0],
       queryFn: () => api.feed(limit, since),
       staleTime: 30_000,
-      // your own verdicts aren't news to you
-      select: (rows) => rows.filter((e) => !(e.kind === "finding" && e.data?.action === "verdict")),
+      // your own triage isn't news to you
+      select: (rows) => rows.filter((e) => !(e.kind === "finding" && ["verdict", "triage", "disclosure"].includes(e.data?.action))),
     }).data ?? null
   );
 }

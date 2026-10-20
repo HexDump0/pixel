@@ -20,7 +20,7 @@ import { Dialog, Select } from "../../components/ui/overlay.tsx";
 import { openCatchUp } from "../../components/CatchUp.tsx";
 import { openPalette } from "../../components/CommandPalette.tsx";
 import { toast } from "../../components/Toast.tsx";
-import { FindingsTable } from "../findings/FindingsTable.tsx";
+import { FindingsTable, viewGroups } from "../findings/FindingsTable.tsx";
 import { FleetRow } from "./FleetRow.tsx";
 import { buildView, FinishedRow, LIST_COLS, ListRow, Tile, type RunView } from "./RunCards.tsx";
 
@@ -262,7 +262,7 @@ export function Wall() {
       {filter === "triage" && (
         <>
           <SectionTitle title="Findings to triage" n={findings.filter(isOpen).length} />
-          <FindingsTable findings={findings.filter(isOpen)} runs={runs ?? []} />
+          <FindingsTable groups={viewGroups(findings, "triage")} view="triage" runs={runs ?? []} onOpen={(f) => openRun(f.run_id, `findings/${f.id}`)} />
         </>
       )}
 

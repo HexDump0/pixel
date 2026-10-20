@@ -8,7 +8,7 @@ import { defaultSettings, getSettings, saveSettings, type Settings } from "../se
 import { runtime } from "../runtime/index.ts";
 import { search, workbaseSizes } from "../search.ts";
 import { crossReadGraph } from "../crossreads.ts";
-import { outcomeText, verdictCounts } from "../knowledge.ts";
+import { outcomeText, dispositionCounts } from "../knowledge.ts";
 import { feed, fleetSnapshot, lanes, recentActivity, runSeries } from "../fleet.ts";
 import { notify, notifyStatus } from "../notify.ts";
 import { validateModelOverrides, validateProviderOverrides } from "../modelOverrides.ts";
@@ -27,7 +27,7 @@ get("/crossreads", () => crossReadGraph());
 
 get("/workbases", async () => {
   const runs = new Map(listRuns().map((r) => [r.id, r]));
-  const verdicts = verdictCounts();
+  const verdicts = dispositionCounts();
   return [...(await workbaseSizes())].map(([id, f]) => {
     const r = runs.get(id);
     return {

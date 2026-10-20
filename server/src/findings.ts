@@ -7,21 +7,35 @@
  * Pixel polls `findings/` like it did PROGRESS.md (a readdir and one stat per finding per live run, read on
  * change) and re-reads it as soon as a write or edit under findings/ completes. Changes of state, severity,
  * title, location, PoC or class become finding events (and timeline entries). Pixel writes FINDINGS.md
- * (an index for people and peer agents) and TRIAGE.md (the human's verdicts); it never writes findings/.
+ * (an index for people and peer agents), TRIAGE.md (the human's triage) and TRIAGED.md at the top of the
+ * workbases (every triaged finding, for prior art); it never writes findings/.
+ *
+ * Triage is two things that change on different schedules: the disposition (report, known, duplicate, weak,
+ * invalid; once, with a final severity) and, for the ones to report, the disclosure (ready, reported, fixed,
+ * dropped), which only a person sets in the dashboard.
  */
 import { readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
 import { ACTIVE_STATUSES, db, getRun, listRuns, type RunRow } from "./db.ts";
 import { publish } from "./bus.ts";
-import { outcomeText, refreshRunFiles, verdictCounts, workbasePath, writeTriage } from "./knowledge.ts";
+import { outcomeText, refreshRunFiles, dispositionCounts, workbasePath, writeTriage, writeTriaged } from "./knowledge.ts";
 import { timeline } from "./runs/state.ts";
 
 export const STATES = ["lead", "suspected", "confirmed", "ruled_out"] as const;
 export const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
-export const VERDICTS = ["real", "not_bug", "duplicate"] as const;
-export type Verdict = (typeof VERDICTS)[number];
+/** The triage's judgement: a real novel bug to disclose, already public, same root cause as another finding, real but not worth disclosing, not a bug. */
+export const DISPOSITIONS = ["report", "known", "duplicate", "weak", "invalid"] as const;
+export type Disposition = (typeof DISPOSITIONS)[number];
+/** The final severity can also say "none": no security impact. */
+export const FINAL_SEVERITIES = [...SEVERITIES, "none"] as const;
+/** Only for disposition report: not sent yet, sent and waiting on upstream, fixed upstream, taken out (with a reason). */
+export const DISCLOSURES = ["ready", "reported", "fixed", "dropped"] as const;
+export type Disclosure = (typeof DISCLOSURES)[number];
+/** The four lists of the Findings page (and the view filter): to triage, to report, resolved, reviewed. */
+export const VIEWS = ["triage", "report", "resolved", "reviewed"] as const;
 
-const VERDICT_WORDS: Record<string, string> = { real: "real", not_bug: "not a bug", duplicate: "duplicate", needs_work: "needs more work" };
+const DISPOSITION_WORDS: Record<string, string> = { report: "report", known: "known", duplicate: "duplicate", weak: "weak", invalid: "invalid" };
+const DISCLOSURE_WORDS: Record<string, string> = { ready: "ready to report", reported: "reported upstream", fixed: "fixed upstream", dropped: "disclosure dropped" };
 const STATE_WORDS: Record<string, string> = { lead: "lead", suspected: "suspected", confirmed: "confirmed", ruled_out: "ruled out" };
 
 /** Finished runs are still checked for a while, in case the last write landed just before the end. */
@@ -46,16 +60,30 @@ export interface FindingRow {
   session_id: string | null;
   removed_at: number | null;
   removed_reason: string | null;
+  /** Triage: `<run>/<id>` of the finding this one duplicates (disposition duplicate). */
   duplicate_of: string | null;
-  verdict: Verdict | null;
-  verdict_note: string | null;
-  verdict_at: number | null;
-  /** Who gave the verdict: "dashboard" or "MCP: <token name>"; null for older verdicts and without one. */
-  verdict_by: string | null;
   /** The finding's README, relative to the workbase. */
   path: string | null;
   /** What Pixel couldn't read in the README (bad header, clashing number), shown on the finding. */
   problem: string | null;
+  disposition: Disposition | null;
+  disposition_note: string | null;
+  disposition_at: number | null;
+  /** Who triaged it: "dashboard" or "MCP: <token name>"; null for older verdicts and without one. */
+  disposition_by: string | null;
+  /** The triage's severity; null = agrees with the agent's `severity`. */
+  severity_final: string | null;
+  /** The agent's own `duplicate_of:` header, as `<run>/<id>`: a suggestion for the triage. */
+  agent_duplicate_of: string | null;
+  disclosure: Disclosure | null;
+  disclosure_note: string | null;
+  disclosure_at: number | null;
+  reported_at: number | null;
+  report_url: string | null;
+  fixed_at: number | null;
+  fix_ref: string | null;
+  /** The run's repository (joined from runs). */
+  repo: string | null;
 }
 
 export interface FindingEvent {
@@ -63,7 +91,8 @@ export interface FindingEvent {
   run_id: string;
   finding_id: string;
   at: number;
-  action: "add" | "update" | "remove" | "verdict";
+  /** verdict: older triage events (real, not_bug, duplicate). */
+  action: "add" | "update" | "remove" | "verdict" | "triage" | "disclosure";
   changes: Record<string, [unknown, unknown]> | null;
   note: string | null;
   session_id: string | null;
@@ -125,9 +154,15 @@ function pocPath(poc: string | null, folder: string) {
   return p.startsWith("..") ? poc : p;
 }
 
+/** A finding reference as `<run>/<id>`: "F3" means this run's F3. Anything else is null. */
+export function dupRef(v: string | null | undefined, runId: string) {
+  const m = /^\s*(?:([\w.:-]+)\/)?([Ff]\d[\w.-]*)\s*$/.exec(v ?? "");
+  return m ? `${m[1] ?? runId}/${m[2][0].toUpperCase()}${m[2].slice(1)}` : null;
+}
+
 const titleOf = (body: string, fallback: string) => /^#\s+(.+?)\s*#*\s*$/m.exec(body)?.[1] ?? fallback;
 
-function readEntry(e: Entry, id: string, previous: FindingRow | undefined, clash: string | null) {
+function readEntry(runId: string, e: Entry, id: string, previous: FindingRow | undefined, clash: string | null) {
   const { fields, body, header } = parseReadme(readFileSync(e.readme, "utf8"));
   const problems: string[] = [];
   if (clash) problems.push(clash);
@@ -152,6 +187,7 @@ function readEntry(e: Entry, id: string, previous: FindingRow | undefined, clash
     class: clip(fields.class, 100),
     location: clip(fields.location, 300),
     poc: pocPath(clip(fields.poc, 500), e.folder),
+    agent_duplicate_of: dupRef(fields.duplicate_of, runId),
     summary,
     path: e.rel,
     problem: problems.join("; ") || null,
@@ -159,16 +195,18 @@ function readEntry(e: Entry, id: string, previous: FindingRow | undefined, clash
 }
 
 const upsert = db.query(`
-  INSERT INTO findings (run_id, id, state, severity, title, class, location, poc, summary, created, updated, session_id, removed_at, removed_reason, duplicate_of, path, problem)
-  VALUES ($run, $id, $state, $severity, $title, $class, $location, $poc, $summary, $created, $updated, $session_id, NULL, NULL, NULL, $path, $problem)
+  INSERT INTO findings (run_id, id, state, severity, title, class, location, poc, summary, created, updated, session_id, removed_at, removed_reason, path, problem, agent_duplicate_of)
+  VALUES ($run, $id, $state, $severity, $title, $class, $location, $poc, $summary, $created, $updated, $session_id, NULL, NULL, $path, $problem, $agent_duplicate_of)
   ON CONFLICT(run_id, id) DO UPDATE SET state = excluded.state, severity = excluded.severity, title = excluded.title, class = excluded.class,
     location = excluded.location, poc = excluded.poc, summary = excluded.summary, updated = excluded.updated, session_id = excluded.session_id,
-    removed_at = NULL, removed_reason = NULL, path = excluded.path, problem = excluded.problem`);
+    removed_at = NULL, removed_reason = NULL, path = excluded.path, problem = excluded.problem, agent_duplicate_of = excluded.agent_duplicate_of`);
 const insertEvent = db.query(
   "INSERT OR IGNORE INTO finding_events (run_id, finding_id, at, action, changes, note, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
 );
 
-export const getFinding = (runId: string, id: string) => db.query<FindingRow, [string, string]>("SELECT * FROM findings WHERE run_id = ? AND id = ?").get(runId, id);
+/** Findings with their run's repository. Filters use the `f.` prefix. */
+const SELECT = "SELECT f.*, r.repo AS repo FROM findings f LEFT JOIN runs r ON r.id = f.run_id";
+export const getFinding = (runId: string, id: string) => db.query<FindingRow, [string, string]>(`${SELECT} WHERE f.run_id = ? AND f.id = ?`).get(runId, id);
 
 const parseEvent = (e: any): FindingEvent => ({ ...e, changes: e.changes ? JSON.parse(e.changes) : null });
 
@@ -182,7 +220,19 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
     case "remove":
       return `${e.finding_id} removed: ${title}${note}`;
     case "verdict":
-      return `${e.finding_id} triaged as ${e.changes?.verdict?.[1] ? VERDICT_WORDS[String(e.changes.verdict[1])] : "untriaged"}: ${title}`;
+      return `${e.finding_id} triaged as ${e.changes?.verdict?.[1] ? String(e.changes.verdict[1]).replace("_", " ") : "untriaged"}: ${title}`;
+    case "triage": {
+      const d = e.changes?.disposition;
+      const sev = e.changes?.severity_final;
+      const dup = e.changes?.duplicate_of?.[1];
+      if (d) return d[1] ? `${e.finding_id} triaged: ${DISPOSITION_WORDS[String(d[1])] ?? d[1]}${dup ? ` of ${dup}` : ""}${sev?.[1] ? `, ${sev[1]}` : ""}: ${title}` : `${e.finding_id} triage cleared: ${title}`;
+      if (sev) return `${e.finding_id} final severity ${sev[1] ?? "back to the agent's"}: ${title}`;
+      return `${e.finding_id} triage updated: ${title}`;
+    }
+    case "disclosure": {
+      const d = e.changes?.disclosure?.[1];
+      return `${e.finding_id} ${d ? DISCLOSURE_WORDS[String(d)] ?? d : "disclosure cleared"}: ${title}${note}`;
+    }
     default: {
       const st = e.changes?.state;
       if (st) return `${e.finding_id} ${STATE_WORDS[String(st[1])] ?? st[1]}: ${title}${note}`;
@@ -194,7 +244,7 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
 }
 
 /** Fields whose changes are worth an event (summary edits happen all the time and only bump `updated`). */
-const TRACKED = ["state", "severity", "title", "location", "poc", "class"] as const;
+const TRACKED = ["state", "severity", "title", "location", "poc", "class", "agent_duplicate_of"] as const;
 
 /** Read a run's findings/ into the table. Returns the number of new events. */
 export function syncFindings(run: RunRow, by: string | null = null) {
@@ -224,7 +274,7 @@ export function syncFindings(run: RunRow, by: string | null = null) {
         const clash = e === owner ? null : `same number as ${owner.name}; rename this folder to a free number`;
         let f;
         try {
-          f = readEntry(e, id, prev, clash);
+          f = readEntry(run.id, e, id, prev, clash);
         } catch (err) {
           console.error(`finding ${run.id}/${e.name}`, err);
           continue;
@@ -263,8 +313,11 @@ export function syncFindings(run: RunRow, by: string | null = null) {
   return fresh.length;
 }
 
+/** Events people make (triage, disclosure), not the agent. */
+const PEOPLE_ACTIONS = new Set(["verdict", "triage", "disclosure"]);
+
 function announce(runId: string, event: FindingEvent, finding: FindingRow) {
-  timeline(runId, event.action === "verdict" ? "user" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq, title: finding.title, severity: finding.severity, state: finding.state, note: event.note, changes: event.changes }, event.at);
+  timeline(runId, PEOPLE_ACTIONS.has(event.action) ? "user" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq, title: finding.title, severity: finding.severity, state: finding.state, disposition: finding.disposition, note: event.note, changes: event.changes }, event.at);
   publish(runId, "finding", { event, finding });
   publish("*", "finding", { event, finding });
 }
@@ -306,6 +359,11 @@ let timer: ReturnType<typeof setInterval> | null = null;
 export function startFindingsWatch(everyMs = 5000) {
   // Once at start for every run, so findings written while Pixel was down are picked up.
   for (const r of listRuns()) checkFindings(r);
+  try {
+    writeTriaged();
+  } catch (e) {
+    console.error("writing TRIAGED.md", e);
+  }
   timer ??= setInterval(checkAllFindings, everyMs);
 }
 export function stopFindingsWatch() {
@@ -317,20 +375,35 @@ export function stopFindingsWatch() {
 
 export interface FindingQuery {
   run?: string;
+  /** Not triaged yet: no disposition, not ruled out by the agent (leads included). */
   untriaged?: boolean;
-  /** One or more, comma-separated; "none" = no severity set. */
+  /** The agent's severity: one or more, comma-separated; "none" = no severity set. */
   severity?: string;
+  /** The severity after triage (the final one, else the agent's); "none" matches neither set or final none. */
+  finalSeverity?: string;
   /** One or more, comma-separated. */
   state?: string;
-  /** Only findings with a verdict (from you or an MCP client). */
+  /** Only findings with a disposition (from you or an MCP client). */
   triaged?: boolean;
-  /** These verdicts only, comma-separated (real, not_bug, duplicate). */
-  verdict?: string;
+  /** These dispositions only, comma-separated; "none" = not triaged. */
+  disposition?: string;
+  /** These disclosure states only, comma-separated; "none" = no disclosure. */
+  disclosure?: string;
+  /** Findings that duplicate this one (`<run>/<id>`). */
+  duplicateOf?: string;
+  /** Runs whose repository contains this text (case doesn't matter). */
+  repo?: string;
+  /** One of VIEWS: the Findings page's lists. */
+  view?: string;
+  /** Words that must all appear in the title, location, class, summary or repo. */
+  q?: string;
   includeRemoved?: boolean;
 }
 
 /** Severity filter values: the severities, plus "none" for findings without one. */
 export const SEVERITY_FILTERS = [...SEVERITIES, "none"] as const;
+export const DISPOSITION_FILTERS = [...DISPOSITIONS, "none"] as const;
+export const DISCLOSURE_FILTERS = [...DISCLOSURES, "none"] as const;
 
 /** A comma-separated filter, lowercased and checked, so "High" works and a typo is an error rather than an empty answer. */
 export function enumFilter(name: string, value: string | null | undefined, allowed: readonly string[]) {
@@ -341,35 +414,89 @@ export function enumFilter(name: string, value: string | null | undefined, allow
   return list.join(",");
 }
 
-/** Findings, newest change first. Untriaged = not removed, not ruled out, no verdict yet. */
+/** SQL for one view of the Findings page (removed findings are never in one). */
+const VIEW_SQL: Record<(typeof VIEWS)[number], string> = {
+  triage: "f.disposition IS NULL AND f.state IN ('suspected', 'confirmed')",
+  report: "f.disposition = 'report' AND COALESCE(f.disclosure, 'ready') IN ('ready', 'reported')",
+  resolved: "f.disposition = 'report' AND f.disclosure IN ('fixed', 'dropped')",
+  reviewed: "f.disposition IS NOT NULL",
+};
+
+/** "a,none" as `col IN (?) OR col IS NULL`. */
+function inList(col: string, csv: string, where: string[], params: (string | number)[]) {
+  const list = csv.split(",");
+  const named = list.filter((v) => v !== "none");
+  const parts = [named.length ? `${col} IN (${named.map(() => "?").join(", ")})` : "", list.includes("none") ? `${col} IS NULL` : ""].filter(Boolean);
+  where.push(`(${parts.join(" OR ")})`);
+  params.push(...named);
+}
+
+const SEARCHED = ["f.title", "f.location", "f.class", "f.summary", "r.repo", "f.run_id || '/' || f.id"];
+
+/** Findings, newest change first (best match first with q). Untriaged = not removed, not ruled out, no disposition yet. */
 export function listFindings(q: FindingQuery = {}) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (q.run) {
-    where.push("run_id = ?");
+    where.push("f.run_id = ?");
     params.push(q.run);
   }
-  if (!q.includeRemoved) where.push("removed_at IS NULL");
-  if (q.untriaged) where.push("verdict IS NULL AND state != 'ruled_out'");
-  if (q.severity) {
-    const list = q.severity.split(",");
+  if (!q.includeRemoved || q.view) where.push("f.removed_at IS NULL");
+  if (q.untriaged) where.push("f.disposition IS NULL AND f.state != 'ruled_out'");
+  if (q.severity) inList("f.severity", q.severity, where, params);
+  if (q.finalSeverity) {
+    // An explicit final "none" means no impact; otherwise the final one, else the agent's.
+    const list = q.finalSeverity.split(",");
     const named = list.filter((v) => v !== "none");
-    const parts = [named.length ? `severity IN (${named.map(() => "?").join(", ")})` : "", list.includes("none") ? "severity IS NULL" : ""].filter(Boolean);
+    const parts = [named.length ? `COALESCE(f.severity_final, f.severity) IN (${named.map(() => "?").join(", ")})` : "", list.includes("none") ? "(f.severity_final = 'none' OR (f.severity_final IS NULL AND f.severity IS NULL))" : ""].filter(Boolean);
     where.push(`(${parts.join(" OR ")})`);
     params.push(...named);
   }
-  if (q.triaged) where.push("verdict IS NOT NULL");
-  if (q.verdict) {
-    const list = q.verdict.split(",");
-    where.push(`verdict IN (${list.map(() => "?").join(", ")})`);
-    params.push(...list);
+  if (q.triaged) where.push("f.disposition IS NOT NULL");
+  if (q.disposition) inList("f.disposition", q.disposition, where, params);
+  if (q.disclosure) inList("f.disclosure", q.disclosure, where, params);
+  if (q.state) inList("f.state", q.state, where, params);
+  if (q.duplicateOf) {
+    where.push("f.duplicate_of = ?");
+    params.push(q.duplicateOf);
   }
-  if (q.state) {
-    const list = q.state.split(",");
-    where.push(`state IN (${list.map(() => "?").join(", ")})`);
-    params.push(...list);
+  if (q.repo?.trim()) {
+    where.push("instr(lower(r.repo), ?) > 0");
+    params.push(q.repo.trim().toLowerCase());
   }
-  return db.query<FindingRow, any[]>(`SELECT * FROM findings ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY updated DESC`).all(...params);
+  if (q.view) {
+    if (!(VIEWS as readonly string[]).includes(q.view)) throw new Error(`view must be one of ${VIEWS.join(", ")}`);
+    where.push(VIEW_SQL[q.view as (typeof VIEWS)[number]]);
+  }
+  const words = searchWords(q.q);
+  for (const w of words) {
+    where.push(`(${SEARCHED.map((c) => `instr(lower(COALESCE(${c}, '')), ?) > 0`).join(" OR ")})`);
+    params.push(...SEARCHED.map(() => w));
+  }
+  const rows = db.query<FindingRow, any[]>(`${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY f.updated DESC`).all(...params);
+  if (!words.length) return rows;
+  // Best match first: words in the title, then the location, count most.
+  const score = (f: FindingRow) => words.reduce((n, w) => n + (f.title.toLowerCase().includes(w) ? 4 : 0) + (f.location?.toLowerCase().includes(w) ? 2 : 0) + (f.class?.toLowerCase().includes(w) ? 1 : 0), 0);
+  return rows.map((f) => [score(f), f] as const).sort((a, b) => b[0] - a[0]).map(([, f]) => f);
+}
+
+/** Search words: lowercased, quotes keep a phrase together ("heap overflow" png). */
+export function searchWords(q: string | undefined) {
+  if (!q?.trim()) return [];
+  return [...q.toLowerCase().matchAll(/"([^"]+)"|(\S+)/g)].map((m) => (m[1] ?? m[2]).trim()).filter(Boolean).slice(0, 8);
+}
+
+/** Where the search matched in the summary, as a short line ("" when only the title or location matched). */
+export function matchSnippet(f: Pick<FindingRow, "summary">, q: string | undefined, width = 220) {
+  const text = f.summary.replace(/\s+/g, " ");
+  const lower = text.toLowerCase();
+  for (const w of searchWords(q)) {
+    const i = lower.indexOf(w);
+    if (i < 0) continue;
+    const from = Math.max(0, i - Math.floor(width / 3));
+    return `${from ? "..." : ""}${text.slice(from, from + width).trim()}${from + width < text.length ? "..." : ""}`;
+  }
+  return "";
 }
 
 export function findingEvents(opts: { run?: string; finding?: string; since?: number; limit?: number } = {}) {
@@ -394,17 +521,17 @@ export function findingEvents(opts: { run?: string; finding?: string; since?: nu
     .map(parseEvent);
 }
 
-/** Per run: untriaged findings by severity (Wall tiles, toolbar counts, To triage stat), and the run's result from the verdicts. */
+/** Per run: untriaged findings by severity (Wall tiles, toolbar counts, To triage stat), and the run's result from the triage. */
 export function findingCounts() {
   const rows = db
-    .query<{ run_id: string; state: string; severity: string | null; verdict: string | null; n: number }, []>(
-      "SELECT run_id, state, severity, verdict, COUNT(*) AS n FROM findings WHERE removed_at IS NULL GROUP BY run_id, state, severity, verdict",
+    .query<{ run_id: string; state: string; severity: string | null; disposition: string | null; n: number }, []>(
+      "SELECT run_id, state, COALESCE(severity_final, severity) AS severity, disposition, COUNT(*) AS n FROM findings WHERE removed_at IS NULL GROUP BY run_id, state, 3, disposition",
     )
     .all();
   /** Leads are ideas, not findings to triage: they're only in `leads`. Findings without a severity count as info. */
-  type Counts = { total: number; leads: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number>; real: number; outcome: string | null };
+  type Counts = { total: number; leads: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number>; report: number; outcome: string | null };
   const out: Record<string, Counts> = {};
-  const blank = (): Counts => ({ total: 0, leads: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {}, real: 0, outcome: null });
+  const blank = (): Counts => ({ total: 0, leads: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {}, report: 0, outcome: null });
   for (const r of rows) {
     const c = (out[r.run_id] ??= blank());
     if (r.state === "lead") {
@@ -413,22 +540,22 @@ export function findingCounts() {
     }
     c.total += r.n;
     if (r.state === "confirmed") c.confirmed += r.n;
-    const sev = r.severity ?? "info";
+    const sev = !r.severity || r.severity === "none" ? "info" : r.severity;
     c.bySeverity[sev] = (c.bySeverity[sev] ?? 0) + r.n;
-    if (!r.verdict && r.state !== "ruled_out") {
+    if (!r.disposition && r.state !== "ruled_out") {
       c.untriaged += r.n;
       c.untriagedBySeverity[sev] = (c.untriagedBySeverity[sev] ?? 0) + r.n;
     }
   }
-  for (const [run, v] of Object.entries(verdictCounts())) {
+  for (const [run, v] of Object.entries(dispositionCounts())) {
     const c = (out[run] ??= blank());
-    c.real = v.real;
+    c.report = v.report;
     c.outcome = outcomeText(v);
   }
   return out;
 }
 
-// ---- FINDINGS.md and verdicts ----
+// ---- FINDINGS.md, triage and disclosure ----
 
 function writeAtomic(path: string, text: string) {
   const tmp = `${path}.tmp-${process.pid}`;
@@ -438,51 +565,199 @@ function writeAtomic(path: string, text: string) {
 
 const STATE_ORDER = ["confirmed", "suspected", "lead", "ruled_out"];
 const cell = (s: string | null | undefined) => (s ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+const numOf = (id: string) => Number(id.slice(1).split(/\D/)[0]);
+
+/** The triage in a few words: "report, high", "duplicate of r1/F3", "weak". */
+export function triageText(f: Pick<FindingRow, "disposition" | "severity_final" | "severity" | "duplicate_of" | "disclosure">) {
+  if (!f.disposition) return "";
+  const parts = [DISPOSITION_WORDS[f.disposition] ?? f.disposition];
+  if (f.disposition === "duplicate" && f.duplicate_of) parts[0] += ` of ${f.duplicate_of}`;
+  if (f.severity_final && f.severity_final !== f.severity) parts.push(f.severity_final === "none" ? "no impact" : f.severity_final);
+  if (f.disposition === "report" && f.disclosure && f.disclosure !== "ready") parts.push(f.disclosure);
+  return parts.join(", ");
+}
 
 /** FINDINGS.md at the workbase root: one line per finding, for people and peer agents. Pixel's file. */
 export function writeFindingsIndex(runId: string) {
-  const rows = listFindings({ run: runId }).sort((a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || Number(a.id.slice(1).split(/\D/)[0]) - Number(b.id.slice(1).split(/\D/)[0]));
+  const rows = listFindings({ run: runId }).sort((a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || numOf(a.id) - numOf(b.id));
   const lines = [
     "# Findings",
     "",
-    "Written by Pixel from `findings/` (one folder per finding; its README.md has the details, PoCs sit next to it). The verdict is the human's triage; notes are in TRIAGE.md.",
+    "Written by Pixel from `findings/` (one folder per finding; its README.md has the details, PoCs sit next to it). Triage is the human's: report (a real, novel bug to disclose), known (already public), duplicate (same root cause as another finding), weak (real, not worth disclosing), invalid (not a bug); notes are in TRIAGE.md.",
     "",
   ];
   if (!rows.length) lines.push("None yet.", "");
   else {
-    lines.push("| Id | State | Severity | Title | Location | Verdict |", "|---|---|---|---|---|---|");
+    lines.push("| Id | State | Severity | Title | Location | Triage |", "|---|---|---|---|---|---|");
     for (const f of rows) {
       const link = f.path ? `[${cell(f.title)}](${f.path.replace(/ /g, "%20")})` : cell(f.title);
-      lines.push(`| ${f.id} | ${STATE_WORDS[f.state] ?? f.state} | ${f.severity ?? ""} | ${link} | ${cell(f.location)} | ${f.verdict ? VERDICT_WORDS[f.verdict] : ""} |`);
+      lines.push(`| ${f.id} | ${STATE_WORDS[f.state] ?? f.state} | ${f.severity ?? ""} | ${link} | ${cell(f.location)} | ${cell(triageText(f))} |`);
     }
     lines.push("");
   }
   writeAtomic(join(workbasePath(runId), "FINDINGS.md"), lines.join("\n"));
 }
 
-/** The human's verdict on one finding (null clears it). Returns the updated finding. */
-/** `by`: where the verdict came from, "dashboard" or "MCP: <token name>". Run agents can't give verdicts. */
-export function setVerdict(runId: string, id: string, verdict: Verdict | null, note: string | null, by = "dashboard") {
-  if (verdict !== null && !VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${VERDICTS.join(", ")}`);
-  const before = getFinding(runId, id);
-  if (!before) throw new Error(`no finding ${id}`);
-  const at = Math.max(Date.now(), (before.verdict_at ?? 0) + 1);
-  const cleanNote = note?.trim() || null;
-  db.query("UPDATE findings SET verdict = ?, verdict_note = ?, verdict_at = ?, verdict_by = ? WHERE run_id = ? AND id = ?").run(verdict, cleanNote, verdict ? at : null, verdict ? by : null, runId, id);
-  const changes = JSON.stringify({ verdict: [before.verdict, verdict], by: [before.verdict_by, by] });
-  const res = insertEvent.run(runId, id, at, "verdict", changes, cleanNote, null);
-  const finding = getFinding(runId, id)!;
-  announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "verdict", changes, note: cleanNote, session_id: null }), finding);
-  publish("*", "findings", { run: runId });
-  try {
-    writeFindingsIndex(runId);
-    const run = getRun(runId);
-    if (run) writeTriage(run);
-    refreshRunFiles(runId);
-  } catch (e) {
-    console.error(`writing verdicts for ${runId}`, e);
+/** After triage or disclosure changes: the run's FINDINGS.md, TRIAGE.md, run.json, INDEX.md and TRIAGED.md. */
+function writeTriageFiles(runIds: Iterable<string>) {
+  for (const runId of new Set(runIds)) {
+    try {
+      writeFindingsIndex(runId);
+      const run = getRun(runId);
+      if (run) writeTriage(run);
+      refreshRunFiles(runId);
+    } catch (e) {
+      console.error(`writing triage for ${runId}`, e);
+    }
   }
-  return finding;
 }
 
-export const verdictWord = (v: string) => VERDICT_WORDS[v] ?? v;
+export interface TriageInput {
+  /** null clears the triage (and a disclosure that hasn't been sent). Left out: unchanged. */
+  disposition?: Disposition | null;
+  /** The final severity; null or the agent's own = agrees with the agent. Left out: unchanged. */
+  severity?: string | null;
+  /** `<run>/<id>` or an id in the same run; needed for duplicate. Left out: unchanged (or the agent's suggestion). */
+  duplicate_of?: string | null;
+  /** Left out: unchanged. */
+  note?: string | null;
+}
+
+class TriageError extends Error {}
+
+/** Check and work out one triage change, without writing. */
+function planTriage(runId: string, id: string, input: TriageInput) {
+  const before = getFinding(runId, id);
+  if (!before) throw new TriageError(`no finding ${id} in ${runId}`);
+  const has = (k: keyof TriageInput) => Object.prototype.hasOwnProperty.call(input, k) && input[k] !== undefined;
+  const disposition = has("disposition") ? (input.disposition?.toString().trim().toLowerCase() || null) : before.disposition;
+  if (disposition !== null && !(DISPOSITIONS as readonly string[]).includes(disposition))
+    throw new TriageError(`disposition must be one of ${DISPOSITIONS.join(", ")}, or null to clear it (got ${disposition})`);
+  let severity = has("severity") ? (input.severity?.toString().trim().toLowerCase() || null) : before.severity_final;
+  if (severity !== null && !(FINAL_SEVERITIES as readonly string[]).includes(severity)) throw new TriageError(`severity must be one of ${FINAL_SEVERITIES.join(", ")}, or null to agree with the agent (got ${severity})`);
+  if (severity === before.severity) severity = null;
+  let dup: string | null = has("duplicate_of") ? input.duplicate_of?.trim() || null : before.duplicate_of;
+  if (disposition === "duplicate") {
+    dup ??= before.agent_duplicate_of;
+    if (!dup) throw new TriageError(`${id}: a duplicate needs duplicate_of, the finding it repeats (<run>/<id>, or an id in the same run)`);
+    const ref = dupRef(dup, runId);
+    if (!ref) throw new TriageError(`duplicate_of must look like <run>/F3 or F3 (got ${dup})`);
+    const [r, f] = [ref.slice(0, ref.lastIndexOf("/")), ref.slice(ref.lastIndexOf("/") + 1)];
+    if (r === runId && f === id) throw new TriageError(`${id} can't be a duplicate of itself`);
+    if (!getFinding(r, f)) throw new TriageError(`duplicate_of: no finding ${ref}`);
+    dup = ref;
+  } else dup = null;
+  // Leaving report: a disclosure that's under way has to be taken back by hand first.
+  if (before.disposition === "report" && disposition !== "report" && (before.disclosure === "reported" || before.disclosure === "fixed"))
+    throw new TriageError(`${id} is already ${before.disclosure === "fixed" ? "fixed" : "reported"} upstream; set its disclosure back in the dashboard before changing its disposition`);
+  const note = has("note") ? input.note?.trim() || null : before.disposition_note;
+  return { before, disposition: disposition as Disposition | null, severity, dup, note };
+}
+
+/**
+ * Triage findings: disposition, final severity, duplicate_of, note (each left out stays as it is). Runs every
+ * item and reports each; the files are written once at the end. `by`: "dashboard" or "MCP: <token name>".
+ * Run agents can't triage.
+ */
+export function triageFindings(items: (TriageInput & { run: string; finding: string })[], by = "dashboard") {
+  const results: ({ run: string; finding: string; ok: true; finding_row: FindingRow } | { run: string; finding: string; ok: false; error: string })[] = [];
+  const touched: string[] = [];
+  for (const it of items) {
+    try {
+      const p = planTriage(it.run, it.finding, it);
+      const b = p.before;
+      const changes: Record<string, [unknown, unknown]> = {};
+      if (b.disposition !== p.disposition) changes.disposition = [b.disposition, p.disposition];
+      if (b.severity_final !== p.severity) changes.severity_final = [b.severity_final, p.severity];
+      if (b.duplicate_of !== p.dup) changes.duplicate_of = [b.duplicate_of, p.dup];
+      const noteChanged = b.disposition_note !== p.note;
+      if (!Object.keys(changes).length && !noteChanged) {
+        results.push({ run: it.run, finding: it.finding, ok: true, finding_row: b });
+        continue;
+      }
+      // Report starts the disclosure as ready; leaving report drops a disclosure that wasn't sent.
+      const disclosure = p.disposition === "report" ? (b.disclosure ?? "ready") : null;
+      const at = Math.max(Date.now(), (b.disposition_at ?? 0) + 1);
+      db.query(
+        `UPDATE findings SET disposition = ?, disposition_note = ?, disposition_at = ?, disposition_by = ?, severity_final = ?, duplicate_of = ?,
+          disclosure = ?, disclosure_at = CASE WHEN ? IS NULL THEN NULL WHEN disclosure IS NULL THEN ? ELSE disclosure_at END
+          ${disclosure === null ? ", disclosure_note = NULL, reported_at = NULL, report_url = NULL, fixed_at = NULL, fix_ref = NULL" : ""}
+         WHERE run_id = ? AND id = ?`,
+      ).run(p.disposition, p.note, p.disposition || p.severity ? at : null, p.disposition || p.severity ? by : null, p.severity, p.dup, disclosure, disclosure, at, it.run, it.finding);
+      changes.by = [b.disposition_by, by];
+      const json = JSON.stringify(changes);
+      const res = insertEvent.run(it.run, it.finding, at, "triage", json, p.note, null);
+      const row = getFinding(it.run, it.finding)!;
+      announce(it.run, parseEvent({ seq: Number(res.lastInsertRowid), run_id: it.run, finding_id: it.finding, at, action: "triage", changes: json, note: p.note, session_id: null }), row);
+      touched.push(it.run);
+      results.push({ run: it.run, finding: it.finding, ok: true, finding_row: row });
+    } catch (e) {
+      if (!(e instanceof TriageError)) console.error(`triage ${it.run}/${it.finding}`, e);
+      results.push({ run: it.run, finding: it.finding, ok: false, error: (e as Error).message });
+    }
+  }
+  if (touched.length) {
+    publish("*", "findings", { run: touched.length === 1 ? touched[0] : null });
+    writeTriageFiles(touched);
+  }
+  return results;
+}
+
+/** One finding's triage; throws on a bad input. */
+export function triageFinding(runId: string, id: string, input: TriageInput, by = "dashboard") {
+  const [r] = triageFindings([{ ...input, run: runId, finding: id }], by);
+  if (!r.ok) throw new Error(r.error);
+  return r.finding_row;
+}
+
+export interface DisclosureInput {
+  /** ready, reported, fixed, dropped; null clears it (back to ready). Left out: unchanged. */
+  disclosure?: Disclosure | null;
+  /** Why it was dropped (needed for dropped), or anything about the report. Left out: unchanged. */
+  note?: string | null;
+  report_url?: string | null;
+  /** When it was sent; defaults to now when it becomes reported. */
+  reported_at?: number | null;
+  /** Version or commit with the fix. */
+  fix_ref?: string | null;
+  fixed_at?: number | null;
+}
+
+/** The disclosure of a finding triaged as report. Only people set it, from the dashboard (the API refuses MCP clients). */
+export function setDisclosure(runId: string, id: string, input: DisclosureInput) {
+  const b = getFinding(runId, id);
+  if (!b) throw new Error(`no finding ${id} in ${runId}`);
+  if (b.disposition !== "report") throw new Error(`${id} isn't triaged as report; only findings to report have a disclosure`);
+  const has = (k: keyof DisclosureInput) => Object.prototype.hasOwnProperty.call(input, k) && input[k] !== undefined;
+  const state = (has("disclosure") ? input.disclosure ?? "ready" : b.disclosure ?? "ready") as string;
+  if (!(DISCLOSURES as readonly string[]).includes(state)) throw new Error(`disclosure must be one of ${DISCLOSURES.join(", ")} (got ${state})`);
+  const note = has("note") ? input.note?.trim() || null : b.disclosure_note;
+  if (state === "dropped" && !note) throw new Error("say why it's dropped (note)");
+  const url = has("report_url") ? input.report_url?.trim() || null : b.report_url;
+  if (url && !/^https?:\/\/\S+$/i.test(url)) throw new Error("report_url must be an http(s) link");
+  const now = Date.now();
+  const sent = state === "reported" || state === "fixed";
+  const reportedAt = has("reported_at") ? input.reported_at ?? null : sent ? (b.reported_at ?? now) : b.reported_at;
+  const fixRef = has("fix_ref") ? input.fix_ref?.trim() || null : b.fix_ref;
+  const fixedAt = has("fixed_at") ? input.fixed_at ?? null : state === "fixed" ? (b.fixed_at ?? now) : null;
+  const at = Math.max(now, (b.disclosure_at ?? 0) + 1);
+  db.query("UPDATE findings SET disclosure = ?, disclosure_note = ?, disclosure_at = ?, reported_at = ?, report_url = ?, fixed_at = ?, fix_ref = ? WHERE run_id = ? AND id = ?").run(
+    state, note, state !== b.disclosure ? at : (b.disclosure_at ?? at), reportedAt, url, fixedAt, fixRef?.slice(0, 300) ?? null, runId, id,
+  );
+  const changes: Record<string, [unknown, unknown]> = {};
+  if (state !== (b.disclosure ?? "ready")) changes.disclosure = [b.disclosure, state];
+  if (url !== b.report_url) changes.report_url = [b.report_url, url];
+  if (fixRef !== b.fix_ref) changes.fix_ref = [b.fix_ref, fixRef];
+  const row = getFinding(runId, id)!;
+  if (Object.keys(changes).length || note !== b.disclosure_note) {
+    const json = JSON.stringify(changes);
+    const res = insertEvent.run(runId, id, at, "disclosure", json, note, null);
+    announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "disclosure", changes: json, note, session_id: null }), row);
+    publish("*", "findings", { run: runId });
+    writeTriageFiles([runId]);
+  }
+  return row;
+}
+
+export const dispositionWord = (v: string) => DISPOSITION_WORDS[v] ?? v;
+export const disclosureWord = (v: string) => DISCLOSURE_WORDS[v] ?? v;

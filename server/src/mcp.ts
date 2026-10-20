@@ -10,6 +10,7 @@
  */
 import { dispatch, routeList } from "./api/router.ts";
 import { markUsed, mcpTokenOf, type PublicMcpToken } from "./mcpTokens.ts";
+import { matchSnippet } from "./findings.ts";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 /** Longest tool answer, so one call can't flood the agent's context (opencode also cuts tool output at 60,000). */
@@ -28,10 +29,13 @@ Runs are controlled with send_message, control_run, answer_question and create_r
 How to use it well:
 - Lists come in pages. Each answer has total, offset, returned and next; pass offset = next until next is null. A page can hold fewer rows than your limit, because answers stay under 55,000 characters.
 - To count or scan findings, use list_findings with brief: true (no summary or PoC, many rows per page), then get_finding for the ones you need in full. Don't ask for huge limits.
-- Filter on the server instead of fetching everything: run, severity (critical, high, medium, low, info, or none for no severity), state (lead, suspected, confirmed, ruled_out), untriaged, triaged (has a verdict), verdict (real, not_bug, duplicate). Separate several values with commas; case doesn't matter.
+- Filter on the server instead of fetching everything: run, repo, severity (the agent's: critical, high, medium, low, info, or none), final_severity (after triage), state (lead, suspected, confirmed, ruled_out), disposition, disclosure, view, untriaged, triaged. Separate several values with commas; case doesn't matter.
+- To find prior art ("has anyone reported an auth bypass in this file?"), use search_findings: words across title, location, class, text and repo of every run, best match first.
 - An error result is an error, not an empty answer: read its text and adjust the call (an unknown filter value or an answer too big says what to change).
 - Finding counts on runs (list_runs) leave out leads, which are ideas rather than findings to triage; they're counted apart as leads. list_findings includes leads unless you filter by state. In run counts, findings without a severity count as info.
-- verdict is the triage: real, not_bug, duplicate, or null before triage. Only people (the dashboard) and MCP clients give verdicts, never the run agents; verdictBy says which ("dashboard" or "MCP: <token name>"). A finding the agent marked ruled_out or left as a lead has no verdict. get_report is null until the agent writes REPORT.md.
+- Triage has two parts. disposition is the judgement, given once: report (a real, novel bug worth disclosing), known (the same bug is already public), duplicate (same root cause as another finding; duplicateOf says which), weak (real, but the preconditions or impact don't justify a disclosure), invalid (not a bug), or null before triage. severityFinal is the triage's severity (null = agrees with the agent's severity). disclosure applies only to report: ready, reported (sent upstream), fixed, dropped; people set it in the dashboard, you can only read it. The agent's own state and severity stay as the agent wrote them.
+- Only people and MCP clients triage, never the run agents; dispositionBy says who ("dashboard" or "MCP: <token name>"). agentDuplicateOf is the run agent's own claim that a finding repeats another one: a hint, not a triage.
+- When triaging: before calling something report, search for the same sink in that repo; if a known or duplicate matches, use that. Don't copy severities from neighbouring findings: judge each bug's own preconditions. Use triage_findings for many at once. get_report is null until the agent writes REPORT.md.
 - Workbase paths are relative to the workbase, e.g. findings/F3-name/README.md, with no leading slash.
 - Times are ISO 8601 UTC.
 - If a call fails with a connection error (such as ECONNRESET), retry it once before giving up.
@@ -65,7 +69,7 @@ async function api<T = any>(ctx: Ctx, method: string, path: string, body?: unkno
     const v = ctx.req.headers.get(h);
     if (v) headers.set(h, v);
   }
-  // So a verdict records which token gave it.
+  // So a triage records which token gave it.
   headers.set("x-pixel-mcp-token", encodeURIComponent(ctx.token.name));
   const res = await dispatch(new Request(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), url);
   const type = res.headers.get("content-type") ?? "";
@@ -135,6 +139,7 @@ function compactFinding(f: any, brief = false) {
   return {
     run: f.run_id,
     id: f.id,
+    repo: f.repo ?? undefined,
     title: f.title,
     state: f.state,
     severity: f.severity,
@@ -142,10 +147,18 @@ function compactFinding(f: any, brief = false) {
     location: f.location ?? undefined,
     poc: f.poc && !brief ? clip(f.poc, 400) : undefined,
     summary: f.summary && !brief ? clip(f.summary, 400) : undefined,
-    verdict: f.verdict ?? null,
-    verdictNote: f.verdict_note ?? undefined,
-    verdictBy: f.verdict ? (f.verdict_by ?? "dashboard") : undefined,
+    disposition: f.disposition ?? null,
+    severityFinal: f.severity_final ?? undefined,
     duplicateOf: f.duplicate_of ?? undefined,
+    dispositionNote: f.disposition_note ? (brief ? clip(f.disposition_note, 300) : f.disposition_note) : undefined,
+    dispositionBy: f.disposition ? (f.disposition_by ?? "dashboard") : undefined,
+    agentDuplicateOf: f.agent_duplicate_of ?? undefined,
+    disclosure: f.disclosure ?? undefined,
+    reported: iso(f.reported_at) ?? undefined,
+    reportUrl: f.report_url ?? undefined,
+    fixed: iso(f.fixed_at) ?? undefined,
+    fixRef: f.fix_ref ?? undefined,
+    disclosureNote: f.disclosure_note ?? undefined,
     problem: f.problem ? clip(f.problem, 300) : undefined,
     removed: f.removed_at ? (f.removed_reason ?? "removed") : undefined,
     path: f.path ?? undefined,
@@ -153,6 +166,36 @@ function compactFinding(f: any, brief = false) {
     updated: iso(f.updated),
   };
 }
+
+/** The finding filters list_findings and search_findings share, as query parameters. */
+const FILTER_ARGS = {
+  run: { type: "string", description: "Only this run" },
+  repo: { type: "string", description: "Only runs whose repository contains this text, e.g. libpng" },
+  severity: { type: "string", description: "The agent's severity: critical, high, medium, low, info, or none; comma-separated for several" },
+  final_severity: { type: "string", description: "The severity after triage (the final one, else the agent's): critical, high, medium, low, info, none" },
+  state: { type: "string", description: "lead, suspected, confirmed or ruled_out; comma-separated for several" },
+  disposition: { type: "string", description: "report, known, duplicate, weak, invalid, or none (not triaged); comma-separated for several" },
+  disclosure: { type: "string", description: "ready, reported, fixed, dropped, or none; comma-separated for several" },
+  view: { type: "string", enum: ["triage", "report", "resolved", "reviewed"], description: "The dashboard's lists: triage (suspected or confirmed, no disposition), report (to report: ready or reported), resolved (fixed or dropped), reviewed (any disposition)" },
+  duplicate_of: { type: "string", description: "Only findings triaged as duplicates of this one (<run>/<id>)" },
+  untriaged: { type: "boolean", description: "Only findings without a disposition (and not ruled out)" },
+  triaged: { type: "boolean", description: "Only findings with a disposition" },
+} as const;
+
+function filterQuery(a: any) {
+  const q = new URLSearchParams();
+  for (const k of ["run", "repo", "severity", "final_severity", "state", "disposition", "disclosure", "view", "duplicate_of"]) if (a[k]) q.set(k, String(a[k]));
+  if (a.untriaged) q.set("untriaged", "1");
+  if (a.triaged) q.set("triaged", "1");
+  return q;
+}
+
+const TRIAGE_ITEM = {
+  disposition: { type: ["string", "null"], enum: ["report", "known", "duplicate", "weak", "invalid", null], description: "null clears the triage; leave out to keep it" },
+  severity: { type: ["string", "null"], enum: ["critical", "high", "medium", "low", "info", "none", null], description: "The final severity; null agrees with the agent. Leave out to keep it" },
+  duplicate_of: { type: ["string", "null"], description: "Needed for duplicate: the finding it repeats, <run>/<id> or an id in the same run" },
+  note: { type: ["string", "null"], description: "Why; for known, where it's public (CVE, issue). Leave out to keep it" },
+} as const;
 
 /** One transcript message as short text: what was said, and each tool call with its input and output cut down. */
 function renderMessage(m: { info: any; parts: any[] }, reasoning: boolean) {
@@ -264,49 +307,59 @@ const TOOLS: Tool[] = [
     name: "list_findings",
     title: "List findings",
     description:
-      "Findings the agents wrote (findings/F<n>-name/README.md in each workbase), newest change first: title, state (lead, suspected, confirmed, ruled_out), severity, location, verdict (real, not_bug, duplicate, or null before triage), the start of the summary and PoC. brief: true leaves the summary and PoC out (many more rows per page). Removed findings aren't listed. Paged: pass offset = next until next is null. To count or scan many, use brief: true.",
+      "Findings the agents wrote (findings/F<n>-name/README.md in each workbase), newest change first: title, repo, state and severity (the agent's), location, the triage (disposition, severityFinal, duplicateOf, note), disclosure, the start of the summary and PoC. brief: true leaves the summary and PoC out (many more rows per page). Removed findings aren't listed. Paged: pass offset = next until next is null. To count or scan many, use brief: true. For words in the text, use search_findings.",
     readOnly: true,
     inputSchema: {
       type: "object",
       properties: {
-        run: { type: "string", description: "Only this run" },
-        severity: { type: "string", description: "critical, high, medium, low, info, or none (no severity); comma-separated for several" },
-        state: { type: "string", description: "lead, suspected, confirmed or ruled_out; comma-separated for several" },
-        untriaged: { type: "boolean", description: "Only findings without a verdict (and not ruled out)" },
-        triaged: { type: "boolean", description: "Only findings with a verdict, given by a person or an MCP client: the checked ones" },
-        verdict: { type: "string", description: "Only these verdicts: real, not_bug, duplicate; comma-separated for several" },
+        ...FILTER_ARGS,
         brief: { type: "boolean", description: "Leave out the summary and PoC" },
         limit: { type: "number", description: "Default 100" },
         offset: offsetArg,
       },
     },
     async run(a, ctx) {
-      const q = new URLSearchParams();
-      if (a.run) q.set("run", a.run);
-      if (a.severity) q.set("severity", a.severity);
-      if (a.state) q.set("state", a.state);
-      if (a.untriaged) q.set("untriaged", "1");
-      if (a.triaged) q.set("triaged", "1");
-      if (a.verdict) q.set("verdict", a.verdict);
-      const all = await api<any[]>(ctx, "GET", `/findings?${q}`);
+      const all = await api<any[]>(ctx, "GET", `/findings?${filterQuery(a)}`);
       return fitPage("findings", all.map((f) => compactFinding(f, !!a.brief)), a.offset, a.limit, 100);
+    },
+  },
+  {
+    name: "search_findings",
+    title: "Search findings",
+    description:
+      "Findings of every run whose title, location, class, text or repository contain all the words, best match first (title, then location), with where the text matched. Quotes keep a phrase together: \"heap overflow\" pngrutil. Takes the same filters as list_findings, e.g. disposition: \"report,known,duplicate\" for prior art. Brief rows; use get_finding for one in full.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", description: "Words to look for" }, ...FILTER_ARGS, limit: { type: "number", description: "Default 30" }, offset: offsetArg },
+      required: ["query"],
+    },
+    async run(a, ctx) {
+      const q = filterQuery(a);
+      q.set("q", String(a.query ?? ""));
+      const all = await api<any[]>(ctx, "GET", `/findings?${q}`);
+      return fitPage("findings", all.map((f) => ({ ...compactFinding(f, true), match: matchSnippet(f, a.query) || undefined })), a.offset, a.limit, 30);
     },
   },
   {
     name: "get_finding",
     title: "Finding brief",
     description:
-      "Everything about one finding as markdown: target, state, severity, the README, the PoC and small files inline, and curl commands (with a one-week token) to download the rest. Use it after list_findings (brief: true) to read the findings you need in full.",
+      "Everything about one finding as markdown: target, the agent's state and severity, the triage and disclosure, the README, the PoC and small files inline, findings already triaged in the same project, and curl commands (with a one-week token) to download the rest. Ends with a task for the purpose: verify (check it, the default), disclose (write the report for the maintainers; the default for a finding ready to report) or variants (look for the same mistake elsewhere).",
     readOnly: true,
-    inputSchema: { type: "object", properties: { run: runArg, finding: { type: "string", description: "Finding id, e.g. F3" } }, required: ["run", "finding"] },
+    inputSchema: {
+      type: "object",
+      properties: { run: runArg, finding: { type: "string", description: "Finding id, e.g. F3" }, purpose: { type: "string", enum: ["verify", "disclose", "variants"] } },
+      required: ["run", "finding"],
+    },
     async run(a, ctx) {
-      return (await api(ctx, "GET", `/runs/${enc(a.run)}/findings/${enc(a.finding)}/llm`)).text;
+      return (await api(ctx, "GET", `/runs/${enc(a.run)}/findings/${enc(a.finding)}/llm${a.purpose ? `?purpose=${enc(a.purpose)}` : ""}`)).text;
     },
   },
   {
     name: "finding_history",
     title: "Finding history",
-    description: "Changes to findings over time (created, state or severity changed, verdicts). Pixel-wide unless a run is given.",
+    description: "Changes to findings over time (created, state or severity changed, triage, disclosure). Pixel-wide unless a run is given.",
     readOnly: true,
     inputSchema: {
       type: "object",
@@ -320,21 +373,29 @@ const TOOLS: Tool[] = [
     },
   },
   {
-    name: "set_finding_verdict",
-    title: "Set finding verdict",
-    description: "Record the human's verdict on a finding (goes into the run's TRIAGE.md). It does not message the agent. verdict null clears it.",
+    name: "triage_finding",
+    title: "Triage a finding",
+    description:
+      "Triage one finding: disposition (report, known, duplicate, weak, invalid; null clears), the final severity (null = agrees with the agent), duplicate_of (needed for duplicate) and a note. Fields you leave out stay as they are. Goes into the run's TRIAGE.md and TRIAGED.md; it doesn't message the agent. Disclosure (reported, fixed) is set by people in the dashboard. For many, use triage_findings.",
+    inputSchema: { type: "object", properties: { run: runArg, finding: str, ...TRIAGE_ITEM }, required: ["run", "finding"] },
+    async run(a, ctx) {
+      const { run, finding, ...rest } = a;
+      return compactFinding(await api(ctx, "POST", `/runs/${enc(run)}/findings/${enc(finding)}/triage`, rest), true);
+    },
+  },
+  {
+    name: "triage_findings",
+    title: "Triage many findings",
+    description:
+      "Triage up to 500 findings in one call (an import, or a batch you reviewed). Each item is {run, finding, disposition, severity, duplicate_of, note} as in triage_finding; each is applied on its own and reported as ok or with its error, so fix and resend only the failed ones. A duplicate_of must point at a finding that exists.",
     inputSchema: {
       type: "object",
-      properties: {
-        run: runArg,
-        finding: str,
-        verdict: { type: ["string", "null"], enum: ["real", "not_bug", "duplicate", null] },
-        note: { type: "string" },
-      },
-      required: ["run", "finding", "verdict"],
+      properties: { items: { type: "array", maxItems: 500, items: { type: "object", properties: { run: runArg, finding: str, ...TRIAGE_ITEM }, required: ["run", "finding"] } } },
+      required: ["items"],
     },
     async run(a, ctx) {
-      return compactFinding(await api(ctx, "POST", `/runs/${enc(a.run)}/findings/${enc(a.finding)}/verdict`, { verdict: a.verdict, note: a.note ?? null }));
+      const res = await api(ctx, "POST", "/findings/triage", { items: a.items });
+      return { ok: res.ok, failed: res.failed, errors: res.results.filter((r: any) => !r.ok).map((r: any) => ({ run: r.run, finding: r.finding, error: r.error })) };
     },
   },
   {
@@ -498,7 +559,7 @@ const TOOLS: Tool[] = [
     name: "pixel_api",
     title: "Pixel API",
     description:
-      "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path. GET /runs, /findings and /runs/<id>/findings take limit and offset (the findings ones also severity, state, untriaged, triaged, verdict); an answer over 55,000 characters is refused, so page big lists.",
+      "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path. GET /runs, /findings and /runs/<id>/findings take limit and offset (the findings ones also the list_findings filters and q); an answer over 55,000 characters is refused, so page big lists.",
     destructive: true,
     inputSchema: {
       type: "object",

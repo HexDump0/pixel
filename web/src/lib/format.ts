@@ -37,3 +37,7 @@ export function tokens(n: number | null | undefined) {
 }
 
 export const money = (n: number | null | undefined) => (n == null ? "" : `$${n.toFixed(n < 1 ? 3 : 2)}`);
+
+/** "3 Oct", or "3 Oct 2025" for another year. */
+export const day = (ts: number | null | undefined) =>
+  ts ? new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" }) : "";

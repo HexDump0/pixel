@@ -19,7 +19,8 @@ describe("templates", () => {
     expect(render(body, { prev: null })).toBe("start\nend");
   });
   test("Pixel's sections expand with their variables; unknown ones are refused", () => {
-    const out = render("Intro\n\n{{> findings}}\n\n{{> report}}\n", { workbase: "/wb" });
+    const out = render("Intro\n\n{{> findings}}\n\n{{> report}}\n", { workbase: "/wb", workbases: "/workbases" });
+    expect(out).toContain("`/workbases/TRIAGED.md`");
     expect(out).toContain("## Findings");
     expect(out).toContain("`/wb/findings/F<n>-<short-name>/README.md`");
     expect(out).toContain("Write your final report to `/wb/REPORT.md`");

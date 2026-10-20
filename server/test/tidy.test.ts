@@ -45,7 +45,7 @@ describe("upgrading an older database", () => {
     const history = readFileSync(join(data, "workbases/up-1/.pixel/progress-history.md"), "utf8");
     expect(history.indexOf("first")).toBeLessThan(history.indexOf("second"));
     const after = new Database(join(data, "pixel.db"), { readonly: true });
-    expect(after.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+    expect(after.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
     expect(after.query("SELECT 1 FROM sqlite_master WHERE name = 'progress'").get()).toBeNull();
     expect(JSON.parse((after.query("SELECT value FROM settings WHERE key = '_preUpgrade'").get() as any).value).from).toBe(0);
     after.close();

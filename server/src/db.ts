@@ -11,9 +11,10 @@ db.exec(`PRAGMA temp_store_directory = '${config.tmpDir.replace(/'/g, "''")}'`);
 /**
  * Schema version (PRAGMA user_version). Bump it with any change below that drops or rewrites data: on the first
  * start after an upgrade Pixel saves the database as it was to pre-upgrade.db (same disk, if there's room) before
- * migrating. 1 = the redesign (2026-10-16), the first version that counts.
+ * migrating. 1 = the redesign (2026-10-16), the first version that counts. 2 = finding verdicts became triage
+ * dispositions plus a disclosure track (2026-10-20).
  */
-const SCHEMA = 1;
+const SCHEMA = 2;
 const hadRuns = !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get();
 /** The schema version this database had when Pixel started (SCHEMA for a new one). */
 export const upgradedFrom = hadRuns ? db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version : SCHEMA;
@@ -226,12 +227,12 @@ DROP TABLE IF EXISTS files_index;
 DROP TABLE IF EXISTS progress;
 
 -- Findings the agent keeps in the workbase (findings/F<n>-name/README.md, see findings.ts), synced from
--- those files. The verdict columns are the human's and never come from the files.
+-- those files. The triage and disclosure columns are the human's and never come from the files.
 CREATE TABLE IF NOT EXISTS findings (
   run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   id             TEXT NOT NULL,                  -- F1, F2, … per run
-  state          TEXT NOT NULL,                  -- lead | suspected | confirmed | ruled_out
-  severity       TEXT,                           -- critical | high | medium | low | info
+  state          TEXT NOT NULL,                  -- lead | suspected | confirmed | ruled_out (the agent's)
+  severity       TEXT,                           -- critical | high | medium | low | info (the agent's)
   title          TEXT NOT NULL,
   class          TEXT,
   location       TEXT,
@@ -242,10 +243,24 @@ CREATE TABLE IF NOT EXISTS findings (
   session_id     TEXT,                           -- last writer
   removed_at     INTEGER,
   removed_reason TEXT,
-  duplicate_of   TEXT,
-  verdict        TEXT,                           -- real | not_bug | duplicate (older rows: needs_work)
-  verdict_note   TEXT,
-  verdict_at     INTEGER,
+  duplicate_of   TEXT,                           -- triage: <run>/<id> of the same bug, with disposition duplicate
+  path           TEXT,
+  problem        TEXT,
+  -- Triage, once per finding: report | known | duplicate | weak | invalid.
+  disposition      TEXT,
+  disposition_note TEXT,
+  disposition_at   INTEGER,
+  disposition_by   TEXT,                         -- "dashboard" or "MCP: <token name>"
+  severity_final   TEXT,                         -- the triage's severity; null = agrees with the agent
+  agent_duplicate_of TEXT,                       -- the agent's own duplicate_of header: a suggestion
+  -- Disclosure, only for disposition report, set by hand: ready | reported | fixed | dropped.
+  disclosure      TEXT,
+  disclosure_note TEXT,                          -- why it was dropped, or anything about the report
+  disclosure_at   INTEGER,
+  reported_at     INTEGER,
+  report_url      TEXT,
+  fixed_at        INTEGER,
+  fix_ref         TEXT,
   PRIMARY KEY (run_id, id)
 );
 CREATE INDEX IF NOT EXISTS findings_updated ON findings(updated);
@@ -255,7 +270,7 @@ CREATE TABLE IF NOT EXISTS finding_events (
   run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   finding_id TEXT NOT NULL,
   at         INTEGER NOT NULL,
-  action     TEXT NOT NULL,                      -- add | update | remove | verdict
+  action     TEXT NOT NULL,                      -- add | update | remove | triage | disclosure (older: verdict)
   changes    TEXT,                               -- JSON {field: [old, new]}
   note       TEXT,
   session_id TEXT,
@@ -299,10 +314,49 @@ for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "cred
 for (const [column, type] of [["disk_boost", "TEXT"], ["disk_rescues", "INTEGER NOT NULL DEFAULT 0"]] as const) {
   if (!db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`);
 }
-// Who gave a finding its verdict (2026-10-20): "dashboard" or "MCP: <token name>".
-if (!db.query<{ name: string }, []>("PRAGMA table_info(findings)").all().some((c) => c.name === "verdict_by")) db.exec("ALTER TABLE findings ADD COLUMN verdict_by TEXT");
+migrateVerdicts();
 // Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
 if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
+
+/**
+ * Finding triage (2026-10-20): the verdict (real | not_bug | duplicate) became a disposition (report | known |
+ * duplicate | weak | invalid) with a final severity, plus a disclosure track for the ones to report. real maps to
+ * report (ready to disclose), not_bug to invalid; a note that starts "Triage: KNOWN, severity medium" (an MCP
+ * client wrote those before the fields existed) sets both.
+ */
+function migrateVerdicts() {
+  const has = () => new Set(db.query<{ name: string }, []>("PRAGMA table_info(findings)").all().map((c) => c.name));
+  let cols = has();
+  let migrated = false;
+  if (cols.has("verdict")) {
+    if (!cols.has("verdict_by")) db.exec("ALTER TABLE findings ADD COLUMN verdict_by TEXT");
+    db.transaction(() => {
+      for (const [a, b] of [["verdict", "disposition"], ["verdict_note", "disposition_note"], ["verdict_at", "disposition_at"], ["verdict_by", "disposition_by"]])
+        db.exec(`ALTER TABLE findings RENAME COLUMN ${a} TO ${b}`);
+      db.exec("UPDATE findings SET disposition = CASE disposition WHEN 'real' THEN 'report' WHEN 'not_bug' THEN 'invalid' WHEN 'duplicate' THEN 'duplicate' ELSE NULL END");
+    })();
+    cols = has();
+    migrated = true;
+  }
+  for (const [column, type] of [["severity_final", "TEXT"], ["agent_duplicate_of", "TEXT"], ["disclosure", "TEXT"], ["disclosure_note", "TEXT"], ["disclosure_at", "INTEGER"], ["reported_at", "INTEGER"], ["report_url", "TEXT"], ["fixed_at", "INTEGER"], ["fix_ref", "TEXT"]] as const)
+    if (!cols.has(column)) db.exec(`ALTER TABLE findings ADD COLUMN ${column} ${type}`);
+  // Only once, while migrating: later the note is just a note.
+  const noted = !migrated ? [] : db
+    .query<{ run_id: string; id: string; severity: string | null; disposition_note: string }, []>(
+      "SELECT run_id, id, severity, disposition_note FROM findings WHERE disposition_note LIKE 'Triage:%'",
+    )
+    .all();
+  for (const r of noted) {
+    const m = /^\s*Triage:\s*(report|known|duplicate|weak|invalid)\b[\s,.;:-]*(?:severity\s*:?\s*(critical|high|medium|low|info|none)\b)?/i.exec(r.disposition_note);
+    if (!m) continue;
+    const disposition = m[1].toLowerCase();
+    const sev = m[2]?.toLowerCase() ?? null;
+    // A duplicate needs to say of what; without one it stays as it was for a person to finish.
+    if (disposition === "duplicate") continue;
+    db.query("UPDATE findings SET disposition = ?, severity_final = ? WHERE run_id = ? AND id = ?").run(disposition, sev && sev !== r.severity ? sev : null, r.run_id, r.id);
+  }
+  db.exec("UPDATE findings SET disclosure = 'ready', disclosure_at = disposition_at WHERE disposition = 'report' AND disclosure IS NULL");
+}
 
 // Messages by run (run detail's cache totals, a run's whole-life series); added 2026-10-16.
 db.exec("CREATE INDEX IF NOT EXISTS messages_run ON messages(run_id, created_at)");
