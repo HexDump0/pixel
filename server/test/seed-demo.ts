@@ -362,7 +362,8 @@ run({
 });
 triageFinding("sqlite-fts5-2026-10-12", "F1", { disposition: "invalid", note: "Needs a single 2 GB document; not reachable with the default SQLITE_MAX_LENGTH." });
 triageFinding("yaml-cpp-2026-10-12", "F1", { disposition: "report", note: "Reachable from YAML::Load on any untrusted document." });
-setDisclosure("yaml-cpp-2026-10-12", "F1", { disclosure: "reported", report_url: "https://github.com/jbeder/yaml-cpp/security/advisories/GHSA-demo-0001", reported_at: now - 9 * H });
+setDisclosure("yaml-cpp-2026-10-12", "F1", { disclosure: "reported", report_url: "https://github.com/jbeder/yaml-cpp/security/advisories/GHSA-demo-0001", reported_at: now - 84 * 24 * H });
+triageFinding("libpng-2026-10-14", "F1", { disposition: "report", note: "Reachable from png_read_info on any untrusted PNG." });
 triageFinding("yaml-cpp-2026-10-12", "F2", { disposition: "weak", severity: "info", note: "Stack exhaustion on 40 000 nested brackets; denial of service only." });
 
 
@@ -421,5 +422,21 @@ for (const [batch, at] of [["b1", now - 26 * H], ["b2", now - 2 * H]] as const)
     const fail = batch === "b2" && model === "moonshotai/kimi-k2";
     stIns.run(batch, at, provider, model, fail ? null : t, fail ? null : Math.round(t + (340 / sp) * 1000), fail ? null : 340, fail ? null : sp, fail ? 0 : 1, fail ? "429 Too Many Requests" : null);
   }
+
+// A finished check on latest upstream for libpng F1, and a variants hunt still running.
+run({
+  id: "libpng-2026-10-20", label: "libpng chunk parsing F1 on latest", repo: "https://github.com/pnggroup/libpng", status: "done", started: now - 50 * M, finished: now - 38 * M, hue: 0, tps: 30,
+  agents: [{ title: "main", started: now - 50 * M, tools: [sh("cmake -DCMAKE_C_FLAGS=-fsanitize=address .."), sh("./pngtest iccp-0041.png")], done: true }],
+  report: "---\nresult: present\ncommit: 9c1d7e2\n---\nStill reproduces on 9c1d7e2: same heap-buffer-overflow READ in png_handle_iCCP (pngrutil.c:1184). The length check was not touched since the original commit.\n",
+});
+run({
+  id: "libpng-2026-10-20-2", label: "libpng chunk parsing F1 variants", repo: "https://github.com/pnggroup/libpng", status: "running", started: now - 18 * M, hue: 0, tps: 52,
+  agents: [{ title: "main", started: now - 18 * M, tools: [rd("pngrutil.c:2300"), sh("rg -n 'png_decompress_chunk' .")] }],
+  findings: [finding("F1", "zTXt decompression copies the keyword before checking its length", "lead", null, now - 6 * M, { location: "pngrutil.c:2381" })],
+});
+db.query("UPDATE runs SET source_finding = 'libpng-2026-10-14/F1', source_kind = 'check' WHERE id = 'libpng-2026-10-20'").run();
+db.query("UPDATE runs SET source_finding = 'libpng-2026-10-14/F1', source_kind = 'variants' WHERE id = 'libpng-2026-10-20-2'").run();
+const { readCheck } = await import("../src/findingRuns.ts");
+readCheck(db.query<any, []>("SELECT * FROM runs WHERE id = 'libpng-2026-10-20'").get());
 
 console.log(`Seeded ${db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM runs").get()!.n} runs in ${process.env.PIXEL_DATA}`);

@@ -30,8 +30,12 @@ export interface Settings {
     ntfyUrl: string;
     telegramToken: string;
     telegramChat: string;
-    on: { done: boolean; stopped: boolean; question: boolean; failed: boolean };
+    on: { done: boolean; stopped: boolean; question: boolean; failed: boolean; deadline: boolean };
   };
+  /** Days from sending a finding upstream to its disclosure deadline. */
+  disclosureDays: number;
+  /** A sent finding counts as due soon (amber, one notification) this many days before its deadline. */
+  disclosureWarnDays: number;
   backup: {
     repository: string;
     password: string;
@@ -110,8 +114,10 @@ export const defaultSettings: Settings = {
     ntfyUrl: "",
     telegramToken: "",
     telegramChat: "",
-    on: { done: true, stopped: true, question: true, failed: true },
+    on: { done: true, stopped: true, question: true, failed: true, deadline: true },
   },
+  disclosureDays: 90,
+  disclosureWarnDays: 14,
   backup: { repository: "", password: "", env: {}, dailyHour: -1 },
   historyIntervalMin: 5,
   providerLimits: {},
@@ -132,6 +138,8 @@ export function getSettings(): Settings {
       s[r.key] = JSON.parse(r.value);
     } catch {}
   }
+  // Notification switches added later default to on for settings saved before them.
+  s.notify = { ...defaultSettings.notify, ...s.notify, on: { ...defaultSettings.notify.on, ...s.notify?.on } };
   return s;
 }
 

@@ -11,6 +11,7 @@ import {
   IconCpu,
   IconDatabase,
   IconFolder,
+  IconHourglass,
   IconKey,
   IconPlugConnected,
   IconPlus,
@@ -62,6 +63,7 @@ const NAV: { id: string; label: string; icon: ReactNode }[] = [
   { id: "machines", label: "Machines", icon: <IconCpu {...IC_SM} /> },
   { id: "autopilot", label: "Autopilot", icon: <IconRobot {...IC_SM} /> },
   { id: "workbase", label: "Workbase and disk", icon: <IconFolder {...IC_SM} /> },
+  { id: "disclosure", label: "Disclosure", icon: <IconHourglass {...IC_SM} /> },
   { id: "environment", label: "Agent environment", icon: <IconKey {...IC_SM} /> },
   { id: "notifications", label: "Notifications", icon: <IconBell {...IC_SM} /> },
   { id: "backups", label: "Backups", icon: <IconDatabase {...IC_SM} /> },
@@ -203,6 +205,15 @@ export function SettingsPage() {
           </Section>
 
           <WorkbaseSection s={s} d={d} update={update} reset={reset} workbases={workbases.data} />
+
+          <Section id="disclosure" icon={<IconHourglass {...IC} />} title="Disclosure" meta="For findings you send upstream">
+            <Row label="Deadline after sending" hint="Counted from the day you mark a finding sent. Each finding can be extended on its own." reset={reset("disclosureDays", " days")}>
+              <NumberInput label="Disclosure deadline" value={s.disclosureDays} onChange={(v) => update("disclosureDays", v)} unit="days" min={1} />
+            </Row>
+            <Row label="Due soon from" hint="Before the deadline: the finding turns amber and one notification goes out (Notifications, Disclosure deadline)." reset={reset("disclosureWarnDays", " days")}>
+              <NumberInput label="Due soon from" value={s.disclosureWarnDays} onChange={(v) => update("disclosureWarnDays", v)} unit="days before" width="w-[170px]" min={1} />
+            </Row>
+          </Section>
 
           <EnvironmentSection s={s} update={update} providers={p} />
 
@@ -611,6 +622,7 @@ const EVENTS: { k: keyof Settings["notify"]["on"]; label: string; hint: string }
   { k: "question", label: "Question", hint: "The agent asks you something" },
   { k: "stopped", label: "Stopped", hint: "Out of continues, or paused or moved for an API key" },
   { k: "failed", label: "Failed", hint: "The run couldn't start" },
+  { k: "deadline", label: "Disclosure deadline", hint: "A sent finding is due soon, then past its deadline" },
 ];
 
 function ChannelState({ last, configured }: { last: NotifyStatus["ntfy"]; configured: boolean }) {

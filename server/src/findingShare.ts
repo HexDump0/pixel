@@ -201,6 +201,8 @@ function factLines(f: FindingRow, run: ReturnType<typeof getRun>, withRun = true
     f.disposition_note && `- Triage note: ${f.disposition_note.replace(/\s+/g, " ").trim()}`,
     !f.disposition && f.agent_duplicate_of && `- The agent says it duplicates ${f.agent_duplicate_of}`,
     f.disposition === "report" && f.disclosure && `- Disclosure: ${disclosureWord(f.disclosure)}${f.reported_at ? `, sent ${day(f.reported_at)}` : ""}${f.report_url ? ` (${f.report_url})` : ""}${f.fix_ref ? `, fix ${f.fix_ref}` : ""}${f.fixed_at ? ` on ${day(f.fixed_at)}` : ""}${f.disclosure_note ? `: ${f.disclosure_note}` : ""}`,
+    f.disposition === "report" && f.deadline && `- Disclosure deadline: ${day(f.deadline)}`,
+    f.upstream_status && `- Checked on latest upstream ${day(f.upstream_at)}: ${f.upstream_status === "present" ? "still present" : f.upstream_status}${f.upstream_commit ? ` at ${f.upstream_commit}` : ""}${f.upstream_fixed_by ? `, fixed by ${f.upstream_fixed_by}` : ""}`,
     withRun && run && `- Found by: ${run.model}, Pixel run ${run.label ?? run.id}`,
   ].filter(Boolean) as string[];
 }

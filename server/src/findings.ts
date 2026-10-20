@@ -20,6 +20,9 @@ import { ACTIVE_STATUSES, db, getRun, listRuns, type RunRow } from "./db.ts";
 import { publish } from "./bus.ts";
 import { outcomeText, refreshRunFiles, dispositionCounts, workbasePath, writeTriage, writeTriaged } from "./knowledge.ts";
 import { timeline } from "./runs/state.ts";
+import { getSettings } from "./settings.ts";
+import { notify } from "./notify.ts";
+import { config } from "./config.ts";
 
 export const STATES = ["lead", "suspected", "confirmed", "ruled_out"] as const;
 export const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
@@ -82,17 +85,33 @@ export interface FindingRow {
   report_url: string | null;
   fixed_at: number | null;
   fix_ref: string | null;
+  /** A deadline set by hand (extended); null = sent + Settings disclosureDays. */
+  deadline_at: number | null;
+  deadline_notified: "soon" | "over" | null;
+  /** The latest check on latest upstream: present | fixed | changed | unclear, from the check run's UPSTREAM.md. */
+  upstream_status: UpstreamStatus | null;
+  upstream_commit: string | null;
+  upstream_fixed_by: string | null;
+  upstream_note: string | null;
+  upstream_at: number | null;
+  upstream_run: string | null;
   /** The run's repository (joined from runs). */
   repo: string | null;
+  /** While sent upstream: the disclosure deadline, and when it starts to count as due soon. Computed. */
+  deadline: number | null;
+  deadline_warn_at: number | null;
 }
+
+export const UPSTREAM_STATUSES = ["present", "fixed", "changed", "unclear"] as const;
+export type UpstreamStatus = (typeof UPSTREAM_STATUSES)[number];
 
 export interface FindingEvent {
   seq: number;
   run_id: string;
   finding_id: string;
   at: number;
-  /** verdict: older triage events (real, not_bug, duplicate). */
-  action: "add" | "update" | "remove" | "verdict" | "triage" | "disclosure";
+  /** verdict: older triage events (real, not_bug, duplicate). upstream: a check run's answer. */
+  action: "add" | "update" | "remove" | "verdict" | "triage" | "disclosure" | "upstream";
   changes: Record<string, [unknown, unknown]> | null;
   note: string | null;
   session_id: string | null;
@@ -206,7 +225,19 @@ const insertEvent = db.query(
 
 /** Findings with their run's repository. Filters use the `f.` prefix. */
 const SELECT = "SELECT f.*, r.repo AS repo FROM findings f LEFT JOIN runs r ON r.id = f.run_id";
-export const getFinding = (runId: string, id: string) => db.query<FindingRow, [string, string]>(`${SELECT} WHERE f.run_id = ? AND f.id = ?`).get(runId, id);
+const DAY = 86_400_000;
+
+/** The disclosure deadline of a sent finding: set by hand, else sent + disclosureDays. */
+function withDeadline(f: FindingRow, s = getSettings()): FindingRow {
+  const sent = f.disposition === "report" && f.disclosure === "reported" && f.reported_at;
+  const deadline = sent ? (f.deadline_at ?? f.reported_at! + s.disclosureDays * DAY) : null;
+  return { ...f, deadline, deadline_warn_at: deadline === null ? null : deadline - s.disclosureWarnDays * DAY };
+}
+
+export const getFinding = (runId: string, id: string) => {
+  const f = db.query<FindingRow, [string, string]>(`${SELECT} WHERE f.run_id = ? AND f.id = ?`).get(runId, id);
+  return f ? withDeadline(f) : null;
+};
 
 const parseEvent = (e: any): FindingEvent => ({ ...e, changes: e.changes ? JSON.parse(e.changes) : null });
 
@@ -231,7 +262,13 @@ export function describeEvent(e: Pick<FindingEvent, "action" | "changes" | "note
     }
     case "disclosure": {
       const d = e.changes?.disclosure?.[1];
-      return `${e.finding_id} ${d ? DISCLOSURE_WORDS[String(d)] ?? d : "disclosure cleared"}: ${title}${note}`;
+      const dl = e.changes?.deadline?.[1];
+      if (!d && dl) return `${e.finding_id} deadline moved to ${new Date(Number(dl)).toISOString().slice(0, 10)}: ${title}`;
+      return `${e.finding_id} ${d ? DISCLOSURE_WORDS[String(d)] ?? d : "disclosure updated"}: ${title}${note}`;
+    }
+    case "upstream": {
+      const st = e.changes?.upstream_status?.[1];
+      return `${e.finding_id} on latest upstream: ${st === "present" ? "still present" : st === "fixed" ? "fixed" : st === "changed" ? "changed" : "unclear"}: ${title}`;
     }
     default: {
       const st = e.changes?.state;
@@ -315,9 +352,11 @@ export function syncFindings(run: RunRow, by: string | null = null) {
 
 /** Events people make (triage, disclosure), not the agent. */
 const PEOPLE_ACTIONS = new Set(["verdict", "triage", "disclosure"]);
+/** Events Pixel makes from a run started from the finding. */
+const PIXEL_ACTIONS = new Set(["upstream"]);
 
 function announce(runId: string, event: FindingEvent, finding: FindingRow) {
-  timeline(runId, PEOPLE_ACTIONS.has(event.action) ? "user" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq, title: finding.title, severity: finding.severity, state: finding.state, disposition: finding.disposition, note: event.note, changes: event.changes }, event.at);
+  timeline(runId, PEOPLE_ACTIONS.has(event.action) ? "user" : PIXEL_ACTIONS.has(event.action) ? "pixel" : "agent", "finding", describeEvent(event, finding), { finding: event.finding_id, action: event.action, seq: event.seq, title: finding.title, severity: finding.severity, state: finding.state, disposition: finding.disposition, note: event.note, changes: event.changes }, event.at);
   publish(runId, "finding", { event, finding });
   publish("*", "finding", { event, finding });
 }
@@ -473,7 +512,8 @@ export function listFindings(q: FindingQuery = {}) {
     where.push(`(${SEARCHED.map((c) => `instr(lower(COALESCE(${c}, '')), ?) > 0`).join(" OR ")})`);
     params.push(...SEARCHED.map(() => w));
   }
-  const rows = db.query<FindingRow, any[]>(`${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY f.updated DESC`).all(...params);
+  const settings = getSettings();
+  const rows = db.query<FindingRow, any[]>(`${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY f.updated DESC`).all(...params).map((f) => withDeadline(f, settings));
   if (!words.length) return rows;
   // Best match first: words in the title, then the location, count most.
   const score = (f: FindingRow) => words.reduce((n, w) => n + (f.title.toLowerCase().includes(w) ? 4 : 0) + (f.location?.toLowerCase().includes(w) ? 2 : 0) + (f.class?.toLowerCase().includes(w) ? 1 : 0), 0);
@@ -721,6 +761,8 @@ export interface DisclosureInput {
   /** Version or commit with the fix. */
   fix_ref?: string | null;
   fixed_at?: number | null;
+  /** Move the deadline of a sent finding by this many days (from its current deadline). */
+  extend_days?: number;
 }
 
 /** The disclosure of a finding triaged as report. Only people set it, from the dashboard (the API refuses MCP clients). */
@@ -741,10 +783,22 @@ export function setDisclosure(runId: string, id: string, input: DisclosureInput)
   const fixRef = has("fix_ref") ? input.fix_ref?.trim() || null : b.fix_ref;
   const fixedAt = has("fixed_at") ? input.fixed_at ?? null : state === "fixed" ? (b.fixed_at ?? now) : null;
   const at = Math.max(now, (b.disclosure_at ?? 0) + 1);
-  db.query("UPDATE findings SET disclosure = ?, disclosure_note = ?, disclosure_at = ?, reported_at = ?, report_url = ?, fixed_at = ?, fix_ref = ? WHERE run_id = ? AND id = ?").run(
-    state, note, state !== b.disclosure ? at : (b.disclosure_at ?? at), reportedAt, url, fixedAt, fixRef?.slice(0, 300) ?? null, runId, id,
-  );
+  // A deadline set by hand only means something while sent; extending moves the current one.
+  let deadlineAt = state === "reported" ? b.deadline_at : null;
+  if (input.extend_days !== undefined) {
+    const days = Number(input.extend_days);
+    if (state !== "reported") throw new Error("only a sent finding has a deadline to extend");
+    if (!Number.isFinite(days) || days === 0 || Math.abs(days) > 365) throw new Error("extend_days must be a number of days, up to 365");
+    deadlineAt = (b.deadline ?? (reportedAt ?? now) + getSettings().disclosureDays * DAY) + days * DAY;
+  }
+  if (state === "reported" && b.reported_at && reportedAt !== b.reported_at && input.extend_days === undefined) deadlineAt = null;
+  // A new or moved deadline can be announced again.
+  const notified = deadlineAt === b.deadline_at && state === b.disclosure ? b.deadline_notified : null;
+  db.query(
+    "UPDATE findings SET disclosure = ?, disclosure_note = ?, disclosure_at = ?, reported_at = ?, report_url = ?, fixed_at = ?, fix_ref = ?, deadline_at = ?, deadline_notified = ? WHERE run_id = ? AND id = ?",
+  ).run(state, note, state !== b.disclosure ? at : (b.disclosure_at ?? at), reportedAt, url, fixedAt, fixRef?.slice(0, 300) ?? null, deadlineAt, notified, runId, id);
   const changes: Record<string, [unknown, unknown]> = {};
+  if (deadlineAt !== b.deadline_at && deadlineAt !== null) changes.deadline = [b.deadline, deadlineAt];
   if (state !== (b.disclosure ?? "ready")) changes.disclosure = [b.disclosure, state];
   if (url !== b.report_url) changes.report_url = [b.report_url, url];
   if (fixRef !== b.fix_ref) changes.fix_ref = [b.fix_ref, fixRef];
@@ -761,3 +815,53 @@ export function setDisclosure(runId: string, id: string, input: DisclosureInput)
 
 export const dispositionWord = (v: string) => DISPOSITION_WORDS[v] ?? v;
 export const disclosureWord = (v: string) => DISCLOSURE_WORDS[v] ?? v;
+
+// ---- upstream checks ----
+
+/** A check run's answer on the finding it came from; older answers than the one recorded are ignored. */
+export function recordUpstream(runId: string, id: string, u: { status: UpstreamStatus; commit: string | null; fixedBy: string | null; note: string | null; at: number; run: string }) {
+  const b = getFinding(runId, id);
+  if (!b) return false;
+  if (b.upstream_at && b.upstream_at > u.at && b.upstream_run !== u.run) return false;
+  // Already recorded (Pixel restarted and read the same answer again).
+  if (b.upstream_run === u.run && b.upstream_at === u.at && b.upstream_status === u.status) return false;
+  db.query("UPDATE findings SET upstream_status = ?, upstream_commit = ?, upstream_fixed_by = ?, upstream_note = ?, upstream_at = ?, upstream_run = ? WHERE run_id = ? AND id = ?").run(
+    u.status, u.commit, u.fixedBy, u.note, u.at, u.run, runId, id,
+  );
+  const changes = JSON.stringify({ upstream_status: [b.upstream_status, u.status], commit: [b.upstream_commit, u.commit], run: [b.upstream_run, u.run] });
+  const at = Math.max(Date.now(), (b.updated ?? 0) + 1);
+  const res = insertEvent.run(runId, id, at, "upstream", changes, u.fixedBy ? `fixed by ${u.fixedBy}` : null, null);
+  const row = getFinding(runId, id)!;
+  announce(runId, parseEvent({ seq: Number(res.lastInsertRowid), run_id: runId, finding_id: id, at, action: "upstream", changes, note: u.fixedBy ? `fixed by ${u.fixedBy}` : null, session_id: null }), row);
+  publish("*", "findings", { run: runId });
+  return true;
+}
+
+// ---- deadlines ----
+
+/** Sent findings whose deadline is near or past and not yet announced: one notification each, per stage. */
+export async function checkDeadlines(now = Date.now()) {
+  const s = getSettings();
+  const sent = listFindings({ disposition: "report", disclosure: "reported" });
+  for (const f of sent) {
+    if (f.deadline === null || f.deadline_warn_at === null) continue;
+    const stage = now >= f.deadline ? "over" : now >= f.deadline_warn_at ? "soon" : null;
+    if (!stage || f.deadline_notified === stage || (stage === "soon" && f.deadline_notified === "over")) continue;
+    db.query("UPDATE findings SET deadline_notified = ? WHERE run_id = ? AND id = ?").run(stage, f.run_id, f.id);
+    const days = Math.round(Math.abs(f.deadline - now) / DAY);
+    const when = stage === "over" ? `${days} day${days === 1 ? "" : "s"} past its deadline` : `deadline in ${days} day${days === 1 ? "" : "s"}`;
+    const body = `${f.title}\n${f.repo ?? f.run_id}, sent ${new Date(f.reported_at!).toISOString().slice(0, 10)}${f.report_url ? `\n${f.report_url}` : ""}\nDeadline ${new Date(f.deadline).toISOString().slice(0, 10)} (${s.disclosureDays}-day policy)`;
+    const link = config.publicUrl ? `${config.publicUrl.replace(/\/$/, "")}/findings#${encodeURIComponent(`${f.run_id}/${f.id}`)}` : undefined;
+    await notify("deadline", `${f.id} ${when}`, body, link).catch((e) => console.error("deadline notify failed", e));
+  }
+}
+
+let deadlineTimer: ReturnType<typeof setInterval> | null = null;
+export function startDeadlineWatch(everyMs = 3_600_000) {
+  void checkDeadlines();
+  deadlineTimer ??= setInterval(() => void checkDeadlines(), everyMs);
+}
+export function stopDeadlineWatch() {
+  if (deadlineTimer) clearInterval(deadlineTimer);
+  deadlineTimer = null;
+}

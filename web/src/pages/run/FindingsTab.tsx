@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRunFindings, byPriority, isOpen } from "../../lib/findings.ts";
 import type { Run } from "../../lib/types.ts";
-import { RunFindingsList } from "../findings/FindingsTable.tsx";
+import { RunFindingsList } from "../findings/FindingList.tsx";
 import { FindingDetail } from "../findings/FindingDetail.tsx";
 import { openRun } from "../../lib/actions.ts";
 
@@ -18,11 +18,11 @@ export function FindingsTab({ run, selected, onSelect, seen }: { run: Run; selec
       </div>
     );
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] max-xl:block max-xl:h-auto">
-      <div className="overflow-y-auto border-r border-line-2 pt-5 pr-5 pb-10 pl-6 max-xl:overflow-visible max-xl:border-r-0">
+    <div className="grid h-full grid-cols-[300px_minmax(0,1fr)] max-xl:block max-xl:h-auto">
+      <div className="overflow-y-auto border-r border-line-2 px-2 pt-2 pb-10 max-xl:overflow-visible max-xl:border-r-0">
         <RunFindingsList findings={all} selected={current?.id} onOpen={(f) => onSelect(f.id)} showRemoved={showRemoved} onToggleRemoved={() => setShowRemoved((s) => !s)} isNew={(f) => f.updated > seen} />
       </div>
-      <div className="overflow-y-auto max-xl:border-t max-xl:border-line-2">{current && <FindingDetail key={current.id} f={current} run={run} showRun={false} onOpen={(f) => (f.run_id === run.id ? onSelect(f.id) : openRun(f.run_id, `findings/${f.id}`))} />}</div>
+      <div className="flex min-h-0 flex-col max-xl:border-t max-xl:border-line-2">{current && <FindingDetail key={current.id} f={current} run={run} showRun={false} onOpen={(f) => (f.run_id === run.id ? onSelect(f.id) : openRun(f.run_id, `findings/${f.id}`))} />}</div>
     </div>
   );
 }

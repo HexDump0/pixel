@@ -24,6 +24,8 @@ import {
   type TriageInput,
 } from "../findings.ts";
 import { LLM_PURPOSES, llmBrief, llmList, originOf } from "../findingShare.ts";
+import { startFindingRun, type FindingRunInput } from "../findingRuns.ts";
+
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, chooseProxy, nextKey, setFailover } from "../runs/keys.ts";
@@ -210,6 +212,11 @@ post("/runs/:id/findings/:fid/disclosure", async ({ req, params: { id, fid } }) 
   mustRun(id);
   if (req.headers.get("x-pixel-mcp-token")) throw new HttpError(403, "disclosure is set by a person in the dashboard, not over MCP");
   return setDisclosure(id, fid, await readJson<DisclosureInput>(req));
+});
+/** Start a run from a finding: kind check (is it still in the latest code?) or variants (the same root cause elsewhere). */
+post("/runs/:id/findings/:fid/runs", async ({ req, params: { id, fid } }) => {
+  mustRun(id);
+  return publicRun(startFindingRun(id, fid, await readJson<FindingRunInput>(req)));
 });
 /** The finding as one markdown text for another model, with a signed link to its files. purpose: verify, disclose or variants. */
 get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid }, query }) => {

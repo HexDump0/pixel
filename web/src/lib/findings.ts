@@ -68,8 +68,8 @@ export const sevOf = (f: Pick<Finding, "severity" | "severity_final" | "state">)
 /** Needs triage: suspected or confirmed, not removed, no disposition yet. */
 export const isOpen = (f: Finding) => !f.disposition && !f.removed_at && (f.state === "suspected" || f.state === "confirmed");
 
-/** The Findings page's lists. `aside` is what the agent set aside itself (leads, ruled out) without a triage. */
-export type FindingView = "triage" | "report" | "resolved" | "reviewed" | "aside";
+/** The Findings page's lists: to triage, to report (not sent and sent), done (fixed or dropped), all. */
+export type FindingView = "triage" | "report" | "resolved" | "all";
 export const disclosureOf = (f: Finding): Disclosure | null => (f.disposition === "report" ? (f.disclosure ?? "ready") : null);
 export function inView(f: Finding, v: FindingView) {
   if (f.removed_at) return false;
@@ -81,11 +81,22 @@ export function inView(f: Finding, v: FindingView) {
       return d === "ready" || d === "reported";
     case "resolved":
       return d === "fixed" || d === "dropped";
-    case "reviewed":
-      return !!f.disposition;
-    case "aside":
-      return !f.disposition && (f.state === "lead" || f.state === "ruled_out");
+    case "all":
+      return true;
   }
+}
+
+const DAY = 86_400_000;
+/** A sent finding's deadline in words and tone: "12d over" (bad), "6d" (warn, inside the warning window), "43d". */
+export function deadlineOf(f: Pick<Finding, "deadline" | "deadline_warn_at" | "reported_at">, now = Date.now()) {
+  if (f.deadline == null) return null;
+  const left = f.deadline - now;
+  const days = Math.ceil(Math.abs(left) / DAY);
+  const over = left < 0;
+  const soon = !over && f.deadline_warn_at != null && now >= f.deadline_warn_at;
+  const total = f.reported_at ? Math.round((f.deadline - f.reported_at) / DAY) : null;
+  const elapsed = f.reported_at ? Math.max(0, Math.floor((now - f.reported_at) / DAY)) : null;
+  return { over, soon, days, total, elapsed, short: over ? `${days}d over` : `${days}d`, tone: over ? "bad" : soon ? "warn" : "" };
 }
 
 /** Untriaged first, then by severity, then newest. */
@@ -118,6 +129,9 @@ export const copyForLlm = (f: Pick<Finding, "run_id" | "id">, purpose?: LlmPurpo
 /** Copy a list of findings as one markdown text (each README cut to fit), with a task for the purpose. */
 export const copyListForLlm = (list: Finding[], purpose: "list" | "triage" | LlmPurpose, title?: string) =>
   copyLater(api.findingsLlm(list.slice(0, 500).map(refOf), purpose, title).then((b) => b.text));
+
+export type FindingRunKind = "check" | "variants";
+export const startFindingRun = (f: Pick<Finding, "run_id" | "id">, body: { kind: FindingRunKind; ref?: string | null; model?: string; size?: string }) => api.findingRun(f.run_id, f.id, body);
 
 function refresh(f: Finding) {
   void queryClient.invalidateQueries({ queryKey: keys.findings });

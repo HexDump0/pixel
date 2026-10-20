@@ -362,3 +362,55 @@ describe("upgrade", () => {
     expect(bun(db(`console.log(db.query("SELECT disposition FROM findings WHERE id = 'F5'").get().disposition)`)).trim()).toBe("weak");
   });
 });
+
+describe("deadlines and runs from a finding", () => {
+  test("a sent finding's deadline, extending it, one notice per stage", async () => {
+    const { checkDeadlines } = await import("../src/findings.ts");
+    const run = makeRun("fd-dl");
+    write(run.id, "F1-a", { state: "confirmed", severity: "high" }, "# Bug a\n");
+    checkFindings(run);
+    triageFinding(run.id, "F1", { disposition: "report" });
+    expect(listFindings({ run: run.id })[0].deadline).toBeNull();
+    const day = 86_400_000;
+    const sentAt = Date.now() - 80 * day;
+    const sent = setDisclosure(run.id, "F1", { disclosure: "reported", reported_at: sentAt });
+    expect(sent.deadline).toBe(sentAt + 90 * day);
+    expect(sent.deadline_warn_at).toBe(sentAt + 76 * day);
+
+    await checkDeadlines();
+    expect(listFindings({ run: run.id })[0].deadline_notified).toBe("soon");
+    await checkDeadlines(Date.now() + 20 * day);
+    expect(listFindings({ run: run.id })[0].deadline_notified).toBe("over");
+
+    const moved = setDisclosure(run.id, "F1", { extend_days: 30 });
+    expect(moved.deadline).toBe(sentAt + 120 * day);
+    expect(moved.deadline_notified).toBeNull(); // a moved deadline can be announced again
+    expect(findingEvents({ run: run.id, finding: "F1" })[0]).toMatchObject({ action: "disclosure", changes: { deadline: [sentAt + 90 * day, sentAt + 120 * day] } });
+    expect(() => setDisclosure(run.id, "F1", { disclosure: "fixed", extend_days: 10 })).toThrow(/only a sent finding/);
+    expect(setDisclosure(run.id, "F1", { disclosure: "fixed" }).deadline).toBeNull();
+  });
+
+  test("a check run's REPORT.md header lands on its finding; the prompts point at the finding", async () => {
+    const { readCheck, checkPrompt, variantsPrompt } = await import("../src/findingRuns.ts");
+    const src = makeRun("fd-src");
+    db.query("UPDATE runs SET commit_sha = 'abc123', ref = 'main' WHERE id = ?").run(src.id);
+    write(src.id, "F1-iccp", { state: "confirmed", severity: "high", location: "pngrutil.c:1184 png_handle_iCCP" }, "# Heap overflow in {{iCCP}}\n");
+    checkFindings(src);
+    const f = listFindings({ run: src.id })[0];
+    const check = checkPrompt(getRun(src.id)!, f);
+    expect(check).toContain("`{{workbases}}/fd-src/findings/F1-iccp/README.md`");
+    expect(check).toContain("git log --oneline abc123..HEAD -- pngrutil.c");
+    expect(check).toContain('"Heap overflow in iCCP"'); // no template braces from the finding
+    expect(variantsPrompt(getRun(src.id)!, f)).toContain("duplicate_of: fd-src/F1");
+
+    const chk = makeRun("fd-chk");
+    db.query("UPDATE runs SET source_finding = 'fd-src/F1', source_kind = 'check', commit_sha = 'def456' WHERE id = ?").run(chk.id);
+    writeFileSync(join(workbasePath(chk.id), "REPORT.md"), "---\nresult: fixed\nfixed_by: 9f00d1\n---\nNo longer reproduces: the length is checked since 9f00d1.\n");
+    expect(readCheck(getRun(chk.id)!)).toBe(true);
+    expect(readCheck(getRun(chk.id)!)).toBe(false); // unchanged file: not read again
+    expect(listFindings({ run: src.id })[0]).toMatchObject({ upstream_status: "fixed", upstream_commit: "def456", upstream_fixed_by: "9f00d1", upstream_run: "fd-chk" });
+    expect(timelineOf(src.id).at(-1)).toContain("F1 on latest upstream: fixed");
+
+    expect((await call("POST", `/runs/${src.id}/findings/F1/runs`, { kind: "nope" })).status).toBe(400);
+  });
+});

@@ -1,7 +1,7 @@
 import { db } from "./db.ts";
 import { getSettings } from "./settings.ts";
 
-export type NotifyKind = "done" | "stopped" | "question" | "failed";
+export type NotifyKind = "done" | "stopped" | "question" | "failed" | "deadline";
 export type Channel = "ntfy" | "telegram";
 export interface Sent {
   channel: Channel;
@@ -42,8 +42,8 @@ export async function notify(kind: NotifyKind | "test", title: string, body: str
         method: "POST",
         headers: {
           Title: title.replace(/[^\x20-\x7e]/g, ""),
-          Tags: { done: "white_check_mark", stopped: "warning", question: "question", failed: "x", test: "bell" }[kind],
-          Priority: kind === "question" || kind === "failed" ? "high" : "default",
+          Tags: { done: "white_check_mark", stopped: "warning", question: "question", failed: "x", deadline: "hourglass", test: "bell" }[kind],
+          Priority: kind === "question" || kind === "failed" || kind === "deadline" ? "high" : "default",
           ...(link ? { Click: link } : {}),
         },
         body,

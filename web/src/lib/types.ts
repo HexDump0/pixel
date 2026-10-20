@@ -38,6 +38,8 @@ export interface SpeedTestRow {
 /** Per run: findings that aren't leads, how many still need triage, by severity; the result from the triage. */
 export interface FindingCounts {
   total: number;
+  /** Leads: ideas, not counted in total. */
+  leads: number;
   untriaged: number;
   confirmed: number;
   bySeverity: Record<string, number>;

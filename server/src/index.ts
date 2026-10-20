@@ -15,7 +15,8 @@ import { runtime } from "./runtime/index.ts";
 import { startFleet, stopFleet } from "./fleet.ts";
 import { startArchiving } from "./archive.ts";
 import { startHealth } from "./health.ts";
-import { startFindingsWatch, stopFindingsWatch } from "./findings.ts";
+import { startDeadlineWatch, startFindingsWatch, stopDeadlineWatch, stopFindingsWatch } from "./findings.ts";
+import { startCheckWatch, stopCheckWatch } from "./findingRuns.ts";
 import { serveShare } from "./findingShare.ts";
 import dashboard from "../../web/index.html";
 import { liveShutdown } from "./liveTest.ts";
@@ -80,6 +81,8 @@ else {
 }
 startFleet();
 startFindingsWatch();
+startDeadlineWatch();
+startCheckWatch();
 startArchiving();
 startHealth(feedCount);
 startBackupSchedule();
@@ -105,6 +108,8 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     stopWatchdog();
     stopFleet();
     stopFindingsWatch();
+    stopDeadlineWatch();
+    stopCheckWatch();
     server.stop();
     // Don't leave the live test's opencode running; give it a few seconds at most.
     void Promise.race([liveShutdown(), Bun.sleep(6000)]).finally(() => process.exit(0));

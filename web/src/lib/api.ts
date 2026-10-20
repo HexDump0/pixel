@@ -159,6 +159,7 @@ export const api = {
   findingEvents: (id: string, finding?: string) => request<FindingEvent[]>("GET", `${r(id)}/findings/events${q({ finding })}`),
   allFindingEvents: (since?: number, limit = 200) => request<FindingEvent[]>("GET", `/findings/events${q({ since, limit })}`),
   triageFinding: (id: string, finding: string, body: TriageInput) => request<Finding>("POST", `${r(id)}/findings/${encodeURIComponent(finding)}/triage`, body),
+  findingRun: (id: string, finding: string, body: { kind: "check" | "variants"; ref?: string | null; model?: string; size?: string }) => request<Run>("POST", `${r(id)}/findings/${encodeURIComponent(finding)}/runs`, body),
   disclosure: (id: string, finding: string, body: DisclosureInput) => request<Finding>("POST", `${r(id)}/findings/${encodeURIComponent(finding)}/disclosure`, body),
   feed: (limit = 50, since?: number) => request<FeedEntry[]>("GET", `/feed${q({ limit, since })}`),
   series: (id: string) => request<RunSeries>("GET", `${r(id)}/series`),

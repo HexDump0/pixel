@@ -1,11 +1,11 @@
 /**
- * Lists of findings. Across runs, one list per view of the Findings page (to triage by project, to report by
- * sent or not, resolved, reviewed by disposition, set aside by the agent); for one run, grouped by state.
+ * Lists of findings across runs, one per view (to triage by project, to report by sent or not, done, all by
+ * disposition): the groups the Findings page shows, and the table the Wall shows for To triage.
  * Each row: id, severity after triage (with the agent's when they differ), title and where, run, age, status.
  */
 import type { ReactNode } from "react";
 import { cn } from "../../lib/cn.ts";
-import { byPriority, dispositionLabel, disclosureOf, finalSev, inView, refOf, sevChanged, sevOf, STATE_LABEL, STATE_WORD, type FindingView } from "../../lib/findings.ts";
+import { byPriority, dispositionLabel, disclosureOf, finalSev, inView, isOpen, refOf, sevChanged, sevOf, STATE_WORD, type FindingView } from "../../lib/findings.ts";
 import { runName } from "../../lib/fleet.ts";
 import { age } from "../../lib/health.ts";
 import type { Finding, Run } from "../../lib/types.ts";
@@ -47,7 +47,7 @@ function SevCell({ f }: { f: Finding }) {
 
 function Row({ f, run, showRun, selected, isNew, view, onOpen }: { f: Finding; run?: Run; showRun: boolean; selected: boolean; isNew?: boolean; view: FindingView | "run"; onOpen: (f: Finding) => void }) {
   const st = status(f, view, isNew);
-  const dimmed = !!f.removed_at || (view !== "run" && disclosureOf(f) === "dropped") || (view === "reviewed" && (f.disposition === "invalid" || f.disposition === "duplicate"));
+  const dimmed = !!f.removed_at || (view !== "run" && disclosureOf(f) === "dropped") || (view === "all" && (f.disposition === "invalid" || f.disposition === "duplicate"));
   return (
     <div
       role="option"
@@ -125,29 +125,28 @@ export function viewGroups(findings: Finding[], view: FindingView): { title: str
     case "report":
       return [
         { title: "Not sent yet", list: mine.filter((f) => disclosureOf(f) === "ready").sort(byPriority) },
-        { title: "Sent, waiting on upstream", list: mine.filter((f) => disclosureOf(f) === "reported").sort((a, b) => (a.reported_at ?? 0) - (b.reported_at ?? 0)) },
+        { title: "Sent, waiting on upstream", list: mine.filter((f) => disclosureOf(f) === "reported").sort((a, b) => (a.deadline ?? Infinity) - (b.deadline ?? Infinity)) },
       ];
     case "resolved":
       return [
         { title: "Fixed upstream", list: mine.filter((f) => disclosureOf(f) === "fixed").sort(newest((f) => f.fixed_at)) },
         { title: "Dropped", list: mine.filter((f) => disclosureOf(f) === "dropped").sort(newest((f) => f.disclosure_at)) },
       ];
-    case "reviewed":
-      return DISPOSITION_GROUPS.map(([d, title]) => ({ title, list: mine.filter((f) => f.disposition === d).sort(newest((f) => f.disposition_at)) }));
-    case "aside":
+    case "all":
       return [
-        { title: "Leads, not yet findings", list: mine.filter((f) => f.state === "lead").sort(byPriority) },
-        { title: "Ruled out by the agent", list: mine.filter((f) => f.state === "ruled_out").sort(newest(() => null)) },
+        ...DISPOSITION_GROUPS.map(([d, title]) => ({ title, list: mine.filter((f) => f.disposition === d).sort(newest((f) => f.disposition_at)) })),
+        { title: "To triage", list: mine.filter(isOpen).sort(byPriority) },
+        { title: "Leads, not yet findings", list: mine.filter((f) => !f.disposition && f.state === "lead").sort(byPriority) },
+        { title: "Ruled out by the agent", list: mine.filter((f) => !f.disposition && f.state === "ruled_out").sort(newest(() => null)) },
       ];
   }
 }
 
-const EMPTY: Record<FindingView, string> = {
+export const EMPTY: Record<FindingView, string> = {
   triage: "Nothing to triage.",
   report: "Nothing to report. Findings you triage as Report land here until they're sent and fixed.",
-  resolved: "Nothing resolved yet: findings land here once fixed upstream or dropped.",
-  reviewed: "Nothing triaged yet.",
-  aside: "No leads or ruled out findings.",
+  resolved: "Nothing done yet: findings land here once fixed upstream or dropped.",
+  all: "No findings.",
 };
 
 /** One view of the findings across runs. */
@@ -164,42 +163,6 @@ export function FindingsTable({ groups, view, runs, selected, onOpen, isNew }: {
           ))}
         </Group>
       ))}
-    </div>
-  );
-}
-
-const STATE_ORDER = ["confirmed", "suspected", "lead", "ruled_out"];
-
-/** One run: grouped by state (Confirmed, Suspected, Leads, Ruled out); removed ones behind a toggle. */
-export function RunFindingsList({ findings, selected, onOpen, showRemoved, onToggleRemoved, isNew }: { findings: Finding[]; selected?: string; onOpen: (f: Finding) => void; showRemoved: boolean; onToggleRemoved: () => void; isNew?: (f: Finding) => boolean }) {
-  const live = findings.filter((f) => !f.removed_at);
-  const removed = findings.filter((f) => f.removed_at);
-  return (
-    <div role="listbox" aria-label="Findings" className="overflow-hidden rounded-xl border border-line-2 bg-s1">
-      {STATE_ORDER.map((st) => {
-        const list = live.filter((f) => f.state === st).sort(byPriority);
-        if (!list.length) return null;
-        return (
-          <Group key={st} title={STATE_LABEL[st]} n={list.length}>
-            {list.map((f) => (
-              <Row key={f.id} f={f} showRun={false} view="run" selected={selected === f.id} isNew={isNew?.(f)} onOpen={onOpen} />
-            ))}
-          </Group>
-        );
-      })}
-      {removed.length > 0 && (
-        <Group
-          title="Removed"
-          n={removed.length}
-          right={
-            <button type="button" onClick={onToggleRemoved} className="cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-normal text-ink-3 hover:text-ink hover:underline">
-              {showRemoved ? "Hide" : "Show"}
-            </button>
-          }
-        >
-          {showRemoved && removed.map((f) => <Row key={f.id} f={f} showRun={false} view="run" selected={selected === f.id} onOpen={onOpen} />)}
-        </Group>
-      )}
     </div>
   );
 }

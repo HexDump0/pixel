@@ -159,6 +159,8 @@ function compactFinding(f: any, brief = false) {
     fixed: iso(f.fixed_at) ?? undefined,
     fixRef: f.fix_ref ?? undefined,
     disclosureNote: f.disclosure_note ?? undefined,
+    deadline: iso(f.deadline) ?? undefined,
+    upstream: f.upstream_status ? { status: f.upstream_status, commit: f.upstream_commit ?? undefined, fixedBy: f.upstream_fixed_by ?? undefined, checked: iso(f.upstream_at), run: f.upstream_run ?? undefined } : undefined,
     problem: f.problem ? clip(f.problem, 300) : undefined,
     removed: f.removed_at ? (f.removed_reason ?? "removed") : undefined,
     path: f.path ?? undefined,

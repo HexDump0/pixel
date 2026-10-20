@@ -261,6 +261,15 @@ CREATE TABLE IF NOT EXISTS findings (
   report_url      TEXT,
   fixed_at        INTEGER,
   fix_ref         TEXT,
+  deadline_at     INTEGER,                       -- when sent: a set deadline; null = sent + Settings disclosureDays
+  deadline_notified TEXT,                        -- soon | over: the deadline notice already sent
+  -- The latest "check on latest upstream" run: present | fixed | changed | unclear.
+  upstream_status   TEXT,
+  upstream_commit   TEXT,
+  upstream_fixed_by TEXT,
+  upstream_note     TEXT,
+  upstream_at       INTEGER,
+  upstream_run      TEXT,
   PRIMARY KEY (run_id, id)
 );
 CREATE INDEX IF NOT EXISTS findings_updated ON findings(updated);
@@ -306,7 +315,7 @@ CREATE TABLE IF NOT EXISTS mcp_tokens (
 `);
 
 // Columns added after the first release: add them to existing databases.
-for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"], ["runs", "status_at", "INTEGER"], ["runs", "asleep", "INTEGER NOT NULL DEFAULT 0"], ["runs", "proxy_id", "TEXT"]] as const) {
+for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "creds_hash", "TEXT"], ["runs", "label", "TEXT"], ["runs", "key_id", "TEXT"], ["runs", "key_failover", "INTEGER NOT NULL DEFAULT 1"], ["runs", "hue", "INTEGER"], ["findings", "path", "TEXT"], ["findings", "problem", "TEXT"], ["runs", "status_at", "INTEGER"], ["runs", "asleep", "INTEGER NOT NULL DEFAULT 0"], ["runs", "proxy_id", "TEXT"], ["runs", "source_finding", "TEXT"], ["runs", "source_kind", "TEXT"]] as const) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
@@ -338,7 +347,7 @@ function migrateVerdicts() {
     cols = has();
     migrated = true;
   }
-  for (const [column, type] of [["severity_final", "TEXT"], ["agent_duplicate_of", "TEXT"], ["disclosure", "TEXT"], ["disclosure_note", "TEXT"], ["disclosure_at", "INTEGER"], ["reported_at", "INTEGER"], ["report_url", "TEXT"], ["fixed_at", "INTEGER"], ["fix_ref", "TEXT"]] as const)
+  for (const [column, type] of [["severity_final", "TEXT"], ["agent_duplicate_of", "TEXT"], ["disclosure", "TEXT"], ["disclosure_note", "TEXT"], ["disclosure_at", "INTEGER"], ["reported_at", "INTEGER"], ["report_url", "TEXT"], ["fixed_at", "INTEGER"], ["fix_ref", "TEXT"], ["deadline_at", "INTEGER"], ["deadline_notified", "TEXT"], ["upstream_status", "TEXT"], ["upstream_commit", "TEXT"], ["upstream_fixed_by", "TEXT"], ["upstream_note", "TEXT"], ["upstream_at", "INTEGER"], ["upstream_run", "TEXT"]] as const)
     if (!cols.has(column)) db.exec(`ALTER TABLE findings ADD COLUMN ${column} ${type}`);
   // Only once, while migrating: later the note is just a note.
   const noted = !migrated ? [] : db
@@ -503,6 +512,9 @@ export interface RunSize {
 
 export interface RunRow {
   id: string;
+  /** Started from a finding (`<run>/<id>`), as a check on latest upstream or a hunt for variants. */
+  source_finding: string | null;
+  source_kind: "check" | "variants" | null;
   repo: string;
   ref: string | null;
   commit_sha: string | null;
