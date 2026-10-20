@@ -24,8 +24,18 @@ const JSON_BUDGET = 55_000;
 const INSTRUCTIONS = `Pixel runs many long-lived audit agents (opencode) against repositories. Each run has a workbase folder with its notes, findings (findings/F<n>-name/README.md) and REPORT.md.
 Start with list_runs or list_findings. get_finding gives a finding as one self-contained markdown brief (with download commands for its files). token_usage covers tokens and cost.
 Runs are controlled with send_message, control_run, answer_question and create_run. For anything without a tool, use pixel_api (it lists every route).
-Lists come in pages: each answer has total, offset, returned and next (the offset for the following page, null at the end); pass offset to continue. Answers are kept under 55,000 characters, so a page can hold fewer rows than the limit. Times are ISO 8601 UTC.
-Finding counts on runs (list_runs) leave out leads (ideas, not yet findings) and count them separately as leads; list_findings returns leads too unless you filter by state.`;
+
+How to use it well:
+- Lists come in pages. Each answer has total, offset, returned and next; pass offset = next until next is null. A page can hold fewer rows than your limit, because answers stay under 55,000 characters.
+- To count or scan findings, use list_findings with brief: true (no summary or PoC, many rows per page), then get_finding for the ones you need in full. Don't ask for huge limits.
+- Filter on the server instead of fetching everything: run, severity (critical, high, medium, low, info, or none for no severity), state (lead, suspected, confirmed, ruled_out), untriaged. Separate several values with commas; case doesn't matter.
+- An error result is an error, not an empty answer: read its text and adjust the call (an unknown filter value or an answer too big says what to change).
+- Finding counts on runs (list_runs) leave out leads, which are ideas rather than findings to triage; they're counted apart as leads. list_findings includes leads unless you filter by state. In run counts, findings without a severity count as info.
+- verdict is the human's triage: real, not_bug, duplicate, or null before triage. get_report is null until the agent writes REPORT.md.
+- Workbase paths are relative to the workbase, e.g. findings/F3-name/README.md, with no leading slash.
+- Times are ISO 8601 UTC.
+- If a call fails with a connection error (such as ECONNRESET), retry it once before giving up.
+- Prefer the dedicated tools. With pixel_api, always add limit and offset to list routes (GET /runs, /findings, /runs/<id>/findings).`;
 
 interface Ctx {
   req: Request;
@@ -172,7 +182,7 @@ const TOOLS: Tool[] = [
     name: "list_runs",
     title: "List runs",
     description:
-      "Runs with status, repo, model, token totals, cost, finding counts and pending questions; most recently active first. Finding counts leave out leads (counted on their own as leads); findings without a severity count as info.",
+      "Runs with status, repo, model, token totals, cost, finding counts and pending questions; most recently active first. Paged: pass offset = next for more. Finding counts leave out leads (counted on their own as leads); findings without a severity count as info.",
     readOnly: true,
     inputSchema: {
       type: "object",
@@ -251,7 +261,7 @@ const TOOLS: Tool[] = [
     name: "list_findings",
     title: "List findings",
     description:
-      "Findings the agents wrote (findings/F<n>-name/README.md in each workbase), newest change first: title, state (lead, suspected, confirmed, ruled_out), severity, location, verdict (real, not_bug, duplicate, or null before triage), the start of the summary and PoC. brief: true leaves the summary and PoC out (many more rows per page). Removed findings aren't listed.",
+      "Findings the agents wrote (findings/F<n>-name/README.md in each workbase), newest change first: title, state (lead, suspected, confirmed, ruled_out), severity, location, verdict (real, not_bug, duplicate, or null before triage), the start of the summary and PoC. brief: true leaves the summary and PoC out (many more rows per page). Removed findings aren't listed. Paged: pass offset = next until next is null. To count or scan many, use brief: true.",
     readOnly: true,
     inputSchema: {
       type: "object",
@@ -279,7 +289,7 @@ const TOOLS: Tool[] = [
     name: "get_finding",
     title: "Finding brief",
     description:
-      "Everything about one finding as markdown: target, state, severity, the README, the PoC and small files inline, and curl commands (with a one-week token) to download the rest.",
+      "Everything about one finding as markdown: target, state, severity, the README, the PoC and small files inline, and curl commands (with a one-week token) to download the rest. Use it after list_findings (brief: true) to read the findings you need in full.",
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg, finding: { type: "string", description: "Finding id, e.g. F3" } }, required: ["run", "finding"] },
     async run(a, ctx) {
@@ -359,7 +369,7 @@ const TOOLS: Tool[] = [
   {
     name: "get_report",
     title: "Run report",
-    description: "The run's REPORT.md, or null if the agent hasn't written one.",
+    description: "The run's REPORT.md, or null (not an error) if the agent hasn't written one yet.",
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg }, required: ["run"] },
     async run(a, ctx) {
@@ -369,7 +379,7 @@ const TOOLS: Tool[] = [
   {
     name: "list_files",
     title: "List workbase files",
-    description: "A folder of a run's workbase (its notes, findings, report and scratch files). Path is relative to the workbase; empty = its top.",
+    description: "A folder of a run's workbase (its notes, findings, report and scratch files). Path is relative to the workbase (no leading slash); empty = its top.",
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg, path: { type: "string", description: "Folder, default the workbase itself" } }, required: ["run"] },
     async run(a, ctx) {
@@ -380,7 +390,7 @@ const TOOLS: Tool[] = [
   {
     name: "read_file",
     title: "Read workbase file",
-    description: "A text file from a run's workbase. Path is relative to the workbase.",
+    description: "A text file from a run's workbase. Path is relative to the workbase, e.g. findings/F3-name/README.md (no leading slash).",
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg, path: str }, required: ["run", "path"] },
     async run(a, ctx) {
