@@ -155,3 +155,73 @@ describe("mcp", () => {
     expect((await rpc("ping", undefined, {}, old)).status).toBe(401);
   });
 });
+
+describe("mcp: big lists, filters and edge cases", () => {
+  const BIG = "mcp-big";
+  db.query("INSERT INTO runs (id, repo, model, size, status, runtime, created_at) VALUES (?, 'github.com/x/big', 'p/m', ?, 'running', 'local', ?)").run(BIG, size, Date.now());
+  const ins = db.query("INSERT INTO findings (run_id, id, state, severity, title, location, poc, summary, created, updated) VALUES (?, ?, ?, ?, ?, 'a.c:1', ?, ?, ?, ?)");
+  for (let i = 1; i <= 150; i++) {
+    const state = i % 10 === 0 ? "lead" : "suspected";
+    ins.run(BIG, `F${i}`, state, i % 10 === 0 ? null : i % 3 ? "high" : "low", `Bug ${i}`, "p".repeat(5000), "s".repeat(12_000), Date.now() - i * 1000, Date.now() - i * 1000);
+  }
+  const parse = (t: { text: string; isError: boolean }) => {
+    expect(t.isError).toBe(false);
+    return JSON.parse(t.text);
+  };
+
+  test("list_findings pages and stays parseable; brief fits more; verdict is always there", async () => {
+    const first = parse(await tool("list_findings", { run: BIG, limit: 150 }));
+    expect(first.total).toBe(150);
+    expect(first.returned).toBeLessThan(150);
+    expect(first.next).toBe(first.returned);
+    expect(first.note).toContain("offset");
+    expect(first.findings[0]).toHaveProperty("verdict", null);
+    expect(first.findings[0].created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    const second = parse(await tool("list_findings", { run: BIG, limit: 10, offset: first.next }));
+    expect(second.offset).toBe(first.next);
+    expect(second.findings[0].id).not.toBe(first.findings[0].id);
+    const brief = parse(await tool("list_findings", { run: BIG, limit: 150, brief: true }));
+    expect(brief.returned).toBe(150);
+    expect(brief.next).toBeNull();
+    expect(brief.findings[0].summary).toBeUndefined();
+  });
+
+  test("filters: case doesn't matter, typos are errors, none finds no severity, several states", async () => {
+    expect(parse(await tool("list_findings", { run: BIG, severity: "High", brief: true })).total).toBe(90);
+    expect(parse(await tool("list_findings", { run: BIG, severity: "none", brief: true })).total).toBe(15);
+    expect(parse(await tool("list_findings", { run: BIG, state: "lead,suspected", brief: true })).total).toBe(150);
+    const bad = await tool("list_findings", { severity: "hgih" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain("severity must be one of");
+  });
+
+  test("list_runs counts leads apart and pages", async () => {
+    const runs = parse(await tool("list_runs", { limit: 1 }));
+    expect(runs.returned).toBe(1);
+    expect(runs.next).toBe(1);
+    const big = parse(await tool("list_runs", { repo: "x/big" })).runs[0];
+    expect(big.findings).toMatchObject({ total: 135, leads: 15 });
+  });
+
+  test("API routes take limit and offset; pixel_api refuses an answer it would have to cut", async () => {
+    expect((await apiCall("GET", "/findings?limit=1")).body).toHaveLength(1);
+    expect((await apiCall("GET", `/runs/${BIG}/findings?limit=2&offset=1`)).body.map((f: any) => f.id)).toEqual(["F2", "F3"]);
+    expect((await apiCall("GET", `/runs/${BIG}/findings?severity=LOW`)).body.length).toBe(45);
+    expect((await apiCall("GET", "/runs?limit=1")).body).toHaveLength(1);
+    const huge = await tool("pixel_api", { method: "GET", path: `/runs/${BIG}/findings` });
+    expect(huge.isError).toBe(true);
+    expect(huge.text).toContain("limit and offset");
+    expect(parse(await tool("pixel_api", { method: "GET", path: `/runs/${BIG}/findings?limit=2` }))).toHaveLength(2);
+  });
+
+  test("get_report is null without a report; workbase paths are relative and errors don't show the server's", async () => {
+    expect(parse(await tool("get_report", { run: BIG }))).toBeNull();
+    const abs = await tool("read_file", { run: RUN, path: "/etc/hostname" });
+    expect(abs.isError).toBe(true);
+    expect(abs.text).toContain("relative to the workbase");
+    const missing = await tool("read_file", { run: RUN, path: "nope/x.md" });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toBe("no nope/x.md in the workbase");
+    expect((await tool("read_file", { run: RUN, path: "../../etc/passwd" })).text).toContain("outside the workbase");
+  });
+});

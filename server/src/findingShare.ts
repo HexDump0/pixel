@@ -106,6 +106,7 @@ export function llmBrief(runId: string, fid: string, origin: string) {
     run && `- Target: ${run.repo}${run.ref ? ` (${run.ref})` : ""}${run.commit_sha ? ` at commit ${run.commit_sha}` : ""}`,
     `- Finding: ${f.id}, ${f.state.replace("_", " ")}${f.severity ? `, ${f.severity} severity` : ""}${f.class ? `, ${f.class}` : ""}`,
     f.location && `- Location: ${f.location}`,
+    f.removed_at && `- Removed: ${f.removed_reason ?? "its folder was deleted"} (kept for the record; not in list_findings)`,
     f.verdict && `- Human verdict: ${VERDICT_WORDS[f.verdict] ?? f.verdict}${f.verdict_note ? `: ${f.verdict_note}` : ""}`,
     run && `- Found by: ${run.model}, Pixel run ${run.label ?? run.id}`,
   ].filter(Boolean);

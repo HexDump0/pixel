@@ -181,7 +181,13 @@ export interface FileEntry {
 export function listDir(runId: string, rel: string): FileEntry[] {
   const full = safeWorkbasePath(runId, rel);
   const base = resolve(workbasePath(runId));
-  return readdirSync(full, { withFileTypes: true })
+  let entries;
+  try {
+    entries = readdirSync(full, { withFileTypes: true });
+  } catch (e) {
+    missing(rel, e);
+  }
+  return entries
     .map((d) => {
       const p = join(full, d.name);
       let st;
@@ -196,9 +202,23 @@ export function listDir(runId: string, rel: string): FileEntry[] {
     .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
 }
 
+/** A missing file named by its workbase path, not the server's (which errors would otherwise show). */
+function missing(rel: string, e: any): never {
+  if (e?.code === "ENOENT") throw new Error(`no ${rel.replace(/^\/+/, "") || "workbase"} in the workbase`);
+  if (e?.code === "ENOTDIR") throw new Error(`${rel} is not a folder in the workbase`);
+  if (e?.code === "EISDIR") throw new Error(`${rel} is a folder; list it instead`);
+  throw e;
+}
+
 export function readWorkbaseFile(runId: string, rel: string, maxBytes = 2_000_000) {
   const full = safeWorkbasePath(runId, rel);
-  const st = statSync(full);
+  let st;
+  try {
+    st = statSync(full);
+    if (st.isDirectory()) throw Object.assign(new Error("dir"), { code: "EISDIR" });
+  } catch (e) {
+    missing(rel, e);
+  }
   const buf = readFileSync(full).subarray(0, maxBytes);
   const binary = buf.subarray(0, 8000).includes(0);
   return { size: st.size, mtime: st.mtimeMs, truncated: st.size > maxBytes, binary, content: binary ? "" : buf.toString("utf8") };

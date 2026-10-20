@@ -7,11 +7,28 @@ import { boostDisk, clientFor, controls, createRun, endBoost, resizeRun, exportT
 import { listDir, readWorkbaseFile, reportPath, safeWorkbasePath, writeWorkbaseFile } from "../knowledge.ts";
 import { crossReadsFor } from "../crossreads.ts";
 import { historyLog, historyShow, snapshotWorkbase } from "../history.ts";
-import { findingCounts, findingEvents, listFindings, setVerdict, type Verdict } from "../findings.ts";
+import { enumFilter, findingCounts, findingEvents, listFindings, setVerdict, SEVERITY_FILTERS, STATES, type Verdict } from "../findings.ts";
 import { llmBrief, originOf } from "../findingShare.ts";
 import { del, get, HttpError, post, put, readJson } from "./router.ts";
 import { findKey, keyFor, NO_KEY, providerKeys, publicKey } from "../providerAccounts.ts";
 import { chooseKey, chooseProxy, nextKey, setFailover } from "../runs/keys.ts";
+
+/** `limit` and `offset` from the query, applied when given (the dashboard asks for everything). */
+function page<T>(list: T[], query: URLSearchParams): T[] {
+  const limit = query.get("limit");
+  const offset = Math.max(0, Number(query.get("offset")) || 0);
+  if (limit === null && !offset) return list;
+  const n = limit === null ? list.length : Number(limit);
+  if (!Number.isFinite(n) || n < 0) throw new HttpError(400, "limit must be a number of at least 0");
+  return list.slice(offset, offset + n);
+}
+
+/** Filters shared by /findings and /runs/:id/findings. */
+const findingQuery = (query: URLSearchParams) => ({
+  severity: enumFilter("severity", query.get("severity"), SEVERITY_FILTERS),
+  state: enumFilter("state", query.get("state"), STATES),
+  untriaged: query.get("untriaged") === "1",
+});
 
 function mustRun(id: string) {
   const r = getRun(id);
@@ -30,7 +47,7 @@ function attachCommand(run: RunRow) {
   return `OPENCODE_SERVER_PASSWORD='${run.opencode_password}' opencode attach http://${host}:${ep.port}${session} --dir ${runtime.paths(run).target}`;
 }
 
-get("/runs", () => {
+get("/runs", ({ query }) => {
   const questions = countBy("SELECT run_id, COUNT(*) AS n FROM questions WHERE status = 'pending' GROUP BY run_id");
   const reads = countBy("SELECT run_id, COUNT(*) AS n FROM cross_reads GROUP BY run_id");
   const findings = findingCounts();
@@ -41,7 +58,7 @@ get("/runs", () => {
       const d = JSON.parse(q.data);
       asking.set(q.run_id, { id: d.id, created_at: q.created_at, questions: d.questions ?? [] });
     }
-  return listRuns().map((r) => ({
+  return page(listRuns(), query).map((r) => ({
     ...publicRun(r),
     questions: questions.get(r.id) ?? 0,
     question: asking.get(r.id) ?? null,
@@ -134,9 +151,9 @@ get("/runs/:id/report", ({ params: { id } }) => {
 });
 // ---- findings (workbase findings/F<n>-name/README.md → findings table) ----
 
-get("/runs/:id/findings", ({ params: { id } }) => {
+get("/runs/:id/findings", ({ params: { id }, query }) => {
   mustRun(id);
-  return listFindings({ run: id, includeRemoved: true });
+  return page(listFindings({ run: id, includeRemoved: true, ...findingQuery(query) }), query);
 });
 get("/runs/:id/findings/events", ({ params: { id }, query }) => {
   mustRun(id);
@@ -152,9 +169,7 @@ get("/runs/:id/findings/:fid/llm", ({ req, params: { id, fid } }) => {
   mustRun(id);
   return llmBrief(id, fid, originOf(req));
 });
-get("/findings", ({ query }) =>
-  listFindings({ run: query.get("run") ?? undefined, untriaged: query.get("untriaged") === "1", severity: query.get("severity") ?? undefined }),
-);
+get("/findings", ({ query }) => page(listFindings({ run: query.get("run") ?? undefined, ...findingQuery(query) }), query));
 get("/findings/events", ({ query }) => findingEvents({ since: Number(query.get("since") ?? 0) || undefined, limit: Number(query.get("limit") ?? 200) }));
 
 get("/runs/:id/vm", async ({ params: { id } }) => {

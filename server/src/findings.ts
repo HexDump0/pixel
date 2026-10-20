@@ -316,8 +316,23 @@ export function stopFindingsWatch() {
 export interface FindingQuery {
   run?: string;
   untriaged?: boolean;
+  /** One or more, comma-separated; "none" = no severity set. */
   severity?: string;
+  /** One or more, comma-separated. */
+  state?: string;
   includeRemoved?: boolean;
+}
+
+/** Severity filter values: the severities, plus "none" for findings without one. */
+export const SEVERITY_FILTERS = [...SEVERITIES, "none"] as const;
+
+/** A comma-separated filter, lowercased and checked, so "High" works and a typo is an error rather than an empty answer. */
+export function enumFilter(name: string, value: string | null | undefined, allowed: readonly string[]) {
+  if (!value?.trim()) return undefined;
+  const list = value.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+  const bad = list.filter((v) => !allowed.includes(v));
+  if (bad.length) throw new Error(`${name} must be one of ${allowed.join(", ")} (got ${bad.join(", ")})`);
+  return list.join(",");
 }
 
 /** Findings, newest change first. Untriaged = not removed, not ruled out, no verdict yet. */
@@ -331,8 +346,16 @@ export function listFindings(q: FindingQuery = {}) {
   if (!q.includeRemoved) where.push("removed_at IS NULL");
   if (q.untriaged) where.push("verdict IS NULL AND state != 'ruled_out'");
   if (q.severity) {
-    where.push("severity = ?");
-    params.push(q.severity);
+    const list = q.severity.split(",");
+    const named = list.filter((v) => v !== "none");
+    const parts = [named.length ? `severity IN (${named.map(() => "?").join(", ")})` : "", list.includes("none") ? "severity IS NULL" : ""].filter(Boolean);
+    where.push(`(${parts.join(" OR ")})`);
+    params.push(...named);
+  }
+  if (q.state) {
+    const list = q.state.split(",");
+    where.push(`state IN (${list.map(() => "?").join(", ")})`);
+    params.push(...list);
   }
   return db.query<FindingRow, any[]>(`SELECT * FROM findings ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY updated DESC`).all(...params);
 }
@@ -366,12 +389,16 @@ export function findingCounts() {
       "SELECT run_id, state, severity, verdict, COUNT(*) AS n FROM findings WHERE removed_at IS NULL GROUP BY run_id, state, severity, verdict",
     )
     .all();
-  type Counts = { total: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number>; real: number; outcome: string | null };
+  /** Leads are ideas, not findings to triage: they're only in `leads`. Findings without a severity count as info. */
+  type Counts = { total: number; leads: number; untriaged: number; confirmed: number; bySeverity: Record<string, number>; untriagedBySeverity: Record<string, number>; real: number; outcome: string | null };
   const out: Record<string, Counts> = {};
-  const blank = (): Counts => ({ total: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {}, real: 0, outcome: null });
+  const blank = (): Counts => ({ total: 0, leads: 0, untriaged: 0, confirmed: 0, bySeverity: {}, untriagedBySeverity: {}, real: 0, outcome: null });
   for (const r of rows) {
     const c = (out[r.run_id] ??= blank());
-    if (r.state === "lead") continue; // leads are ideas, not findings to triage
+    if (r.state === "lead") {
+      c.leads += r.n;
+      continue;
+    }
     c.total += r.n;
     if (r.state === "confirmed") c.confirmed += r.n;
     const sev = r.severity ?? "info";

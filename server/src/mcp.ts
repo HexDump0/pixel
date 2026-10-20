@@ -12,12 +12,20 @@ import { dispatch, routeList } from "./api/router.ts";
 import { markUsed, mcpTokenOf, type PublicMcpToken } from "./mcpTokens.ts";
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-/** Longest tool answer, so one call can't flood the agent's context. */
+/** Longest tool answer, so one call can't flood the agent's context (opencode also cuts tool output at 60,000). */
 const MAX_TEXT = 60_000;
+/**
+ * JSON answers stay under this whole: a list is cut to the rows that fit (with `next` to continue),
+ * anything else too big is an error saying how to narrow it. JSON cut in the middle can't be parsed,
+ * and a client would read it as text and see no results.
+ */
+const JSON_BUDGET = 55_000;
 
 const INSTRUCTIONS = `Pixel runs many long-lived audit agents (opencode) against repositories. Each run has a workbase folder with its notes, findings (findings/F<n>-name/README.md) and REPORT.md.
 Start with list_runs or list_findings. get_finding gives a finding as one self-contained markdown brief (with download commands for its files). token_usage covers tokens and cost.
-Runs are controlled with send_message, control_run, answer_question and create_run. For anything without a tool, use pixel_api (it lists every route).`;
+Runs are controlled with send_message, control_run, answer_question and create_run. For anything without a tool, use pixel_api (it lists every route).
+Lists come in pages: each answer has total, offset, returned and next (the offset for the following page, null at the end); pass offset to continue. Answers are kept under 55,000 characters, so a page can hold fewer rows than the limit. Times are ISO 8601 UTC.
+Finding counts on runs (list_runs) leave out leads (ideas, not yet findings) and count them separately as leads; list_findings returns leads too unless you filter by state.`;
 
 interface Ctx {
   req: Request;
@@ -55,12 +63,29 @@ async function api<T = any>(ctx: Ctx, method: string, path: string, body?: unkno
 }
 
 const enc = encodeURIComponent;
-const iso = (ts: number | null | undefined) => (ts ? new Date(ts).toISOString().slice(0, 19).replace("T", " ") + "Z" : null);
+const iso = (ts: number | null | undefined) => (ts ? new Date(ts).toISOString().replace(/\.\d{3}Z$/, "Z") : null);
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}\n[cut: ${s.length - n} more characters]` : s);
 const str = { type: "string" } as const;
 const num = { type: "number" } as const;
 const bool = { type: "boolean" } as const;
 const runArg = { type: "string", description: "Run id, as list_runs shows it" } as const;
+const offsetArg = { type: "number", description: "Rows to skip; use the previous answer's next" } as const;
+const wbPath = (p: unknown, what: string) => {
+  const v = String(p ?? "");
+  if (v.startsWith("/") || /^[a-z]:[\\/]/i.test(v)) throw new Error(`${what} is relative to the workbase, e.g. findings/F1-name/README.md; absolute paths aren't allowed`);
+  return v;
+};
+
+/** One page of a list, cut further if needed so the answer stays under JSON_BUDGET. */
+function fitPage<T>(key: string, all: T[], offset: unknown, limit: unknown, fallback: number, extra: Record<string, unknown> = {}) {
+  const from = Math.max(0, Math.floor(Number(offset) || 0));
+  const want = Math.max(0, Math.floor(limit === undefined || limit === null ? fallback : Number(limit)));
+  const rows = all.slice(from, from + want);
+  const make = (n: number) => ({ total: all.length, offset: from, returned: n, next: from + n < all.length ? from + n : null, ...extra, [key]: rows.slice(0, n) });
+  let n = rows.length;
+  while (n > 0 && JSON.stringify(make(n)).length > JSON_BUDGET) n = Math.min(n - 1, Math.floor(n * 0.85));
+  return n < rows.length ? { ...make(n), note: `Cut to ${n} rows to stay under the size limit; continue with offset ${from + n}${key === "findings" ? " or pass brief: true" : ""}.` } : make(n);
+}
 
 /** The parts of a run worth an agent's context. */
 function compactRun(r: any) {
@@ -94,7 +119,7 @@ function compactRun(r: any) {
   };
 }
 
-function compactFinding(f: any) {
+function compactFinding(f: any, brief = false) {
   return {
     run: f.run_id,
     id: f.id,
@@ -103,12 +128,12 @@ function compactFinding(f: any) {
     severity: f.severity,
     class: f.class ?? undefined,
     location: f.location ?? undefined,
-    poc: f.poc ?? undefined,
-    summary: f.summary ? clip(f.summary, 400) : undefined,
-    verdict: f.verdict ?? undefined,
+    poc: f.poc && !brief ? clip(f.poc, 400) : undefined,
+    summary: f.summary && !brief ? clip(f.summary, 400) : undefined,
+    verdict: f.verdict ?? null,
     verdictNote: f.verdict_note ?? undefined,
     duplicateOf: f.duplicate_of ?? undefined,
-    problem: f.problem ?? undefined,
+    problem: f.problem ? clip(f.problem, 300) : undefined,
     removed: f.removed_at ? (f.removed_reason ?? "removed") : undefined,
     path: f.path ?? undefined,
     created: iso(f.created),
@@ -146,7 +171,8 @@ const TOOLS: Tool[] = [
   {
     name: "list_runs",
     title: "List runs",
-    description: "Runs with status, repo, model, token totals, cost, finding counts and pending questions; most recently active first.",
+    description:
+      "Runs with status, repo, model, token totals, cost, finding counts and pending questions; most recently active first. Finding counts leave out leads (counted on their own as leads); findings without a severity count as info.",
     readOnly: true,
     inputSchema: {
       type: "object",
@@ -154,6 +180,7 @@ const TOOLS: Tool[] = [
         status: { type: "string", description: "Comma-separated statuses to keep, e.g. running,paused (others: queued, preparing, recovering, stopped, done, failed)" },
         repo: { type: "string", description: "Keep runs whose repo contains this text" },
         limit: { type: "number", description: "Default 50" },
+        offset: offsetArg,
       },
     },
     async run(a, ctx) {
@@ -162,7 +189,7 @@ const TOOLS: Tool[] = [
         .filter((r) => !want || want.has(r.status))
         .filter((r) => !a.repo || r.repo.toLowerCase().includes(String(a.repo).toLowerCase()))
         .sort((x, y) => (y.last_activity ?? y.created_at) - (x.last_activity ?? x.created_at));
-      return { total: runs.length, runs: runs.slice(0, a.limit ?? 50).map(compactRun) };
+      return fitPage("runs", runs.map(compactRun), a.offset, a.limit, 50);
     },
   },
   {
@@ -223,25 +250,29 @@ const TOOLS: Tool[] = [
   {
     name: "list_findings",
     title: "List findings",
-    description: "Findings the agents wrote (findings/F<n>-name/README.md in each workbase): title, state (lead, suspected, confirmed, ruled_out), severity, location, verdict.",
+    description:
+      "Findings the agents wrote (findings/F<n>-name/README.md in each workbase), newest change first: title, state (lead, suspected, confirmed, ruled_out), severity, location, verdict (real, not_bug, duplicate, or null before triage), the start of the summary and PoC. brief: true leaves the summary and PoC out (many more rows per page). Removed findings aren't listed.",
     readOnly: true,
     inputSchema: {
       type: "object",
       properties: {
         run: { type: "string", description: "Only this run" },
-        severity: { type: "string", description: "critical, high, medium, low or info" },
-        state: { type: "string", description: "lead, suspected, confirmed or ruled_out" },
-        untriaged: { type: "boolean", description: "Only findings without a verdict" },
+        severity: { type: "string", description: "critical, high, medium, low, info, or none (no severity); comma-separated for several" },
+        state: { type: "string", description: "lead, suspected, confirmed or ruled_out; comma-separated for several" },
+        untriaged: { type: "boolean", description: "Only findings without a verdict (and not ruled out)" },
+        brief: { type: "boolean", description: "Leave out the summary and PoC" },
         limit: { type: "number", description: "Default 100" },
+        offset: offsetArg,
       },
     },
     async run(a, ctx) {
       const q = new URLSearchParams();
       if (a.run) q.set("run", a.run);
       if (a.severity) q.set("severity", a.severity);
+      if (a.state) q.set("state", a.state);
       if (a.untriaged) q.set("untriaged", "1");
-      const all = (await api<any[]>(ctx, "GET", `/findings?${q}`)).filter((f) => !a.state || f.state === a.state);
-      return { total: all.length, findings: all.slice(0, a.limit ?? 100).map(compactFinding) };
+      const all = await api<any[]>(ctx, "GET", `/findings?${q}`);
+      return fitPage("findings", all.map((f) => compactFinding(f, !!a.brief)), a.offset, a.limit, 100);
     },
   },
   {
@@ -267,7 +298,8 @@ const TOOLS: Tool[] = [
     async run(a, ctx) {
       const q = new URLSearchParams({ limit: String(a.limit ?? 200) });
       if (a.finding) q.set("finding", a.finding);
-      return api(ctx, "GET", a.run ? `/runs/${enc(a.run)}/findings/events?${q}` : `/findings/events?${q}`);
+      const events = await api<any[]>(ctx, "GET", a.run ? `/runs/${enc(a.run)}/findings/events?${q}` : `/findings/events?${q}`);
+      return fitPage("events", events.map((e) => ({ ...e, at: iso(e.at) })), 0, events.length, events.length);
     },
   },
   {
@@ -331,7 +363,7 @@ const TOOLS: Tool[] = [
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg }, required: ["run"] },
     async run(a, ctx) {
-      return (await api(ctx, "GET", `/runs/${enc(a.run)}/report`)).content ?? "No REPORT.md yet.";
+      return (await api(ctx, "GET", `/runs/${enc(a.run)}/report`)).content ?? null;
     },
   },
   {
@@ -341,7 +373,7 @@ const TOOLS: Tool[] = [
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg, path: { type: "string", description: "Folder, default the workbase itself" } }, required: ["run"] },
     async run(a, ctx) {
-      const rows = await api<any[]>(ctx, "GET", `/runs/${enc(a.run)}/files?path=${enc(a.path ?? "")}`);
+      const rows = await api<any[]>(ctx, "GET", `/runs/${enc(a.run)}/files?path=${enc(wbPath(a.path, "path"))}`);
       return rows.map((f) => (f.dir ? `${f.path}/` : `${f.path}  ${f.size} B  ${iso(f.mtime)}`)).join("\n") || "(empty)";
     },
   },
@@ -352,7 +384,7 @@ const TOOLS: Tool[] = [
     readOnly: true,
     inputSchema: { type: "object", properties: { run: runArg, path: str }, required: ["run", "path"] },
     async run(a, ctx) {
-      const f = await api(ctx, "GET", `/runs/${enc(a.run)}/file?path=${enc(a.path)}`);
+      const f = await api(ctx, "GET", `/runs/${enc(a.run)}/file?path=${enc(wbPath(a.path, "path"))}`);
       if (f.binary) return `Binary file, ${f.size} bytes. Download it with get_finding's commands or the dashboard.`;
       return f.truncated ? `${f.content}\n[file is ${f.size} bytes; only the first part is shown]` : f.content;
     },
@@ -448,7 +480,8 @@ const TOOLS: Tool[] = [
   {
     name: "pixel_api",
     title: "Pixel API",
-    description: "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path.",
+    description:
+      "Call any Pixel API route directly, for whatever the other tools don't cover. Paths are relative to /api, e.g. GET /fleet. Query strings go in the path. GET /runs, /findings and /runs/<id>/findings take limit and offset (the findings ones also severity, state, untriaged); an answer over 55,000 characters is refused, so page big lists.",
     destructive: true,
     inputSchema: {
       type: "object",
@@ -498,8 +531,14 @@ async function callTool(params: any, ctx: Ctx) {
   markUsed(ctx.token.id, tool.name);
   try {
     const out = await tool.run(params.arguments ?? {}, ctx);
-    const text = typeof out === "string" ? out : JSON.stringify(out, null, 1);
-    return { content: [{ type: "text", text: clip(text, MAX_TEXT) }] };
+    if (typeof out === "string") return { content: [{ type: "text", text: clip(out, MAX_TEXT) }] };
+    const text = JSON.stringify(out ?? null);
+    if (text.length > JSON_BUDGET)
+      return {
+        content: [{ type: "text", text: `The answer is ${text.length.toLocaleString("en")} characters, over the ${JSON_BUDGET.toLocaleString("en")} limit. Narrow it: filters, limit and offset, or a more specific tool.` }],
+        isError: true,
+      };
+    return { content: [{ type: "text", text }] };
   } catch (e: any) {
     return { content: [{ type: "text", text: e?.message ?? String(e) }], isError: true };
   }
