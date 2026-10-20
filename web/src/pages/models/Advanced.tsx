@@ -121,7 +121,8 @@ function FlagRow({ label, hint, value, onChange, base }: { label: string; hint: 
 export function ModelAdvancedDialog({ model, settings, provider, onSave, onClose }: { model: string; settings: Settings; provider?: ConnectedProvider; onSave: (o: ModelOverride | null) => Promise<void>; onClose: () => void }) {
   const [pid, mid] = splitModel(model);
   const cat = useQuery({ queryKey: keys.catalogProvider(pid), queryFn: () => api.catalogProvider(pid).catch(() => null), staleTime: 10 * 60_000 });
-  const c: Partial<CatalogModel> = cat.data?.models.find((m) => m.id === mid) ?? (provider?.custom ? { context: provider.custom.context, reasoning: !!provider.custom.reasoning, tools: true } : {});
+  const own = provider?.customModels?.find((m) => m.id === mid);
+  const c: Partial<CatalogModel> = cat.data?.models.find((m) => m.id === mid) ?? (own ? { context: own.context, output: own.output, reasoning: own.reasoning, tools: true } : {});
   const o = settings.modelOverrides?.[model];
   const [f, setF] = useState({
     context: o?.context ? String(o.context) : "",

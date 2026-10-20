@@ -1,16 +1,17 @@
 /**
  * Add or edit a model provider: pick one from opencode's catalogue and connect it with a key or
  * without one, or point Pixel at any endpoint that speaks the OpenAI or Anthropic API (Ollama, vLLM,
- * LiteLLM, a gateway…) and list its models.
+ * LiteLLM, a gateway…) and list its models. Whatever else a provider needs (an account id, a region,
+ * a resource name) is set here too, as variables agents get and the base URL can use.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
-import { IconCheck, IconExternalLink, IconPlus, IconRefresh, IconSearch } from "@tabler/icons-react";
+import { IconCheck, IconExternalLink, IconPlus, IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
 import { api } from "../lib/api.ts";
 import { useAsync } from "../lib/hooks.ts";
 import { cn } from "../lib/cn.ts";
 import type { CatalogList, ConnectedProvider } from "../lib/types.ts";
-import { Button, ErrorBox, Field, Notice, Segmented } from "./ui.tsx";
+import { Button, ErrorBox, Field, Notice, Segmented, Switch } from "./ui.tsx";
 import { IC_SM, IC_XS, Sep } from "./ui/bits.tsx";
 import { Dialog } from "./ui/overlay.tsx";
 import { ProviderMark } from "./ProviderMark.tsx";
@@ -22,6 +23,130 @@ const API_TYPES: { id: CustomApi; label: string; placeholder: string; hint: stri
   { id: "openai", label: "OpenAI-compatible", placeholder: "http://192.168.1.20:11434/v1", hint: "The URL before /chat/completions, usually ending in /v1." },
   { id: "anthropic", label: "Anthropic-compatible", placeholder: "https://gateway.example.com/v1", hint: "The URL before /messages, usually ending in /v1." },
 ];
+
+/**
+ * Catalogue providers Pixel sets up as a custom endpoint instead, with everything filled in.
+ * Snowflake Cortex: opencode's own Cortex support renames max_tokens on every call, which Cortex's
+ * Anthropic API refuses, and Claude 5.5 answers only there (checked 2026-10-20, opencode 1.19).
+ */
+interface Preset {
+  id: string;
+  name: string;
+  api: CustomApi;
+  baseURL: string;
+  vars: string[];
+  bearer?: boolean;
+  maxCompletionTokens?: boolean;
+  context: number;
+  /** The API a newly added model speaks, when the endpoint mixes them. */
+  apiFor?: (model: string) => CustomApi;
+  keyName: string;
+  about: ReactNode;
+}
+const PRESETS: Record<string, Preset> = {
+  "snowflake-cortex": {
+    id: "cortex",
+    name: "Snowflake Cortex",
+    api: "openai",
+    baseURL: "https://${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2/cortex/v1",
+    vars: ["SNOWFLAKE_ACCOUNT"],
+    bearer: true,
+    maxCompletionTokens: true,
+    context: 200_000,
+    apiFor: (m) => (m.startsWith("claude-") ? "anthropic" : "openai"),
+    keyName: "PAT",
+    about: <>Claude models use Cortex's Anthropic API (the only one that serves Claude 5.5), the others its OpenAI API. The key is a programmatic access token (PAT). Fetch lists the models your account has.</>,
+  },
+};
+const presetForURL = (url: string | null | undefined) => (url && /\.snowflakecomputing\.com/.test(url) ? PRESETS["snowflake-cortex"] : null);
+
+// ---- variables a provider needs besides the key ----
+
+/** Mirrors the server: names that look like secrets are never sent back, only a hint. */
+const SECRET_VAR = /KEY|TOKEN|SECRET|PASSWORD|PAT$|CREDENTIAL/i;
+const VAR_HINTS: Record<string, string> = {
+  SNOWFLAKE_ACCOUNT: "Account identifier, the part before .snowflakecomputing.com (like abcdefg-xy12345). Pasting the account URL works too.",
+};
+const urlVars = (url: string | null | undefined) => [...(url ?? "").matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1]);
+
+/** A row: a value typed now, or a stored secret kept as it is (only its hint is known). */
+interface VarRow {
+  name: string;
+  value: string;
+  stored: string | null;
+}
+const initialVars = (existing: ConnectedProvider | undefined, names: string[]): VarRow[] => {
+  const rows: VarRow[] = (existing?.vars ?? []).map((v) => ({ name: v.name, value: v.value ?? "", stored: v.hint }));
+  for (const n of names) if (!rows.some((r) => r.name === n)) rows.push({ name: n, value: "", stored: null });
+  return rows;
+};
+/** The whole set for the server: typed values, null keeps a stored secret, "" drops it. */
+const varsPatch = (rows: VarRow[]) => Object.fromEntries(rows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value.trim() || (r.stored ? null : "")]));
+const unset = (rows: VarRow[], names: string[]) => names.filter((n) => !rows.some((r) => r.name === n && (r.value.trim() || r.stored)));
+
+function VarsEditor({ rows, onChange, fixed = [], needed }: { rows: VarRow[]; onChange: (rows: VarRow[]) => void; fixed?: string[]; needed: string[] }) {
+  const set = (i: number, patch: Partial<VarRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  // Rows already say so in their placeholder; this is for a ${NAME} in the URL with no row yet.
+  const missing = unset(rows, needed).filter((n) => !rows.some((r) => r.name === n));
+  return (
+    <section className="flex flex-col gap-2">
+      <div>
+        <h3 className="m-0 text-[12.5px] font-[450] text-ink-2">Variables</h3>
+        <p className="m-0 mt-0.5 text-xs text-ink-3">Agents get them as environment variables, and the base URL fills in each {"${NAME}"} from them.</p>
+      </div>
+      {rows.map((r, i) => {
+        const secret = SECRET_VAR.test(r.name);
+        const isFixed = fixed.includes(r.name);
+        return (
+          <div key={i} className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <input
+                className="input w-[42%] min-w-[150px] font-mono text-[12.5px]"
+                value={r.name}
+                readOnly={isFixed}
+                placeholder="NAME"
+                spellCheck={false}
+                aria-label="Variable name"
+                onChange={(e) => set(i, { name: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"), stored: null })}
+              />
+              <input
+                className="input flex-1 font-mono text-[12.5px]"
+                type={secret ? "password" : "text"}
+                autoComplete="off"
+                value={r.value}
+                placeholder={r.stored ? `keep ${r.stored}` : needed.includes(r.name) ? "needed for the base URL" : "value"}
+                aria-label={`${r.name || "Variable"} value`}
+                onChange={(e) => set(i, { value: e.target.value })}
+              />
+              {!isFixed && (
+                <Button size="sm" icon variant="ghost" aria-label={`Remove ${r.name || "this variable"}`} className="hover:enabled:text-critical" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+                  <IconX {...IC_SM} />
+                </Button>
+              )}
+            </div>
+            {VAR_HINTS[r.name] && <p className="m-0 text-xs text-ink-3">{VAR_HINTS[r.name]}</p>}
+          </div>
+        );
+      })}
+      <Button size="xs" variant="ghost" className="self-start text-ink-3" onClick={() => onChange([...rows, { name: "", value: "", stored: null }])} disabled={rows.some((r) => !r.name.trim())}>
+        <IconPlus {...IC_XS} />
+        Add variable
+      </Button>
+      {missing.length > 0 && <p className="m-0 text-xs text-warning">The base URL needs {missing.join(", ")}.</p>}
+    </section>
+  );
+}
+
+/** How requests go out, for gateways that differ from the APIs they copy. */
+function RequestSwitches({ bearer, onBearer, mct, onMct, anthropic, openai }: { bearer: boolean; onBearer: (on: boolean) => void; mct: boolean; onMct: (on: boolean) => void; anthropic: boolean; openai: boolean }) {
+  if (!anthropic && !openai) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      {anthropic && <Switch checked={bearer} onChange={onBearer} label="Send the key as Authorization: Bearer" hint="On Anthropic-style calls too, for gateways that refuse x-api-key (Snowflake Cortex)." />}
+      {openai && <Switch checked={mct} onChange={onMct} label="Send max_completion_tokens" hint="Instead of max_tokens on OpenAI-style calls; newer OpenAI models behind a gateway refuse max_tokens." />}
+    </div>
+  );
+}
 
 /** Shown first when nothing is typed: the providers people use most for coding agents. */
 const POPULAR = ["anthropic", "openai", "openrouter", "google", "opencode", "opencode-go", "deepseek", "xai", "moonshotai", "zai", "mistral", "groq", "cerebras", "fireworks-ai", "togetherai"];
@@ -45,7 +170,7 @@ interface KeyState {
 const keyPatch = (k: KeyState) => (k.mode === "none" ? { noKey: true } : k.mode === "key" ? { key: k.key.trim() } : {});
 const initialKey = (existing?: ConnectedProvider): KeyState => ({ mode: existing?.via.includes("pixel") ? (existing.keys.length ? "keep" : "none") : "key", key: "" });
 
-function KeyChoice({ value, onChange, existing, providerName, envVar }: { value: KeyState; onChange: (k: KeyState) => void; existing?: ConnectedProvider; providerName: string; envVar?: string }) {
+function KeyChoice({ value, onChange, existing, providerName, envVar, keyName = "key" }: { value: KeyState; onChange: (k: KeyState) => void; existing?: ConnectedProvider; providerName: string; envVar?: string; keyName?: string }) {
   const stored = existing?.via.includes("pixel") ? existing.keys : [];
   const options: [KeyMode, string][] = stored.length
     ? [
@@ -69,7 +194,7 @@ function KeyChoice({ value, onChange, existing, providerName, envVar }: { value:
           type="password"
           autoComplete="off"
           data-autofocus
-          placeholder={stored.length > 1 ? `new key for ${stored[0].name}` : "paste the key"}
+          placeholder={stored.length > 1 ? `new key for ${stored[0].name}` : `paste the ${keyName}`}
           value={value.key}
           onChange={(e) => onChange({ ...value, key: e.target.value })}
           aria-label="API key"
@@ -99,7 +224,7 @@ const groupClass = "[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pt-3 
 function ProviderPicker({ catalog, connected, onPick, onCustom }: { catalog: CatalogList | undefined; connected: ConnectedProvider[]; onPick: (p: CatalogEntry) => void; onCustom: () => void }) {
   const [query, setQuery] = useState("");
   const all = catalog?.providers ?? [];
-  const isOn = (id: string) => connected.some((c) => c.id === id && c.via.some((v) => v !== "builtin"));
+  const isOn = (id: string) => connected.some((c) => (c.id === id || c.id === PRESETS[id]?.id) && c.via.some((v) => v !== "builtin"));
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return { popular: POPULAR.map((id) => all.find((p) => p.id === id)).filter((p): p is CatalogEntry => !!p), rest: [...all].sort((a, b) => a.name.localeCompare(b.name)) };
@@ -176,13 +301,21 @@ function ProviderPicker({ catalog, connected, onPick, onCustom }: { catalog: Cat
 
 function ConnectForm({ provider, existing, onSaved, onBack, onClose }: { provider: CatalogEntry; existing?: ConnectedProvider; onSaved: (id: string) => void; onBack?: () => void; onClose: () => void }) {
   const editing = !!existing?.via.includes("pixel");
+  // The key is the first secret-looking variable; the others (account, region, resource) are asked for here.
+  // Several *_API_KEY names are aliases of one key (Google), not more to fill in.
+  const keyVar = provider.env.find((v) => SECRET_VAR.test(v)) ?? provider.env[0];
+  const extraVars = provider.env.filter((v) => v !== keyVar && !(/API_KEY$/.test(v) && /API_KEY$/.test(keyVar ?? "")));
   const [k, setK] = useState<KeyState>(() => initialKey(existing));
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");
-  const [advanced, setAdvanced] = useState(!!existing?.baseURL);
+  const [vars, setVars] = useState<VarRow[]>(() => initialVars(existing, extraVars));
+  const [bearer, setBearer] = useState(!!existing?.bearer);
+  const [mct, setMct] = useState(!!existing?.maxCompletionTokens);
+  const [advanced, setAdvanced] = useState(!!existing?.baseURL || !!existing?.bearer || !!existing?.maxCompletionTokens);
   const [error, setError] = useState<string | null>(null);
+  const anthropic = !!provider.npm?.includes("anthropic");
   const save = async () => {
     try {
-      await api.saveProvider(provider.id, { ...keyPatch(k), baseURL });
+      await api.saveProvider(provider.id, { ...keyPatch(k), baseURL, vars: varsPatch(vars), bearer, maxCompletionTokens: mct });
       onSaved(provider.id);
     } catch (e: any) {
       setError(e.message);
@@ -218,19 +351,18 @@ function ConnectForm({ provider, existing, onSaved, onBack, onClose }: { provide
       }
     >
       <ErrorBox error={error} />
-      {provider.env.length > 1 && (
-        <Notice>
-          {provider.name} usually needs more than a key: <span className="font-mono text-xs">{provider.env.join(", ")}</span>. Set the other variables under Settings, Agent credentials.
-        </Notice>
-      )}
-      <KeyChoice value={k} onChange={setK} existing={existing} providerName={provider.name} envVar={provider.env[0]} />
+      <KeyChoice value={k} onChange={setK} existing={existing} providerName={provider.name} envVar={keyVar} />
+      {(extraVars.length > 0 || vars.length > 0 || advanced) && <VarsEditor rows={vars} onChange={setVars} fixed={extraVars} needed={urlVars(baseURL.trim() || provider.api)} />}
       {advanced ? (
-        <Field label="Base URL" hint="Only to route this provider through a proxy or a regional endpoint.">
-          <input className="input font-mono" placeholder={provider.api ?? "provider default"} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
-        </Field>
+        <>
+          <Field label="Base URL" hint={"Only to route this provider through a proxy or a regional endpoint. ${NAME} takes a variable."}>
+            <input className="input font-mono" placeholder={provider.api ?? "provider default"} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
+          </Field>
+          <RequestSwitches bearer={bearer} onBearer={setBearer} mct={mct} onMct={setMct} anthropic={anthropic} openai={!anthropic} />
+        </>
       ) : (
         <button type="button" className="cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-ink-3 hover:text-ink" onClick={() => setAdvanced(true)}>
-          Use a different base URL
+          Base URL and how requests are sent
         </button>
       )}
     </Dialog>
@@ -239,25 +371,34 @@ function ConnectForm({ provider, existing, onSaved, onBack, onClose }: { provide
 
 // ---- step 2b: a custom endpoint ----
 
-function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: ConnectedProvider; onSaved: (id: string, models: string[]) => void; onBack?: () => void; onClose: () => void }) {
-  const [name, setName] = useState(existing?.name ?? "");
-  const [id, setId] = useState(existing?.id ?? "");
-  const [idEdited, setIdEdited] = useState(!!existing);
-  const [apiType, setApiType] = useState<CustomApi>(existing?.custom?.api ?? "openai");
-  const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");
-  const [k, setK] = useState<KeyState>(() => (existing ? initialKey(existing) : { mode: "none", key: "" }));
-  const [context, setContext] = useState(String(existing?.custom?.context ?? 128000));
+function CustomForm({ existing, preset, onSaved, onBack, onClose }: { existing?: ConnectedProvider; preset?: Preset | null; onSaved: (id: string, models: string[]) => void; onBack?: () => void; onClose: () => void }) {
+  const [name, setName] = useState(existing?.name ?? preset?.name ?? "");
+  const [id, setId] = useState(existing?.id ?? preset?.id ?? "");
+  const [idEdited, setIdEdited] = useState(!!existing || !!preset);
+  const [apiType, setApiType] = useState<CustomApi>(existing?.custom?.api ?? preset?.api ?? "openai");
+  const [baseURL, setBaseURL] = useState(existing?.baseURL ?? preset?.baseURL ?? "");
+  const [k, setK] = useState<KeyState>(() => (existing ? initialKey(existing) : { mode: preset ? "key" : "none", key: "" }));
+  const [vars, setVars] = useState<VarRow[]>(() => initialVars(existing, preset?.vars ?? []));
+  const [context, setContext] = useState(String(existing?.custom?.context ?? preset?.context ?? 128000));
   const [reasoning, setReasoning] = useState(!!existing?.custom?.reasoning);
   const [models, setModels] = useState<string[]>(existing?.custom?.models ?? []);
+  const [modelApi, setModelApi] = useState<Record<string, CustomApi>>(existing?.custom?.modelApi ?? {});
+  const [bearer, setBearer] = useState(existing ? existing.bearer : !!preset?.bearer);
+  const [mct, setMct] = useState(existing ? existing.maxCompletionTokens : !!preset?.maxCompletionTokens);
   const [found, setFound] = useState<string[] | null>(null);
   const [extra, setExtra] = useState("");
   const [error, setError] = useState<string | null>(null);
   const finalId = idEdited ? id : slug(name);
   const type = API_TYPES.find((t) => t.id === apiType)!;
+  // Models saved before keep their API; new ones follow the preset's rule (Cortex: Claude on the Anthropic API).
+  const apiFor = (m: string): CustomApi => modelApi[m] ?? (existing?.custom?.models.includes(m) ? apiType : (preset?.apiFor?.(m) ?? apiType));
+  const [mixed, setMixed] = useState(() => !!preset?.apiFor || Object.keys(existing?.custom?.modelApi ?? {}).length > 0);
+  const speaks = (x: CustomApi) => apiType === x || mixed;
+  const keyVal = k.mode === "key" ? k.key || undefined : undefined;
 
   const discover = async () => {
     try {
-      const r = await api.discoverModels({ baseURL, key: k.mode === "key" ? k.key || undefined : undefined, id: existing?.id, api: apiType });
+      const r = await api.discoverModels({ baseURL, key: keyVal, id: existing?.id, api: apiType, vars: varsPatch(vars), bearer });
       setFound(r.models);
       setError(r.models.length ? null : "The endpoint answered but listed no models; type the model ids below.");
     } catch (e: any) {
@@ -273,7 +414,8 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
   };
   const save = async () => {
     try {
-      await api.saveProvider(finalId, { name, baseURL, ...keyPatch(k), custom: { api: apiType, models, context: Number(context), reasoning } });
+      const perModel = mixed ? Object.fromEntries(models.map((m) => [m, apiFor(m)])) : {};
+      await api.saveProvider(finalId, { name, baseURL, ...keyPatch(k), vars: varsPatch(vars), bearer, maxCompletionTokens: mct, custom: { api: apiType, models, context: Number(context), reasoning, modelApi: perModel } });
       onSaved(finalId, models);
     } catch (e: any) {
       setError(e.message);
@@ -287,8 +429,8 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
       onOpenChange={(o) => !o && onClose()}
       size="md"
       back={onBack}
-      title={existing ? `Edit ${existing.name}` : "Custom endpoint"}
-      description="Any server that speaks the OpenAI or Anthropic API."
+      title={existing ? `Edit ${existing.name}` : (preset?.name ?? "Custom endpoint")}
+      description={preset && !existing ? preset.about : "Any server that speaks the OpenAI or Anthropic API."}
       footer={
         <>
           <span className="mr-auto font-mono text-xs text-ink-3">
@@ -321,20 +463,23 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
             }}
           />
         </Field>
-        <Field label="Base URL" className="sm:col-span-2" hint={`${type.hint} Agents must be able to reach it from their machine.`}>
+        <Field label="Base URL" className="sm:col-span-2" hint={`${type.hint} Agents must be able to reach it from their machine. \${NAME} takes a variable.`}>
           <input className="input font-mono" placeholder={type.placeholder} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
         </Field>
       </div>
-      <KeyChoice value={k} onChange={setK} existing={existing} providerName={name || "this endpoint"} />
+      <VarsEditor rows={vars} onChange={setVars} fixed={preset?.vars} needed={urlVars(baseURL)} />
+      <KeyChoice value={k} onChange={setK} existing={existing} providerName={name || "this endpoint"} keyName={preset?.keyName} />
+      <Switch checked={mixed} onChange={setMixed} label="Models speak different APIs" hint="Each model picks OpenAI or Anthropic below; they share the base URL." />
+      <RequestSwitches bearer={bearer} onBearer={setBearer} mct={mct} onMct={setMct} anthropic={speaks("anthropic")} openai={speaks("openai")} />
       <div className="grid items-center gap-3 sm:grid-cols-2">
-        <Field label="Context window (tokens)" hint="For every model here; opencode compacts before it fills up.">
+        <Field label="Context window (tokens)" hint="For models the catalogue doesn't know; known ones (claude-opus-5-5, gpt-5.4) use its numbers. opencode compacts before it fills up.">
           <input className="input font-mono" type="number" min={1024} value={context} onChange={(e) => setContext(e.target.value)} />
         </Field>
         <label className="flex cursor-pointer items-start gap-2.5 text-[13px]">
           <input type="checkbox" className="mt-0.5 size-4" checked={reasoning} onChange={(e) => setReasoning(e.target.checked)} />
           <span>
             Models can think
-            <span className="block text-xs text-ink-3">{apiType === "anthropic" ? "Offers thinking budgets" : "Offers reasoning effort low / medium / high"}</span>
+            <span className="block text-xs text-ink-3">For models the catalogue doesn't know; it offers thinking levels.</span>
           </span>
         </label>
       </div>
@@ -379,6 +524,16 @@ function CustomForm({ existing, onSaved, onBack, onClose }: { existing?: Connect
             Add
           </Button>
         </form>
+        {mixed && models.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-t border-line-2 pt-2.5">
+            {models.map((m) => (
+              <div key={m} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{m}</span>
+                <Segmented label={`API for ${m}`} value={apiFor(m)} onChange={(x) => setModelApi((o) => ({ ...o, [m]: x }))} options={[["openai", "OpenAI"], ["anthropic", "Anthropic"]]} />
+              </div>
+            ))}
+          </div>
+        )}
         <p className="m-0 text-xs text-ink-3">Agents need models that can call tools. Small local models often can't, or loop.</p>
       </section>
     </Dialog>
@@ -390,13 +545,30 @@ export function AddProviderDialog({ connected, edit, onClose, onSaved }: { conne
   const catalog = useAsync(() => api.catalog(), []);
   const [picked, setPicked] = useState<CatalogEntry | null>(null);
   const [custom, setCustom] = useState(!!edit?.custom);
+  const [preset, setPreset] = useState<Preset | null>(null);
 
   // Editing a catalogue provider: wait for its catalogue entry, then show the form.
   useEffect(() => {
     if (edit && !edit.custom && catalog.data) setPicked(catalog.data.providers.find((p) => p.id === edit.id) ?? null);
   }, [edit, catalog.data]);
 
-  if (custom) return <CustomForm existing={edit} onClose={onClose} onBack={edit ? undefined : () => setCustom(false)} onSaved={(id, models) => onSaved(id, models)} />;
+  if (custom)
+    return (
+      <CustomForm
+        existing={edit ?? (preset ? connected.find((c) => c.id === preset.id && c.custom) : undefined)}
+        preset={preset ?? presetForURL(edit?.baseURL)}
+        onClose={onClose}
+        onBack={
+          edit
+            ? undefined
+            : () => {
+                setCustom(false);
+                setPreset(null);
+              }
+        }
+        onSaved={(id, models) => onSaved(id, models)}
+      />
+    );
   if (picked) return <ConnectForm provider={picked} existing={edit ?? connected.find((c) => c.id === picked.id)} onClose={onClose} onBack={edit ? undefined : () => setPicked(null)} onSaved={(id) => onSaved(id)} />;
   if (edit)
     return (
@@ -407,7 +579,16 @@ export function AddProviderDialog({ connected, edit, onClose, onSaved }: { conne
   return (
     <Dialog onOpenChange={(o) => !o && onClose()} size="md" title="Add a provider" className="h-[min(640px,84vh)]" bodyClassName="p-0 gap-0">
       <ErrorBox error={catalog.error} />
-      <ProviderPicker catalog={catalog.data} connected={connected} onPick={setPicked} onCustom={() => setCustom(true)} />
+      <ProviderPicker
+        catalog={catalog.data}
+        connected={connected}
+        onPick={(p) => {
+          if (!PRESETS[p.id]) return setPicked(p);
+          setPreset(PRESETS[p.id]);
+          setCustom(true);
+        }}
+        onCustom={() => setCustom(true)}
+      />
     </Dialog>
   );
 }

@@ -12,10 +12,11 @@
  */
 import { db } from "./db.ts";
 import { getSettings, saveSettings, type Settings } from "./settings.ts";
-import { cachedCatalog, catalogProvider } from "./catalog.ts";
+import { cachedCatalog, catalogProvider, knownModel } from "./catalog.ts";
 import { githubForAgents } from "./github.ts";
 import { opencodeModel, opencodeProviderOptions } from "./modelOverrides.ts";
 import { proxySubject, relayUrl, runSubject, upstreamBase } from "./relay.ts";
+import { cortexModels, snowflakeAccount, snowflakeHost, testCortexKey } from "./snowflake.ts";
 
 export type KeyState = "rejected" | "credit" | "ratelimit";
 
@@ -34,11 +35,24 @@ export interface ProviderAccount {
   name: string;
   /** In order: the first is the default for new runs and the first failover target. */
   keys: ApiKey[];
+  /** May hold ${NAME} placeholders, filled from `vars` (then Settings env) when agents get it. */
   baseURL?: string;
-  /** Not in the catalogue: an endpoint speaking the OpenAI or Anthropic API, serving these model ids. */
-  custom?: { api: CustomApi; models: string[]; context: number; reasoning?: boolean };
+  /**
+   * Not in the catalogue: an endpoint speaking the OpenAI or Anthropic API, serving these model ids.
+   * `modelApi` holds the models that speak the other API (Snowflake Cortex: Claude on /messages, the rest on /chat/completions).
+   */
+  custom?: { api: CustomApi; models: string[]; context: number; reasoning?: boolean; modelApi?: Record<string, CustomApi> };
   /** Send `prompt_cache_key` (the session id) so repeat requests hit the provider's cache; see opencode-plugins/prompt-cache-key.ts. */
   cacheKey?: boolean;
+  /**
+   * What the provider needs besides the key (SNOWFLAKE_ACCOUNT, AZURE_RESOURCE_NAME, CLOUDFLARE_ACCOUNT_ID…).
+   * Agents get them as environment variables, and they fill ${NAME} in the base URL.
+   */
+  vars?: Record<string, string>;
+  /** Send the key as `Authorization: Bearer` on Anthropic-style calls too, for gateways that refuse x-api-key (Snowflake Cortex). */
+  bearer?: boolean;
+  /** Send the output limit as max_completion_tokens on OpenAI-style calls; see opencode-plugins/max-completion-tokens.ts. */
+  maxCompletionTokens?: boolean;
   added: number;
 }
 
@@ -50,8 +64,12 @@ export interface AccountInput {
   /** Drop every key: agents call the provider without one (OpenCode Zen's free models, a local server). */
   noKey?: boolean;
   baseURL?: string;
-  custom?: { api?: CustomApi; models: string[]; context?: number; reasoning?: boolean };
+  custom?: { api?: CustomApi; models: string[]; context?: number; reasoning?: boolean; modelApi?: Record<string, CustomApi> };
   cacheKey?: boolean;
+  /** The whole set: a value sets it, null keeps the stored one (secrets the dashboard never sees), "" or a missing name drops it. Omitted = keep all. */
+  vars?: Record<string, string | null>;
+  bearer?: boolean;
+  maxCompletionTokens?: boolean;
 }
 
 /**
@@ -102,8 +120,74 @@ function store(accounts: Record<string, ProviderAccount>) {
   db.query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(KEY, JSON.stringify(accounts));
 }
 
+/** Names that look like secrets: the dashboard only ever gets a hint of their values. */
+const SECRET_VAR = /KEY|TOKEN|SECRET|PASSWORD|PAT$|CREDENTIAL/i;
+/** Set by Pixel or the machine; a provider variable must not replace them. */
+const RESERVED_VAR = /^(PATH|HOME|USER|SHELL|LANG|TERM|PWD|OPENCODE_.*|PIXEL_.*|XDG_.*)$/;
+const VAR_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/** The ${NAME} placeholders in a URL. */
+export const urlVars = (url: string | null | undefined) => [...(url ?? "").matchAll(VAR_REF)].map((m) => m[1]);
+
+/** A URL with ${NAME} filled in from the provider's variables, then Settings env; null while one is still missing. */
+export function fillVars(url: string | null | undefined, vars: Record<string, string> | undefined, env: Record<string, string> = getSettings().agentEnv) {
+  if (!url) return null;
+  const out = url.replace(VAR_REF, (m, n) => vars?.[n] || env[n] || m);
+  return out.includes("${") ? null : out;
+}
+
+/**
+ * Where a provider added here sends its calls, when Pixel sets it: its own base URL, or the catalogue's
+ * when that needs variables (opencode doesn't fill ${NAME} in a catalogue URL by itself).
+ */
+function accountBase(a: ProviderAccount, env?: Record<string, string>) {
+  const cat = cachedCatalog()?.get(a.id)?.api;
+  return fillVars(a.baseURL ?? (cat?.includes("${") ? cat : null), a.vars, env);
+}
+
 /** The endpoint set for a provider added on the Models page (custom endpoint or proxy URL), if any. */
-export const accountBaseURL = (id: string) => load()[id]?.baseURL ?? null;
+export function accountBaseURL(id: string) {
+  const a = load()[id];
+  return a ? accountBase(a) : null;
+}
+
+/** A variable's value as stored: trimmed, and a pasted Snowflake account URL cut down to the identifier. */
+const varValue = (name: string, v: string) => (name === "SNOWFLAKE_ACCOUNT" ? snowflakeAccount(v) : v.trim());
+
+function cleanVars(input: Record<string, string | null> | undefined, old: Record<string, string> | undefined) {
+  if (input === undefined) return old;
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("variables must be an object of NAME: value");
+  const out: Record<string, string> = {};
+  for (const [raw, v] of Object.entries(input)) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) throw new Error(`variable ${name}: letters, digits and _, not starting with a digit`);
+    if (RESERVED_VAR.test(name)) throw new Error(`${name} is set by Pixel or the machine; it can't be a provider variable`);
+    if (v !== null && typeof v !== "string") throw new Error(`variable ${name} must be text`);
+    const value = v === null ? old?.[name] : varValue(name, v);
+    if (!value) continue;
+    if (value.length > 8192) throw new Error(`variable ${name} is too long`);
+    out[name] = value;
+  }
+  if (Object.keys(out).length > 40) throw new Error("at most 40 variables per provider");
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** What agents get for one of a custom endpoint's models: the catalogue's numbers when it knows the id, else the endpoint's. */
+export function customModelInfo(c: NonNullable<ProviderAccount["custom"]>, id: string) {
+  const known = knownModel(id);
+  const context = known?.context ?? c.context;
+  return {
+    id,
+    name: known?.name ?? id,
+    api: c.modelApi?.[id] ?? c.api,
+    context,
+    output: known?.output ?? Math.min(32_000, Math.floor(context / 4)),
+    reasoning: !!c.reasoning || !!known?.reasoning,
+    /** Numbers from the catalogue (the same model sold elsewhere) rather than the endpoint's defaults. */
+    known: !!known,
+  };
+}
 
 export const hint = (key: string) => (!key ? null : key.length < 12 ? "****" : `${key.slice(0, 3)}...${key.slice(-4)}`);
 
@@ -129,6 +213,9 @@ export async function saveAccount(input: AccountInput) {
     custom.models = [...new Set(custom.models.map((m) => m.trim()).filter(Boolean))];
     if (!custom.models.length) throw new Error("list at least one model id");
   }
+  const api: CustomApi = custom?.api === "anthropic" ? "anthropic" : "openai";
+  const modelApi = custom && Object.fromEntries(Object.entries(custom.modelApi ?? {}).filter(([m, x]) => custom.models.includes(m) && (x === "openai" || x === "anthropic") && x !== api));
+  const vars = cleanVars(input.vars, old?.vars);
   let keys = old?.keys.map((k) => ({ ...k })) ?? [];
   if (input.noKey) keys = [];
   else if (input.key !== undefined) {
@@ -143,8 +230,13 @@ export async function saveAccount(input: AccountInput) {
     name: input.name?.trim() || known?.name || old?.name || id,
     keys,
     ...(baseURL && { baseURL }),
-    ...(custom && { custom: { api: custom.api === "anthropic" ? "anthropic" : "openai", models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000), ...(custom.reasoning && { reasoning: true }) } }),
+    ...(custom && {
+      custom: { api, models: custom.models, context: Math.max(1024, Number(custom.context) || 128_000), ...(custom.reasoning && { reasoning: true }), ...(modelApi && Object.keys(modelApi).length && { modelApi }) },
+    }),
     ...((input.cacheKey ?? old?.cacheKey ?? CACHE_KEY_BY_DEFAULT.has(id)) && { cacheKey: true }),
+    ...(vars && { vars }),
+    ...((input.bearer ?? old?.bearer) && { bearer: true }),
+    ...((input.maxCompletionTokens ?? old?.maxCompletionTokens) && { maxCompletionTokens: true }),
     added: old?.added ?? Date.now(),
   };
   store(accounts);
@@ -281,10 +373,35 @@ export type Via = "pixel" | "env" | "auth.json" | "builtin";
 
 /** Every provider an agent can use: added here, or set up by hand in Settings (env vars, auth.json). */
 export function connectedProviders(s: Settings = getSettings()) {
-  const out = new Map<string, { id: string; name: string; via: Via[]; keyHint: string | null; keys: PublicKey[]; envVars: string[]; baseURL: string | null; custom: ProviderAccount["custom"] | null; added: number | null }>();
+  const out = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      via: Via[];
+      keyHint: string | null;
+      keys: PublicKey[];
+      envVars: string[];
+      baseURL: string | null;
+      custom: ProviderAccount["custom"] | null;
+      /** A custom endpoint's models as agents get them (name, API, context). */
+      customModels: ReturnType<typeof customModelInfo>[] | null;
+      /** Variables set on the Models page; secret-looking ones only as a hint. */
+      vars: { name: string; value: string | null; hint: string | null; secret: boolean }[];
+      /** ${NAME} placeholders in the base URL with no value yet: calls can't go anywhere until they're set. */
+      missingVars: string[];
+      bearer: boolean;
+      maxCompletionTokens: boolean;
+      added: number | null;
+    }
+  >();
   const entry = (id: string, name?: string) => {
     let e = out.get(id);
-    if (!e) out.set(id, (e = { id, name: name ?? cachedCatalog()?.get(id)?.name ?? id, via: [], keyHint: null, keys: [], envVars: [], baseURL: null, custom: null, added: null }));
+    if (!e)
+      out.set(
+        id,
+        (e = { id, name: name ?? cachedCatalog()?.get(id)?.name ?? id, via: [], keyHint: null, keys: [], envVars: [], baseURL: null, custom: null, customModels: null, vars: [], missingVars: [], bearer: false, maxCompletionTokens: false, added: null }),
+      );
     return e;
   };
   for (const a of Object.values(load())) {
@@ -294,6 +411,15 @@ export function connectedProviders(s: Settings = getSettings()) {
     e.keys = a.keys.map(publicKey);
     e.baseURL = a.baseURL ?? null;
     e.custom = a.custom ?? null;
+    e.customModels = a.custom ? a.custom.models.map((m) => customModelInfo(a.custom!, m)) : null;
+    e.vars = Object.entries(a.vars ?? {}).map(([name, v]) => {
+      const secret = SECRET_VAR.test(name);
+      return { name, value: secret ? null : v, hint: secret ? hint(v) : null, secret };
+    });
+    const template = a.baseURL ?? cachedCatalog()?.get(a.id)?.api;
+    e.missingVars = urlVars(template).filter((n) => !a.vars?.[n] && !s.agentEnv[n]);
+    e.bearer = !!a.bearer;
+    e.maxCompletionTokens = !!a.maxCompletionTokens;
     e.added = a.added;
   }
   for (const id of Object.keys(parseAuth(s.agentAuthJson) ?? {})) entry(id).via.push("auth.json");
@@ -342,8 +468,12 @@ function withoutKey(creds: { env: Record<string, string>; authJson: string }, pr
 function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, string>; authJson: string } {
   const accounts = Object.values(load());
   const github = githubForAgents();
-  // Settings env first, so the GitHub card wins over a GITHUB_TOKEN typed there by hand.
-  const env = { ...s.agentEnv, ...github.env };
+  // Settings env first, then each provider's own variables; the GitHub card wins over a GITHUB_TOKEN typed by hand.
+  const env: Record<string, string> = { ...s.agentEnv };
+  for (const a of accounts) Object.assign(env, a.vars);
+  Object.assign(env, github.env);
+  // A run set to call its model's provider without a key: no key reaches it in any form.
+  const bare = run?.key_id === NO_KEY ? run.model?.split("/")[0] : undefined;
   // Provider levels first, so your own levels with the same name win.
   const levels: [string, Record<string, Record<string, unknown>>][] = [];
   for (const a of accounts) if (PROVIDER_LEVELS[a.id]) for (const m of s.models.filter((m) => m.startsWith(`${a.id}/`))) levels.push([m, PROVIDER_LEVELS[a.id]]);
@@ -351,34 +481,46 @@ function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, 
   const modelOverrides = Object.entries(s.modelOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
   const providerOverrides = Object.entries(s.providerOverrides ?? {}).filter(([, o]) => Object.keys(o).length);
   const relaySubject = run?.proxy_id ? (run.id ? runSubject(run.id) : proxySubject(run.proxy_id)) : null;
+  const completionTokens = accounts.filter((a) => a.maxCompletionTokens).map((a) => a.id);
+  if (completionTokens.length) env.PIXEL_MAX_COMPLETION_TOKENS = completionTokens.join(",");
   if (!accounts.length && !github.mcp && !levels.length && !modelOverrides.length && !providerOverrides.length && !relaySubject) return { env, authJson: s.agentAuthJson };
 
   const auth = parseAuth(s.agentAuthJson);
   if (auth === null && accounts.length) console.error("Settings auth.json is not a JSON object; agents only get the providers added on the Models page");
   const merged: Record<string, any> = { ...(auth ?? {}) };
+  const keyOf = (a: ProviderAccount) => a.keys.find((x) => x.id === run?.key_id) ?? a.keys[0];
   for (const a of accounts) {
-    const k = a.keys.find((x) => x.id === run?.key_id) ?? a.keys[0];
+    const k = keyOf(a);
     if (k?.key) merged[a.id] = { type: "api", key: k.key };
   }
 
   const provider: Record<string, any> = {};
   for (const a of accounts) {
-    const options = { ...(a.baseURL && { baseURL: a.baseURL }) };
-    if (a.custom)
+    const base = accountBase(a, env);
+    const k = keyOf(a);
+    const options: Record<string, any> = { ...(base && { baseURL: base }) };
+    if (a.bearer && k?.key && a.id !== bare) options.headers = { Authorization: `Bearer ${k.key}` };
+    if (a.custom) {
+      const api = a.custom.api ?? "openai";
       provider[a.id] = {
-        npm: NPM[a.custom.api ?? "openai"],
+        npm: NPM[api],
         name: a.name,
         options,
         models: Object.fromEntries(
-          a.custom.models.map((m) => [m, { name: m, tool_call: true, ...(a.custom!.reasoning && { reasoning: true }), limit: { context: a.custom!.context, output: Math.min(32_000, Math.floor(a.custom!.context / 4)) } }]),
+          a.custom.models.map((m) => {
+            const info = customModelInfo(a.custom!, m);
+            // A model speaking the other API gets that API's SDK; same base URL (/messages vs /chat/completions after it).
+            return [m, { name: info.name, tool_call: true, ...(info.reasoning && { reasoning: true }), limit: { context: info.context, output: info.output }, ...(info.api !== api && { provider: { npm: NPM[info.api] } }) }];
+          }),
         ),
       };
-    else if (Object.keys(options).length) provider[a.id] = { options };
+    } else if (Object.keys(options).length) provider[a.id] = { options };
   }
   // Settings changed by hand on the Models page, over the catalogue and the custom endpoint's own.
   for (const [id, o] of providerOverrides) {
     const p = (provider[id] ??= {});
-    p.options = { ...p.options, ...opencodeProviderOptions(o) };
+    const extra = opencodeProviderOptions(o);
+    p.options = { ...p.options, ...extra, ...((p.options?.headers || extra.headers) && { headers: { ...p.options?.headers, ...(extra.headers as object) } }) };
   }
   for (const [full, o] of modelOverrides) {
     const [pid, ...rest] = full.split("/");
@@ -419,6 +561,16 @@ function credentials(s: Settings, run?: CredsFor | null): { env: Record<string, 
   return { env, authJson: !accounts.length ? s.agentAuthJson : Object.keys(merged).length ? JSON.stringify(merged, null, 2) : "" };
 }
 
+/** GET {base}/models with the key the way the provider takes it; the body only when it failed. */
+async function getModels(base: string, key: string, anthropic: boolean, bearer: boolean) {
+  const headers: Record<string, string> = anthropic && !bearer ? { "anthropic-version": "2023-06-01", "x-api-key": key } : { authorization: `Bearer ${key}`, ...(anthropic && { "anthropic-version": "2023-06-01" }) };
+  const url = `${base.replace(/\/+$/, "")}/models`;
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) }).catch((e) => {
+    throw new Error(`cannot reach ${url}: ${e.message}`);
+  });
+  return { ok: r.ok, status: r.status, body: r.ok ? "" : (await r.text().catch(() => "")).slice(0, 300) };
+}
+
 /** Where to reach a provider's API directly, for testing a key; null when Pixel doesn't know. */
 const KNOWN_API: Record<string, string> = { anthropic: "https://api.anthropic.com/v1", openai: "https://api.openai.com/v1" };
 
@@ -431,15 +583,15 @@ export async function testKey(providerId: string, keyId: string) {
   const k = a?.keys.find((x) => x.id === keyId);
   if (!a || !k) throw new Error(`no key ${keyId} for ${providerId}`);
   const cat = cachedCatalog()?.get(providerId);
-  const base = a.baseURL ?? cat?.api ?? KNOWN_API[providerId];
-  if (!base) throw new Error(`Pixel doesn't know ${a.name}'s API address, so it can't test the key directly; try it in the live test instead`);
+  const base = accountBase(a) ?? (cat?.api && !cat.api.includes("${") ? cat.api : null) ?? KNOWN_API[providerId];
+  if (!base) {
+    const missing = urlVars(a.baseURL ?? cat?.api).filter((n) => !a.vars?.[n]);
+    throw new Error(missing.length ? `Set ${missing.join(", ")} first: the API address needs ${missing.length === 1 ? "it" : "them"}` : `Pixel doesn't know ${a.name}'s API address, so it can't test the key directly; try it in the live test instead`);
+  }
   const anthropic = a.custom ? a.custom.api === "anthropic" : providerId === "anthropic" || !!cat?.npm?.includes("anthropic");
-  const headers: Record<string, string> = anthropic ? { "anthropic-version": "2023-06-01", "x-api-key": k.key } : { authorization: `Bearer ${k.key}` };
-  const url = `${base.replace(/\/+$/, "")}/models`;
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) }).catch((e) => {
-    throw new Error(`cannot reach ${url}: ${e.message}`);
-  });
-  const body = res.ok ? "" : (await res.text().catch(() => "")).slice(0, 300);
+  const sf = snowflakeHost(base);
+  const res = sf ? await testCortexKey(sf, k.key) : await getModels(base, k.key, anthropic, !!a.bearer);
+  const body = res.body;
   if (res.ok) {
     setKeyStatus(providerId, keyId, null);
     return { ok: true, status: res.status, message: "The key works" };
@@ -449,13 +601,22 @@ export async function testKey(providerId: string, keyId: string) {
   return { ok: false, status: res.status, message: `HTTP ${res.status}${body ? `: ${body}` : ""}` };
 }
 
-/** Ask an endpoint which models it serves (GET {baseURL}/models, the same path in both APIs). */
-export async function discoverModels(baseURL: string, key?: string, id?: string, api: CustomApi = "openai") {
-  const url = cleanUrl(baseURL);
+/**
+ * Ask an endpoint which models it serves (GET {baseURL}/models, the same path in both APIs; Snowflake
+ * through its SQL API). `vars` are the form's unsaved variables, null meaning the stored value.
+ */
+export async function discoverModels(baseURL: string, key?: string, id?: string, api: CustomApi = "openai", vars?: Record<string, string | null>, bearer?: boolean) {
+  const stored = id ? load()[id] : undefined;
+  const filled = Object.fromEntries(Object.entries(vars ?? stored?.vars ?? {}).map(([n, v]) => [n, v === null ? (stored?.vars?.[n] ?? "") : varValue(n, v)]));
+  const missing = urlVars(baseURL).filter((n) => !filled[n] && !getSettings().agentEnv[n]);
+  if (missing.length) throw new Error(`Set ${missing.join(", ")} first: the base URL needs ${missing.length === 1 ? "it" : "them"}`);
+  const url = cleanUrl(fillVars(baseURL, filled) ?? "");
   if (!url) throw new Error("base URL needed");
-  const stored = !key && id ? load()[id]?.keys[0]?.key : undefined;
-  const auth = key?.trim() || stored;
-  const headers: Record<string, string> = api === "anthropic" ? { "anthropic-version": "2023-06-01", ...(auth && { "x-api-key": auth }) } : auth ? { authorization: `Bearer ${auth}` } : {};
+  const auth = key?.trim() || stored?.keys[0]?.key;
+  const sf = snowflakeHost(url);
+  if (sf) return { models: await cortexModels(sf, auth ?? "") };
+  const headers: Record<string, string> =
+    api === "anthropic" && !bearer ? { "anthropic-version": "2023-06-01", ...(auth && { "x-api-key": auth }) } : { ...(api === "anthropic" && { "anthropic-version": "2023-06-01" }), ...(auth && { authorization: `Bearer ${auth}` }) };
   const res = await fetch(`${url}/models`, { headers, signal: AbortSignal.timeout(15_000) }).catch((e) => {
     throw new Error(`cannot reach ${url}/models: ${e.message}`);
   });

@@ -59,8 +59,8 @@ del("/providers/:id/keys/:key", ({ params: { id, key } }) => {
 put("/providers/:id/keys-order", async ({ req, params: { id } }) => orderKeys(id, (await readJson<{ ids: string[] }>(req)).ids ?? []));
 post("/providers/:id/keys/:key/test", ({ params: { id, key } }) => testKey(id, key));
 post("/providers/discover", async ({ req }) => {
-  const b = await readJson<{ baseURL?: string; key?: string; id?: string; api?: "openai" | "anthropic" }>(req);
-  return discoverModels(b.baseURL ?? "", b.key, b.id, b.api === "anthropic" ? "anthropic" : "openai");
+  const b = await readJson<{ baseURL?: string; key?: string; id?: string; api?: "openai" | "anthropic"; vars?: Record<string, string | null>; bearer?: boolean }>(req);
+  return discoverModels(b.baseURL ?? "", b.key, b.id, b.api === "anthropic" ? "anthropic" : "openai", b.vars, !!b.bearer);
 });
 
 // ---- models offered in the new-run form, for the model pickers ----
@@ -74,18 +74,19 @@ get("/models", async () => {
     models: s.models.map((full) => {
       const [provider, ...rest] = full.split("/");
       const id = rest.join("/");
-      const m = cachedCatalog()?.get(provider)?.models.find((x) => x.id === id);
       const p = names.get(provider);
+      const m = cachedCatalog()?.get(provider)?.models.find((x) => x.id === id) ?? null;
+      const c = p?.customModels?.find((x) => x.id === id);
       const e = effective(full, s, m ?? null);
       return {
         model: full,
         provider,
         providerName: p?.name ?? cachedCatalog()?.get(provider)?.name ?? provider,
-        name: m?.name ?? id,
-        context: e.context ?? p?.custom?.context ?? null,
+        name: m?.name ?? c?.name ?? id,
+        context: e.context ?? c?.context ?? p?.custom?.context ?? null,
         costIn: e.costIn,
         costOut: e.costOut,
-        reasoning: e.reasoning || !!p?.custom?.reasoning,
+        reasoning: e.reasoning || !!c?.reasoning || !!p?.custom?.reasoning,
         connected: !!p,
       };
     }),

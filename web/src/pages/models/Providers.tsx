@@ -26,7 +26,9 @@ function state(id: string, health: ProviderHealth) {
 function connection(p: ConnectedProvider) {
   if (p.via.includes("pixel")) {
     const keys = p.keys.length === 0 ? "no key" : p.keys.length === 1 ? "1 key" : `${p.keys.length} keys`;
-    return p.custom ? `${p.custom.api === "anthropic" ? "Anthropic" : "OpenAI"} API, ${keys}` : keys;
+    if (!p.custom) return keys;
+    const apis = new Set(p.customModels?.map((m) => m.api) ?? [p.custom.api]);
+    return `${apis.size > 1 ? "OpenAI and Anthropic" : p.custom.api === "anthropic" ? "Anthropic" : "OpenAI"} API, ${keys}`;
   }
   if (p.via.includes("env")) return `env ${p.envVars.join(", ")}`;
   if (p.via.includes("auth.json")) return "auth.json";
@@ -170,6 +172,18 @@ export function Providers({
               )}
             </div>
           </header>
+
+          {p.missingVars.length > 0 && (
+            <div className="flex items-center gap-2.5 rounded-xl bg-[var(--warn-tint)] px-3.5 py-2.5 text-[13px]">
+              <IconAlertTriangle {...IC_SM} className="shrink-0 text-warning" />
+              <span className="min-w-0 flex-1">
+                Calls can't go anywhere until <span className="font-mono text-xs">{p.missingVars.join(", ")}</span> {p.missingVars.length === 1 ? "is" : "are"} set: the API address needs {p.missingVars.length === 1 ? "it" : "them"}.
+              </span>
+              <Button size="xs" onClick={() => onEdit(p)}>
+                Set
+              </Button>
+            </div>
+          )}
 
           {p.via.includes("pixel") ? (
             <Keys provider={p} onChanged={onChanged} />

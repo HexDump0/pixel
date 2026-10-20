@@ -133,3 +133,28 @@ export function cachedCatalog() {
 }
 
 export type CatalogList = Awaited<ReturnType<typeof catalogProviders>>;
+
+/** Providers that make the models, searched first so a model's own numbers win over a reseller's. */
+const MAKERS = ["anthropic", "openai", "google", "xai", "moonshotai", "zai", "deepseek", "mistral", "alibaba", "meta-llama", "minimax"];
+/** Gateways put the maker in front of the id (Snowflake Cortex: openai-gpt-5.4). */
+const MAKER_PREFIX = /^(openai|anthropic|google|xai|meta|mistral|deepseek|moonshotai|zai|snowflake)-(.+)$/;
+const byId = new WeakMap<Map<string, CatalogProvider>, Map<string, CatalogModel>>();
+
+/**
+ * A model the catalogue knows by its id under any provider, for endpoints that serve known models
+ * under their own name (Snowflake Cortex, LiteLLM, vLLM). Context, output and abilities only: a
+ * reseller's prices aren't the maker's, so those are left out.
+ */
+export function knownModel(id: string): CatalogModel | null {
+  const c = cachedCatalog();
+  if (!c) return null;
+  let index = byId.get(c);
+  if (!index) {
+    index = new Map();
+    for (const pid of [...MAKERS, ...c.keys()]) for (const m of c.get(pid)?.models ?? []) if (!index.has(m.id)) index.set(m.id, m);
+    byId.set(c, index);
+  }
+  const lower = id.toLowerCase();
+  const hit = index.get(lower) ?? index.get(lower.match(MAKER_PREFIX)?.[2] ?? "");
+  return hit ? { ...hit, costIn: null, costOut: null, costCacheRead: null, api: null, npm: null } : null;
+}

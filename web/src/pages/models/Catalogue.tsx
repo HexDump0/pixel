@@ -41,7 +41,9 @@ export function Catalogue({ provider, settings, onSettings, onTest, onAdvanced }
   const prefix = `${provider.id}/`;
 
   const models: CatalogModel[] = useMemo(() => {
-    const list: CatalogModel[] = provider.custom ? provider.custom.models.map((id) => blank(id, { context: provider.custom!.context, reasoning: !!provider.custom!.reasoning })) : [...(cat.data?.models ?? [])];
+    const list: CatalogModel[] = provider.customModels
+      ? provider.customModels.map((m) => blank(m.id, { name: m.name, context: m.context, output: m.output, reasoning: m.reasoning }))
+      : [...(cat.data?.models ?? [])];
     // Offered models the catalogue doesn't list (typed in by hand, or newer than the catalogue).
     for (const m of settings.models) if (m.startsWith(prefix) && !list.some((x) => x.id === m.slice(prefix.length))) list.push(blank(m.slice(prefix.length)));
     return list;

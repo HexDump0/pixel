@@ -5,7 +5,7 @@ import { config } from "../src/config.ts";
 import { getSettings, saveSettings } from "../src/settings.ts";
 import { catalogProvider, catalogProviders } from "../src/catalog.ts";
 import { saveGithub } from "../src/github.ts";
-import { addKey, agentCredentials, connectedProviders, NO_KEY, discoverModels, editKey, findKey, keyFor, orderKeys, providerKeys, RATELIMIT_MARK_MS, removeAccount, removeKey, saveAccount, setKeyStatus, testKey } from "../src/providerAccounts.ts";
+import { accountBaseURL, addKey, agentCredentials, connectedProviders, NO_KEY, discoverModels, editKey, findKey, keyFor, orderKeys, providerKeys, RATELIMIT_MARK_MS, removeAccount, removeKey, saveAccount, setKeyStatus, testKey } from "../src/providerAccounts.ts";
 import { classifyKeyError, nextKey } from "../src/runs/keys.ts";
 import { db } from "../src/db.ts";
 
@@ -18,6 +18,7 @@ beforeAll(() => {
       groq: { id: "groq", name: "Groq", env: ["GROQ_API_KEY"], models: { "llama-y": { id: "llama-y", name: "Llama Y", tool_call: false } } },
       opencode: { id: "opencode", name: "OpenCode Zen", env: ["OPENCODE_API_KEY"], models: {} },
       coralbricks: { id: "coralbricks", name: "CoralBricks", env: ["CORAL_API_KEY"], npm: "@ai-sdk/openai-compatible", api: "https://inference.coralbricks.ai/v1", models: {} },
+      "snowflake-cortex": { id: "snowflake-cortex", name: "Snowflake Cortex", env: ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_CORTEX_PAT"], npm: "@ai-sdk/openai-compatible", api: "https://${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2/cortex/v1", models: {} },
     }),
   );
 });
@@ -259,6 +260,87 @@ describe("several keys per provider", () => {
       expect(providerKeys("tk")[0].status).toMatchObject({ state: "rejected" });
       expect(await testKey("tk", good.id)).toMatchObject({ ok: true });
       await expect(testKey("groq", providerKeys("groq")[0].id)).rejects.toThrow("can't test the key directly");
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("variables, mixed APIs and how requests go out", () => {
+  const cfg = (run?: Parameters<typeof agentCredentials>[1]) => JSON.parse(agentCredentials(getSettings(), run).env.OPENCODE_CONFIG_CONTENT ?? "{}");
+
+  test("a catalogue provider's variables reach agents and fill its API address", async () => {
+    saveSettings({ agentEnv: {}, agentAuthJson: "" });
+    await saveAccount({ id: "snowflake-cortex", key: "pat-1234567890" });
+    expect(connectedProviders().find((p) => p.id === "snowflake-cortex")?.missingVars).toEqual(["SNOWFLAKE_ACCOUNT"]);
+    expect(accountBaseURL("snowflake-cortex")).toBeNull();
+
+    // A pasted account URL is cut down to the identifier.
+    await saveAccount({ id: "snowflake-cortex", vars: { SNOWFLAKE_ACCOUNT: "https://abc-xy123.snowflakecomputing.com/", EXTRA_TOKEN: "tok-abcdefghijk" } });
+    const c = agentCredentials();
+    expect(c.env).toMatchObject({ SNOWFLAKE_ACCOUNT: "abc-xy123", EXTRA_TOKEN: "tok-abcdefghijk" });
+    expect(cfg().provider["snowflake-cortex"].options.baseURL).toBe("https://abc-xy123.snowflakecomputing.com/api/v2/cortex/v1");
+    expect(accountBaseURL("snowflake-cortex")).toBe("https://abc-xy123.snowflakecomputing.com/api/v2/cortex/v1");
+    const p = connectedProviders().find((x) => x.id === "snowflake-cortex")!;
+    expect(p.missingVars).toEqual([]);
+    expect(p.vars).toEqual([
+      { name: "SNOWFLAKE_ACCOUNT", value: "abc-xy123", hint: null, secret: false },
+      { name: "EXTRA_TOKEN", value: null, hint: "tok...hijk", secret: true },
+    ]);
+
+    // null keeps a stored secret, a name left out drops it; reserved names are refused.
+    await saveAccount({ id: "snowflake-cortex", vars: { SNOWFLAKE_ACCOUNT: "abc-xy123", EXTRA_TOKEN: null } });
+    expect(agentCredentials().env.EXTRA_TOKEN).toBe("tok-abcdefghijk");
+    await saveAccount({ id: "snowflake-cortex", vars: { SNOWFLAKE_ACCOUNT: "abc-xy123" } });
+    expect(agentCredentials().env.EXTRA_TOKEN).toBeUndefined();
+    await expect(saveAccount({ id: "snowflake-cortex", vars: { PATH: "/x" } })).rejects.toThrow("set by Pixel");
+    await expect(saveAccount({ id: "snowflake-cortex", vars: { "1BAD": "x" } })).rejects.toThrow("letters, digits");
+    removeAccount("snowflake-cortex");
+  });
+
+  test("an endpoint serving models on both APIs, with Bearer auth and max_completion_tokens", async () => {
+    saveSettings({ providerOverrides: { cx: { headers: { "X-Extra": "1" } } } });
+    await saveAccount({
+      id: "cx",
+      name: "Cortex",
+      baseURL: "https://${ACCT}.example.com/v1",
+      vars: { ACCT: "a1" },
+      key: "pat-abcdefghijkl",
+      bearer: true,
+      maxCompletionTokens: true,
+      custom: { api: "openai", models: ["claude-x", "gpt-z"], context: 100000, modelApi: { "claude-x": "anthropic", "gpt-z": "openai", "not-listed": "anthropic" } },
+    });
+    expect(connectedProviders().find((p) => p.id === "cx")?.custom?.modelApi).toEqual({ "claude-x": "anthropic" });
+    const p = cfg().provider.cx;
+    expect(p).toMatchObject({ npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://a1.example.com/v1", headers: { Authorization: "Bearer pat-abcdefghijkl", "X-Extra": "1" } } });
+    // A model the catalogue knows takes its name and limits; the other gets the endpoint's.
+    expect(p.models["claude-x"]).toMatchObject({ name: "Claude X", provider: { npm: "@ai-sdk/anthropic" }, limit: { context: 200000, output: 64000 } });
+    expect(p.models["gpt-z"]).toMatchObject({ name: "gpt-z", limit: { context: 100000, output: 25000 } });
+    expect(p.models["gpt-z"].provider).toBeUndefined();
+    expect(agentCredentials().env.PIXEL_MAX_COMPLETION_TOKENS).toBe("cx");
+
+    // The header carries the run's own key, and nothing for a run set to go without one.
+    const second = addKey("cx", { name: "Second", key: "pat-second-12345" });
+    expect(cfg({ key_id: second.id, model: "cx/claude-x" }).provider.cx.options.headers.Authorization).toBe("Bearer pat-second-12345");
+    expect(cfg({ key_id: NO_KEY, model: "cx/claude-x" }).provider.cx.options.headers).toEqual({ "X-Extra": "1" });
+    saveSettings({ providerOverrides: {} });
+    removeAccount("cx");
+  });
+
+  test("discovery fills variables in the base URL and sends the key as Bearer when asked", async () => {
+    const seen: Record<string, string | null>[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization"), xkey: req.headers.get("x-api-key"), version: req.headers.get("anthropic-version") });
+        return Response.json({ data: [{ id: "m" }] });
+      },
+    });
+    try {
+      const base = `http://127.0.0.1:${server.port}/\${SEG}`;
+      await expect(discoverModels(base, "k", undefined, "anthropic", {})).rejects.toThrow("Set SEG first");
+      expect(await discoverModels(base, "k", undefined, "anthropic", { SEG: "v1" }, true)).toEqual({ models: ["m"] });
+      expect(seen).toEqual([{ path: "/v1/models", auth: "Bearer k", xkey: null, version: "2023-06-01" }]);
     } finally {
       server.stop(true);
     }

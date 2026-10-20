@@ -16,6 +16,7 @@ beforeAll(async () => {
       groq: { id: "groq", name: "Groq", env: ["GROQ_API_KEY"], models: { "llama-y": { id: "llama-y", name: "Llama Y", tool_call: false } } },
       opencode: { id: "opencode", name: "OpenCode Zen", env: ["OPENCODE_API_KEY"], models: {} },
       coralbricks: { id: "coralbricks", name: "CoralBricks", env: ["CORAL_API_KEY"], npm: "@ai-sdk/openai-compatible", api: "https://inference.coralbricks.ai/v1", models: {} },
+      "snowflake-cortex": { id: "snowflake-cortex", name: "Snowflake Cortex", env: ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_CORTEX_PAT"], npm: "@ai-sdk/openai-compatible", api: "https://${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2/cortex/v1", models: {} },
     }),
   );
   await catalogProviders();

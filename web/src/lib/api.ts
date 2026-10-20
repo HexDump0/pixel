@@ -224,7 +224,19 @@ export const api = {
   speedTests: () => request<{ running: string | null; models: string[]; current: string | null; results: SpeedTestRow[] }>("GET", "/speedtests"),
   startSpeedTest: (models: string[]) => request<{ batch: string; models: string[] }>("POST", "/speedtests", { models }),
   providers: () => request<ConnectedProvider[]>("GET", "/providers"),
-  saveProvider: (id: string, body: { name?: string; key?: string; noKey?: boolean; baseURL?: string; custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number; reasoning?: boolean } }) =>
+  saveProvider: (
+    id: string,
+    body: {
+      name?: string;
+      key?: string;
+      noKey?: boolean;
+      baseURL?: string;
+      custom?: { api?: "openai" | "anthropic"; models: string[]; context?: number; reasoning?: boolean; modelApi?: Record<string, "openai" | "anthropic"> };
+      vars?: Record<string, string | null>;
+      bearer?: boolean;
+      maxCompletionTokens?: boolean;
+    },
+  ) =>
     request<{ id: string }>("PUT", `/providers/${encodeURIComponent(id)}`, body),
   removeProvider: (id: string) => request("DELETE", `/providers/${encodeURIComponent(id)}`),
   keyUsage: (id: string) => request<{ runs: Record<string, number>; callsPerHour: Record<string, number> }>("GET", `/providers/${encodeURIComponent(id)}/keys/usage`),
@@ -236,7 +248,7 @@ export const api = {
   runKeys: (id: string) => request<RunKeys>("GET", `${r(id)}/keys`),
   setRunKey: (id: string, keyId: string | null) => request("POST", `${r(id)}/key`, { keyId }),
   setFailover: (id: string, on: boolean) => request("POST", `${r(id)}/failover`, { on }),
-  discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic" }) => request<{ models: string[] }>("POST", "/providers/discover", body),
+  discoverModels: (body: { baseURL: string; key?: string; id?: string; api?: "openai" | "anthropic"; vars?: Record<string, string | null>; bearer?: boolean }) => request<{ models: string[] }>("POST", "/providers/discover", body),
   catalog: (refresh = false) => request<CatalogList>("GET", `/catalog${q({ refresh: refresh ? 1 : undefined })}`),
   catalogProvider: (id: string) => request<CatalogProvider>("GET", `/catalog/${encodeURIComponent(id)}`),
   livePrompt: (body: { model: string; variant?: string; text: string; session?: string; turn: string; key?: string; proxy?: string }) => request<{ session: string; turn: string }>("POST", "/live", body),
