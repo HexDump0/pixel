@@ -172,6 +172,8 @@ export class SingleRuntime extends ProcessRuntime {
       permission: "allow",
       autoupdate: false,
       share: "disabled",
+      // Without a default provider opencode asks which one to use on the first web search (a question form).
+      websearch: { provider: "random" },
       // Todos are off by default in opencode 2; agents had them in opencode 1 and the dashboard shows them.
       experimental: { todo: true },
       ...(existsSync(PYGHIDRA_MCP) && {

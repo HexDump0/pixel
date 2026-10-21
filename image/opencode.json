@@ -3,6 +3,7 @@
   "permission": "allow",
   "autoupdate": false,
   "share": "disabled",
+  "websearch": { "provider": "random" },
   "experimental": { "todo": true },
   "mcp": {
     "ghidra": {
