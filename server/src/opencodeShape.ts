@@ -373,7 +373,9 @@ export class Translator {
         const out: PixelEvent[] = [];
         if (e.type === "session.execution.failed") out.push({ type: "session.error", properties: { sessionID: d.sessionID, error: v1Error(d.error) } });
         if (e.type === "session.execution.interrupted" && d.reason === "user") out.push({ type: "session.error", properties: { sessionID: d.sessionID, error: v1Error({ type: "aborted", message: "Interrupted" }) } });
-        out.push({ type: "session.status", properties: { sessionID: d.sessionID, status: { type: "idle" } } });
+        // `end`: how the turn ended, which is how a background subagent's own state is known.
+        const end = e.type === "session.execution.succeeded" ? "succeeded" : e.type === "session.execution.failed" ? "failed" : "interrupted";
+        out.push({ type: "session.status", properties: { sessionID: d.sessionID, status: { type: "idle" }, end } });
         out.push({ type: "session.idle", properties: { sessionID: d.sessionID } });
         return out;
       }

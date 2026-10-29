@@ -13,6 +13,7 @@ import { releaseIdle } from "../src/runs/release.ts";
 import { launchDir } from "../src/runtime/process.ts";
 import { seedTemplates } from "../src/templates.ts";
 import { addKey, providerKeys, saveAccount } from "../src/providerAccounts.ts";
+import { fleetSnapshot, lanes } from "../src/fleet.ts";
 
 let repo: string;
 
@@ -79,6 +80,59 @@ describe("run lifecycle", () => {
     expect(launch.env.FAKE_API_KEY).toBe("new");
     await until("done", () => getRun(run.id)!.status === "done");
     saveSettings({ agentEnv: {} });
+  });
+
+  test("a background shell command: Pixel waits for it instead of continuing, and opencode's wake finishes the run", async () => {
+    const run = createRun({ repo, templateId: "audit", name: "bgshell", promptOverride: `BGSHELL 2 REPORT {{workbase}}/REPORT.md` });
+    await until("waiting", () => !!getRun(run.id)!.waiting);
+    const w = JSON.parse(getRun(run.id)!.waiting!);
+    expect(w.shells[0]).toContain("make all");
+    expect((await fleetSnapshot()).runs.find((r) => r.id === run.id)!.agents.main).toBe("waiting");
+    await until("done", () => getRun(run.id)!.status === "done");
+    const r = getRun(run.id)!;
+    expect(r.continues).toBe(0);
+    expect(r.waiting).toBeNull();
+    expect(timelineKinds(run.id)).toContain("wait");
+    expect(timelineKinds(run.id)).not.toContain("continue");
+  });
+
+  test("a background command that runs past the wait limit: the agent gets a reminder that isn't counted", async () => {
+    saveSettings({ backgroundWaitMin: 0.02 });
+    try {
+      const run = createRun({ repo, templateId: "audit", name: "bgwait", promptOverride: "BGSHELL 30" });
+      await until("reminder", () => timelineKinds(run.id).includes("nudge"));
+      await until("reminder stored", () => !!db.query("SELECT 1 FROM parts WHERE run_id = ? AND data LIKE '%Your background commands are still running after%make all%'").get(run.id));
+      expect(getRun(run.id)!.continues).toBe(0);
+      expect(getRun(run.id)!.status).toBe("running");
+      await controls.stopRun(run.id);
+    } finally {
+      saveSettings({ backgroundWaitMin: 60 });
+    }
+  });
+
+  test("a background subagent shows as running until its own session ends, then done", async () => {
+    const run = createRun({ repo, templateId: "audit", name: "bgsub", promptOverride: `BGSUB 2 REPORT {{workbase}}/REPORT.md` });
+    await until("waiting", () => !!getRun(run.id)!.waiting);
+    let f = (await fleetSnapshot()).runs.find((r) => r.id === run.id)!;
+    expect(f.agents.subs).toHaveLength(1);
+    expect(f.agents.subs[0].status).toBe("running");
+    expect(f.agents.main).toBe("waiting");
+    expect(f.waiting!.subagents).toBe(1);
+    await until("done", () => getRun(run.id)!.status === "done");
+    f = (await fleetSnapshot()).runs.find((r) => r.id === run.id)!;
+    expect(f.agents.subs[0].status).toBe("done");
+    expect(getRun(run.id)!.continues).toBe(0);
+    // Its dot on the lanes is where it finished, not where its task call returned.
+    const sub = lanes(run.id, 10)!.lanes.find((l) => l.sub);
+    const started = f.agents.subs[0].started;
+    expect(sub?.marks.some(([t, k]) => k === "done" && t - started >= 1500)).toBe(true);
+  });
+
+  test("progress after a continue resets the count, so a working agent isn't stopped", async () => {
+    const run = createRun({ repo, templateId: "audit", name: "progress", promptOverride: "PROGRESS REPORT {{workbase}}/REPORT.md" });
+    await until("done", () => getRun(run.id)!.status === "done");
+    expect(timelineKinds(run.id)).toContain("reset");
+    expect(timelineKinds(run.id).filter((k) => k === "continue").length).toBe(3);
   });
 
   test("opencode SIGKILLed → restarted, OOM message sent to the same session", async () => {

@@ -3,7 +3,7 @@
 # The Incus setup (Dockerfile + compose.yaml) gives far stronger isolation; prefer it when you can.
 FROM oven/bun:1.4-debian
 
-ARG OPENCODE_VERSION=2.1.0
+ARG OPENCODE_VERSION=2.2.0
 # Off by default: agents here mostly review code and test on native builds. Set to 1 for the rare
 # reverse-engineering run (Ghidra ~1 GB with Java, CodeQL ~1 GB, and a much longer build).
 ARG INSTALL_GHIDRA=0

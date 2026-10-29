@@ -839,6 +839,7 @@ const PIXEL_KIND: Record<string, string> = {
   recover: "Recoveries",
   restart: "opencode restarts",
   continue: "Continues sent",
+  nudge: "Reminders while background work ran",
   limit: "Resource limits hit",
   permission: "Permissions approved",
   question: "Questions answered",

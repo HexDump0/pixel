@@ -187,6 +187,28 @@ export function autoApprove(runId: string, req: { id: string; sessionID?: string
     .catch((e) => console.error("permission reply failed", e));
 }
 
+/**
+ * A session's own execution state: busy, or how its last turn ended (succeeded, failed, interrupted). A subagent
+ * started with `background: true` returns from its call at once, so this, not the call, says whether it still works.
+ */
+const updateExec = db.query("UPDATE sessions SET exec_state = ?, exec_end = ? WHERE id = ? AND exec_state IS NOT ?");
+function setExecState(sessionId: string, state: string) {
+  updateExec.run(state, state === "busy" ? null : Date.now(), sessionId, state);
+}
+
+/** After (re)connecting: sessions we thought busy that opencode no longer runs ended while we weren't listening. */
+function settleExecStates(runId: string, active: Record<string, unknown>) {
+  const lastAssistant = db.query<{ data: string }, [string]>("SELECT data FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1");
+  for (const s of db.query<{ id: string; exec_state: string | null }, [string]>("SELECT id, exec_state FROM sessions WHERE run_id = ?").all(runId)) {
+    if (active[s.id]) setExecState(s.id, "busy");
+    else if (s.exec_state === "busy") {
+      const m = lastAssistant.get(s.id);
+      const info = m ? JSON.parse(m.data) : null;
+      setExecState(s.id, info?.time?.completed && !info.error ? "succeeded" : "interrupted");
+    }
+  }
+}
+
 /** last_activity is written at most every few seconds; deltas arrive many times a second. */
 const lastActivityWrite = new Map<string, number>();
 function touch(runId: string) {
@@ -254,7 +276,8 @@ function handleEvent(id: string, w: Watcher, e: OpencodeEvent) {
       publish(id, "todos", p);
       break;
     case "session.status":
-      if (isRoot && (p.status?.type === "busy" || p.status?.type === "retry")) setRun(id, { agent_status: p.status.type });
+      if (p.sessionID) setExecState(p.sessionID, p.status?.type === "idle" ? (p.end ?? "succeeded") : "busy");
+      if (isRoot && (p.status?.type === "busy" || p.status?.type === "retry")) setRun(id, { agent_status: p.status.type, ...(run.waiting && { waiting: null }) });
       // A running run's idle goes through onIdle; a paused or stopped one just shows it.
       if (isRoot && p.status?.type === "idle" && run.status !== "running" && run.agent_status !== "idle") setRun(id, { agent_status: "idle" });
       if (isRoot && p.status?.type === "retry") publish(id, "retry", p.status);
@@ -326,6 +349,8 @@ export async function syncTranscript(id: string) {
       console.error(`sync of session ${sid} failed`, e);
     }
   }
+  const active = await client.status().catch(() => null);
+  if (active) settleExecStates(id, active);
   publish(id, "synced", {});
 }
 

@@ -2,7 +2,7 @@
 # Provision a fresh Ubuntu 24.04 VM into pixel-image. Run as root inside the VM (build.sh does this).
 set -euo pipefail
 
-OPENCODE_VERSION="${OPENCODE_VERSION:-2.1.0}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-2.2.0}"
 GHIDRA_URL="${GHIDRA_URL:-https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip}"
 CODEQL_VERSION="${CODEQL_VERSION:-v2.27.2}"
 NODE_MAJOR="${NODE_MAJOR:-22}"

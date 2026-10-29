@@ -124,6 +124,15 @@ export class OpencodeClient {
     return Object.fromEntries(Object.keys(active ?? {}).map((id) => [id, { type: "busy" }])) as Record<string, { type: string; message?: string }>;
   }
 
+  /**
+   * Shell commands still running (the agent's foreground and background ones, all sessions). opencode 2 runs a
+   * `background: true` command on its own and wakes the agent when it ends, so no session is busy meanwhile.
+   */
+  async shells() {
+    const list = await this.data<{ id: string; status: string; command: string; time?: { started?: number } }[]>("GET", "/api/shell", undefined, undefined, 10_000);
+    return (list ?? []).filter((x) => x.status === "running").map((x) => ({ id: x.id, command: x.command, started: x.time?.started ?? null }));
+  }
+
   /** The session's messages oldest first, each as {info, parts}. */
   async messages(sessionId: string) {
     const out: { info: any; parts: any[] }[] = [];

@@ -177,8 +177,29 @@ export function SettingsPage() {
           <MachinesSection s={s} update={update} memTotal={sys.data?.host.memTotal} committedGiB={sys.data?.committedMemoryGiB} />
 
           <Section id="autopilot" icon={<IconRobot {...IC} />} title="Autopilot" meta="What Pixel does when a run stops on its own">
-            <Row label="Continue when the agent stops early" hint="It stopped without writing REPORT.md: send the continue message, up to this many times per run." reset={reset("maxAutoContinues")}>
-              <NumberInput label="Automatic continues per run" value={s.maxAutoContinues} onChange={(v) => update("maxAutoContinues", v)} unit="times" zero="off" />
+            <Row label="Continue when the agent stops early" hint="It stopped without writing REPORT.md: send the continue message, up to this many times in a row before the run stops." reset={reset("maxAutoContinues")}>
+              <NumberInput label="Automatic continues in a row" value={s.maxAutoContinues} onChange={(v) => update("maxAutoContinues", v)} unit="times" zero="off" />
+            </Row>
+            <Row label="Count starts over after" hint="Tool calls the agent makes after an automatic continue that show it is working again, so long runs aren't stopped for a few early ends." reset={reset("continueResetCalls", " calls")}>
+              <NumberInput label="Tool calls that reset the count" value={s.continueResetCalls} onChange={(v) => update("continueResetCalls", v)} unit="calls" zero="never" />
+            </Row>
+            <Row
+              label="Wait for background commands"
+              hint="The agent ended its turn with commands still running in the background (a build, a fuzzer); opencode wakes it when they finish. Subagents are always waited for. After this long it gets the reminder below, which isn't counted as a continue."
+              reset={reset("backgroundWaitMin", " min")}
+            >
+              <NumberInput label="Wait for background commands" value={s.backgroundWaitMin} onChange={(v) => update("backgroundWaitMin", v)} unit="min" zero="no limit" />
+            </Row>
+            <Row
+              wide
+              label="Reminder while background commands run"
+              hint={
+                <>
+                  <span className="font-mono">{"{minutes}"}</span> and <span className="font-mono">{"{commands}"}</span> are filled in.
+                </>
+              }
+              reset={{ show: s.backgroundWaitMessage !== d.backgroundWaitMessage, to: "text", onReset: () => update("backgroundWaitMessage", d.backgroundWaitMessage) }}>
+              <textarea className="input h-20 w-full text-[13px]" aria-label="Reminder while background commands run" value={s.backgroundWaitMessage} onChange={(e) => update("backgroundWaitMessage", e.target.value)} />
             </Row>
             <Row wide label="Continue message" reset={{ show: s.continueMessage !== d.continueMessage, to: "text", onReset: () => update("continueMessage", d.continueMessage) }}>
               <input className="input w-full" aria-label="Continue message" value={s.continueMessage} onChange={(e) => update("continueMessage", e.target.value)} />

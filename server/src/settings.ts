@@ -19,6 +19,12 @@ export interface Settings {
   /** Sent to the agent with the extra disk. {used} {limit} {extra} {goal} {dirs} are filled in. */
   diskRescueMessage: string;
   continueMessage: string;
+  /** This many tool calls after an automatic continue count as progress and reset the count (0 = never reset). */
+  continueResetCalls: number;
+  /** The agent ended its turn with only background shell commands running: wait this long, then nudge it (0 = wait for them however long). */
+  backgroundWaitMin: number;
+  /** Sent after that wait; not counted as a continue. {commands} and {minutes} are filled in. */
+  backgroundWaitMessage: string;
   oomMessage: string;
   /** Reject an agent's question after this many minutes without an answer, so autopilot runs don't block (0 = wait forever). */
   questionTimeoutMin: number;
@@ -106,6 +112,10 @@ export const defaultSettings: Settings = {
   diskRescueMessage:
     "Your machine's disk filled up ({used} of {limit}), so Pixel stopped your last step. You have {extra} extra for a short while to clean up. Delete what you no longer need on the machine ({dirs}): build trees and object files, fuzzing corpora and crashes you have already triaged, core dumps, downloaded archives, caches such as ~/.cache and pip, npm or cargo caches. Keep your workbase and anything you still need. Get usage under {goal} (check with du -sh and df -h), then carry on with your work and keep an eye on disk use from now on. The extra space goes away once you are under {goal}.",
   continueMessage: "continue your work",
+  continueResetCalls: 10,
+  backgroundWaitMin: 60,
+  backgroundWaitMessage:
+    "Your background commands are still running after {minutes} minutes: {commands}. If you need their result, check their output; otherwise carry on with other work. Keep working until you have written REPORT.md.",
   oomMessage: "continue your work, the oom killer killed you that was the reason for your stop",
   questionTimeoutMin: 30,
   agentEnv: {},

@@ -327,7 +327,7 @@ export function NewRunPage() {
                 />
               </Field>
             </div>
-            <Switch checked={autopilot} onChange={setAutopilot} label="Autopilot" hint={`Continue automatically when the agent stops without a report (up to ${s?.maxAutoContinues ?? 3} times) and recover from crashes.`} />
+            <Switch checked={autopilot} onChange={setAutopilot} label="Autopilot" hint={`Continue automatically when the agent stops without a report (up to ${s?.maxAutoContinues ?? 3} times in a row) and recover from crashes.`} />
           </Section>
           <ErrorBox error={error} />
         </div>

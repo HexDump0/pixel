@@ -323,6 +323,11 @@ for (const [table, column, type] of [["runs", "variant", "TEXT"], ["runs", "cred
 for (const [column, type] of [["disk_boost", "TEXT"], ["disk_rescues", "INTEGER NOT NULL DEFAULT 0"]] as const) {
   if (!db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === column)) db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`);
 }
+// opencode 2's background work (2026-10-29): what an idle agent is waiting for, when Pixel last sent an automatic
+// continue (progress after it resets the count), and each session's own execution state (subagents in the background).
+for (const [table, column, type] of [["runs", "waiting", "TEXT"], ["runs", "continued_at", "INTEGER"], ["sessions", "exec_state", "TEXT"], ["sessions", "exec_end", "INTEGER"]] as const) {
+  if (!db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
 migrateVerdicts();
 // Columns no longer used: runs.progress_at (PROGRESS.md, replaced by findings on 2026-10-15).
 if (db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some((c) => c.name === "progress_at")) db.exec("ALTER TABLE runs DROP COLUMN progress_at");
@@ -552,7 +557,12 @@ export interface RunRow {
   session_id: string | null;
   agent_status: string | null;
   autopilot: number;
+  /** Automatic continues in a row without progress (runs/lifecycle.ts). */
   continues: number;
+  /** When Pixel last sent an automatic continue; enough tool calls after it reset `continues`. */
+  continued_at: number | null;
+  /** JSON Waiting while the agent's turn is over but its background work (subagents, shell commands) still runs, else null. */
+  waiting: string | null;
   oom_restarts: number;
   parent_run: string | null;
   compare_group: string | null;

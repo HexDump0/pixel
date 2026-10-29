@@ -8,7 +8,7 @@ import { IconMessage, IconPlayerPause, IconPlayerPlay, IconRefresh } from "@tabl
 import { api } from "../../lib/api.ts";
 import { act, canPause, openRun } from "../../lib/actions.ts";
 import { cn } from "../../lib/cn.ts";
-import { rate, runName } from "../../lib/fleet.ts";
+import { rate, runName, waitingText } from "../../lib/fleet.ts";
 import { money } from "../../lib/format.ts";
 import { byPriority, isOpen, sevOf, STATE_WORD } from "../../lib/findings.ts";
 import { age, elapsed, runtimeOf, type Health } from "../../lib/health.ts";
@@ -65,7 +65,7 @@ function AgentLanes({ v, max = 3 }: { v: RunView; max?: number }) {
       {agents.map((a) => {
         const ticks = f.ticks.filter((t) => t[0] === a.id && now - t[1] < win);
         const last = ticks.reduce((m, t) => Math.max(m, t[1]), 0);
-        const what = a.state === "waiting" ? "waiting on subagents" : a.state === "idle" ? "idle" : a.now ? `${a.now.tool} ${a.now.text}` : "thinking";
+        const what = a.state === "waiting" ? waitingText(f).text : a.state === "idle" ? "idle" : a.now ? `${a.now.tool} ${a.now.text}` : "thinking";
         return (
           <li key={a.id || a.title} title={`${"full" in a ? a.full : "Main agent"}: ${what}`} className="grid h-[18px] grid-cols-[minmax(0,7.5em)_minmax(0,1fr)] items-center gap-3.5 text-[12.5px]">
             <span className={cn("truncate", a.kid ? "text-ink-3" : "text-ink-2")}>{a.title}</span>

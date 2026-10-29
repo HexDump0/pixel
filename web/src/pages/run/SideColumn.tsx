@@ -5,7 +5,7 @@ import { api } from "../../lib/api.ts";
 import { keys } from "../../lib/query.ts";
 import { useLive } from "../../lib/live.ts";
 import { useThrottled } from "../../lib/hooks.ts";
-import { kindColor } from "../../lib/fleet.ts";
+import { kindColor, waitingText } from "../../lib/fleet.ts";
 import { money, tokens } from "../../lib/format.ts";
 import { age, elapsed, useLimits } from "../../lib/health.ts";
 import { repoShort } from "../../lib/runs.ts";
@@ -54,7 +54,14 @@ function Agents({ detail, fleet }: { detail: RunDetail; fleet: FleetRun }) {
     );
   };
   const nowText = (n: FleetRun["now"], state: string) => {
-    if (state === "waiting") return <span className="font-sans">waiting on subagents</span>;
+    if (state === "waiting") {
+      const w = waitingText(fleet);
+      return (
+        <span className="font-sans" title={w.full}>
+          {w.text}
+        </span>
+      );
+    }
     if (state === "idle") return <span className="font-sans text-warning">idle</span>;
     if (state === "interrupted") return <span className="font-sans text-warning">interrupted, can be resumed</span>;
     if (state === "failed") return <span className="font-sans text-critical">failed</span>;

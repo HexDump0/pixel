@@ -34,7 +34,7 @@ bun test                    # unit + lifecycle tests against a fake opencode
 1. **Proxmox VM**: Ubuntu 24.04, 16 GB RAM, CPU type `host`, nested virtualization on the node (`kvm_intel nested=1` / `kvm_amd nested=1`), enough disk for ~20 GB per agent VM.
 2. **Docker** and **Incus** on that VM. Docker breaks Incus bridge networking unless you add `"ip-forward-no-drop": true` to `/etc/docker/daemon.json`. Run `incus admin init` (a ZFS or btrfs pool is best; cap the ZFS ARC with `zfs_arc_max`).
 3. **Data dir**: `sudo mkdir -p /srv/pixel`.
-4. **Agent image**: `image/build.sh` (builds `pixel-image` with opencode `2.1.0`, Docker, clang/gcc + sanitizers, AFL++, gdb/rr, valgrind, semgrep, CodeQL, Ghidra headless + pyghidra-mcp). Override versions with `OPENCODE_VERSION=… image/build.sh`.
+4. **Agent image**: `image/build.sh` (builds `pixel-image` with opencode `2.2.0`, Docker, clang/gcc + sanitizers, AFL++, gdb/rr, valgrind, semgrep, CodeQL, Ghidra headless + pyghidra-mcp). Override versions with `OPENCODE_VERSION=… image/build.sh`.
 5. **Pixel**: `cp .env.example .env`, set `PIXEL_PASSWORD` and `PIXEL_HOST` (a private address such as the Tailscale IP; never `0.0.0.0`, the agent VMs share the host network), then `docker compose up -d --build`.
 6. In the dashboard: **Settings** → models, provider keys (Models page, agent environment, or API keys in an opencode `auth.json`), notifications (ntfy / Telegram), restic backups.
 
@@ -111,7 +111,8 @@ When a run is paused, aborted, OOM-killed or restarted while subagents are runni
 | Situation | Action |
 |---|---|
 | Agent idle and `REPORT.md` exists | Run **done**: transcript exported, workbase snapshot, VM stopped (kept) |
-| Agent idle without a report | Send "continue your work", up to 3× (Settings), then **stop** and notify |
+| Agent idle without a report | Send "continue your work", up to 3 times in a row (Settings), then **stop** and notify. 10 tool calls after a continue start the count over |
+| Agent idle, background work still running | Wait: subagents for as long as they run, background shell commands up to 60 min (then a reminder, not counted). opencode wakes the agent when they finish |
 | opencode OOM-killed | Restart it, resume the same session with the OOM message, up to 3×, then stop |
 | opencode/VM crashed | Start VM/opencode, continue the same session (counts as a continue) |
 | VM disk ≥ 98% / workbase > 5 GiB | Abort, **stop**, notify |

@@ -97,7 +97,8 @@ draft → preparing → running ⇄ recovering → done → triaged → (VM dele
 
 | What happened | How Pixel detects it | What Pixel does |
 |---|---|---|
-| Session went idle without `REPORT.md` (gave up, error, context trouble) | opencode idle/error event, no report | Send `continue your work`. Up to **3 times** per run; after the 3rd, stop and notify you |
+| Session went idle without `REPORT.md` (gave up, error, context trouble) | opencode idle/error event, no report | Send `continue your work`. Up to **3 times in a row** (10 tool calls after a continue start the count over); after that, stop and notify you |
+| Session idle while its background work runs (opencode 2: subagents, `background: true` shell commands) | `/api/session/active`, `/api/shell` | Wait; opencode wakes the agent when the work ends. Shell commands alone: after 60 min, a reminder (not counted) |
 | opencode killed by the OOM killer | systemd unit result `oom-kill` / kernel log in the VM | Restart `opencode serve`, resume the **same session** with `continue your work, the oom killer killed you that was the reason for your stop`. Own limit of 3 OOM restarts, then stop and notify (default, adjustable) |
 | Agent VM disk full | VM disk usage ≥ ~98% or ENOSPC errors | Abort the session, **stop the run**, keep the VM for inspection, notify |
 | Workbase growing too big on the host | workbase size over a limit (default 5 GB) | Stop the run, notify (protects the shared disk) |

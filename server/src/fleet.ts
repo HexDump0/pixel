@@ -20,6 +20,7 @@ import { OpencodeClient } from "./opencode.ts";
 // ---- what a tool call is doing ----
 
 import { kindOf, type Kind } from "./kinds.ts";
+import type { Waiting } from "./runs/lifecycle.ts";
 export { kindOf, type Kind };
 
 /** One-line description of a tool call, e.g. `make -j4` or `src/ini.c:118`. */
@@ -282,10 +283,15 @@ function latestCall(run: RunRow, sessionId: string): SubAgent["now"] {
   return c ? callNow(run, c) : null;
 }
 
-/** Subagents with their state, taken from the task calls that started (or resumed) them. */
+/**
+ * Subagents with their state: from the session's own execution state when Pixel has it (opencode 2; a subagent
+ * started in the background returns from its task call at once), else from the task calls that started or resumed it.
+ */
 function subAgents(run: RunRow): SubAgent[] {
   const sessions = db
-    .query<{ id: string; parent_id: string; title: string | null; created_at: number }, [string]>("SELECT id, parent_id, title, created_at FROM sessions WHERE run_id = ? AND parent_id IS NOT NULL ORDER BY created_at")
+    .query<{ id: string; parent_id: string; title: string | null; created_at: number; exec_state: string | null }, [string]>(
+      "SELECT id, parent_id, title, created_at, exec_state FROM sessions WHERE run_id = ? AND parent_id IS NOT NULL ORDER BY created_at",
+    )
     .all(run.id);
   if (!sessions.length) return [];
   const taskState = new Map<string, { status: string | null; interrupted: boolean }>();
@@ -293,8 +299,14 @@ function subAgents(run: RunRow): SubAgent[] {
   const live = ACTIVE.includes(run.status) && run.status !== "paused";
   return sessions.map((s) => {
     const t = taskState.get(s.id);
+    const callOpen = !t || t.status === "running" || t.status === "pending";
     let status: SubAgent["status"] = "done";
-    if (!t || t.status === "running" || t.status === "pending") status = live ? "running" : "interrupted";
+    if (s.exec_state === "busy") status = live ? "running" : "interrupted";
+    else if (s.exec_state === "failed") status = "failed";
+    else if (s.exec_state === "interrupted") status = "interrupted";
+    // Finished on its own; its task call may still be wrapping up for a moment.
+    else if (s.exec_state === "succeeded") status = callOpen && live ? "running" : "done";
+    else if (callOpen) status = live ? "running" : "interrupted";
     else if (t.status === "error") status = t.interrupted ? "interrupted" : "failed";
     return {
       id: s.id,
@@ -473,6 +485,7 @@ export interface FleetRun {
   todos: string[];
   now: SubAgent["now"];
   agents: { main: string; subs: SubAgent[] };
+  waiting: Waiting | null;
   activity: { n: number; k: string | null; alert: boolean }[];
   cpu: number | null;
   mem: { used: number | null; total: number | null };
@@ -489,8 +502,20 @@ async function buildRun(r: RunRow, now: number, series: Map<string, number[]>): 
   const subs = subAgents(r);
   const rootNow = r.session_id ? latestCall(r, r.session_id) : null;
   const working = subs.filter((s) => s.status === "running").length;
+  // Its turn is over but subagents or background commands still run (opencode 2 wakes it when they finish).
+  const waiting: Waiting | null = r.status === "running" && r.waiting ? JSON.parse(r.waiting) : null;
   const main =
-    r.status === "recovering" ? "recovering" : r.status === "paused" ? "paused" : !ACTIVE.includes(r.status) ? "finished" : working && rootNow?.tool === "task" && rootNow.status === "running" ? "waiting" : r.agent_status === "idle" ? "idle" : "working";
+    r.status === "recovering"
+      ? "recovering"
+      : r.status === "paused"
+        ? "paused"
+        : !ACTIVE.includes(r.status)
+          ? "finished"
+          : waiting || (working && rootNow?.tool === "task" && rootNow.status === "running")
+            ? "waiting"
+            : r.agent_status === "idle"
+              ? "idle"
+              : "working";
   const m = latestMetrics(r.id);
   const size = JSON.parse(r.size);
   const todos = r.session_id ? db.query<{ data: string }, [string]>("SELECT data FROM todos WHERE session_id = ?").get(r.session_id) : null;
@@ -504,6 +529,7 @@ async function buildRun(r: RunRow, now: number, series: Map<string, number[]>): 
     todos: todos ? (JSON.parse(todos.data) as { status: string }[]).map((t) => t.status) : [],
     now: rootNow,
     agents: { main, subs },
+    waiting,
     activity: activityHistory(r.id, calls, now),
     cpu: ACTIVE.includes(r.status) ? (m?.cpu ?? null) : null,
     mem: { used: ACTIVE.includes(r.status) ? (m?.mem_used ?? null) : null, total: m?.mem_total ?? size.memoryGiB * 1024 ** 3 },
@@ -640,9 +666,20 @@ export function lanes(runId: string, minutes: number) {
   if (!run) return null;
   const now = Date.now();
   const from = now - minutes * 60_000;
-  const sessions = db.query<{ id: string; parent_id: string | null; title: string | null }, [string]>("SELECT id, parent_id, title FROM sessions WHERE run_id = ? ORDER BY created_at").all(runId);
+  const sessions = db
+    .query<{ id: string; parent_id: string | null; title: string | null; exec_state: string | null; exec_end: number | null }, [string]>(
+      "SELECT id, parent_id, title, exec_state, exec_end FROM sessions WHERE run_id = ? ORDER BY created_at",
+    )
+    .all(runId);
   const segs = new Map<string, [number, number, Kind][]>();
   const marks = new Map<string, [number, string][]>();
+  // Subagents whose own end Pixel saw (opencode 2) get their dot there; a background one's task call ends when it starts.
+  const ownEnd = new Set<string>();
+  for (const s of sessions) {
+    if (!s.parent_id || !s.exec_end || s.exec_state === "busy") continue;
+    ownEnd.add(s.id);
+    if (s.exec_end >= from) marks.set(s.id, [[s.exec_end, s.exec_state === "succeeded" ? "done" : "interrupted"]]);
+  }
   for (const c of callsSince(runId, from)) {
     const done = c.status === "completed" || c.status === "error";
     const end = done ? (c.ended ?? c.updated_at) : ACTIVE.includes(run.status) ? now : c.updated_at;
@@ -651,6 +688,7 @@ export function lanes(runId: string, minutes: number) {
     list.push([Math.max(c.started, from), end, kindOf(c.tool)]);
     segs.set(c.session_id, list);
     // A finished subagent gets a dot on its own lane where its task call ended.
+    if (c.child && ownEnd.has(c.child)) continue;
     if (c.child && c.status === "completed") marks.set(c.child, [...(marks.get(c.child) ?? []), [end, "done"]]);
     if (c.child && c.status === "error") marks.set(c.child, [...(marks.get(c.child) ?? []), [end, "interrupted"]]);
   }

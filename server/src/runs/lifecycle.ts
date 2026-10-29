@@ -9,9 +9,24 @@ import { syncTranscript, transcript, unwatch } from "./events.ts";
 
 /** `delivery`: "steer" (default) goes into the work in progress at its next step, "queue" waits for the turn to end. */
 export async function sendPrompt(run: RunRow, text: string, delivery?: "steer" | "queue") {
-  setRun(run.id, { agent_status: "busy", last_activity: Date.now() });
+  setRun(run.id, { agent_status: "busy", last_activity: Date.now(), ...(run.waiting && { waiting: null }) });
   await clientFor(run).prompt(run.session_id!, text, run.model, run.variant, delivery);
 }
+
+/** Background work an idle agent is waiting for (opencode wakes it when that ends). */
+export interface Waiting {
+  since: number;
+  subagents: number;
+  /** Commands of the shell commands still running, cut short. */
+  shells: string[];
+  /** When the work was seen to have ended; opencode wakes the agent right after, so Pixel holds off a moment. */
+  ended?: number;
+}
+
+/** After background work ends, how long opencode gets to wake the agent before Pixel treats it as idle. */
+const WAKE_GRACE_MS = 20_000;
+
+export const waitingOf = (run: RunRow): Waiting | null => (run.waiting ? JSON.parse(run.waiting) : null);
 
 const childSessions = (runId: string) =>
   db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE run_id = ? AND parent_id IS NOT NULL").all(runId).map((r) => r.id);
@@ -19,33 +34,108 @@ const childSessions = (runId: string) =>
 const pendingQuestions = (runId: string) =>
   db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM questions WHERE run_id = ? AND status = 'pending'").get(runId)!.n;
 
-/** The root session went idle: done if there's a report, otherwise continue (autopilot) or stop. */
+/**
+ * Shell commands the run's agents started in the background: the call returned at once while the command kept
+ * running (`background: true`, or moved to the background). Foreground ones belong to a busy session anyway.
+ */
+const backgroundShells = (runId: string) =>
+  new Set(
+    db
+      .query<{ id: string }, [string]>(
+        `SELECT json_extract(p.data, '$.state.metadata.shellID') AS id FROM tool_calls c JOIN parts p ON p.id = c.id
+         WHERE c.run_id = ? AND c.tool = 'bash' AND c.status = 'completed' AND json_extract(p.data, '$.state.metadata.status') = 'running'`,
+      )
+      .all(runId)
+      .map((r) => r.id),
+  );
+
+/** Tool calls by any of the run's agents since `ts`. */
+const callsSince = (runId: string, ts: number) => db.query<{ n: number }, [string, number]>("SELECT COUNT(*) AS n FROM tool_calls WHERE run_id = ? AND started >= ?").get(runId, ts)!.n;
+
+const short = (cmd: string) => {
+  const one = cmd.replace(/\s+/g, " ").trim();
+  return one.length > 120 ? `${one.slice(0, 117)}...` : one;
+};
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function describeWaiting(w: Waiting) {
+  const parts = [w.subagents && plural(w.subagents, "subagent"), w.shells.length && `${plural(w.shells.length, "background command")} (${w.shells.slice(0, 3).join("; ")})`].filter(Boolean);
+  return parts.join(" and ");
+}
+
+/**
+ * The root session went idle: done if there's a report; waiting while its subagents or background shell commands
+ * still run (opencode wakes the agent when they finish); otherwise continue (autopilot) or stop.
+ */
 export async function onIdle(id: string, source: "event" | "watchdog") {
   const run = getRun(id);
-  if (!run || run.status !== "running" || run.agent_status === "idle") return;
-  const active = run.session_id ? await clientFor(run).status().catch(() => null) : null;
-  // An idle event that waited in the queue behind a restart (say, a key switch that already sent "continue") is stale.
-  if (source === "event" && active?.[run.session_id!]) return;
-  // Subagents still working in the background: opencode wakes the agent when they finish.
-  if (active && childSessions(id).some((s) => active[s])) return;
+  if (!run || run.status !== "running" || run.agent_status === "idle" || !run.session_id) return;
+  const client = clientFor(run);
+  const active = await client.status().catch(() => null);
+  // Can't tell what is still running: the watchdog asks again on its next check rather than continuing blind.
+  if (!active) return;
+  // Busy again (an idle event that waited in the queue behind a restart, a key switch that already sent "continue").
+  if (active[run.session_id]) return;
+  const subagents = childSessions(id).filter((s) => active[s]).length;
+  const running = await client.shells().catch(() => null);
+  if (!running) return;
+  const launched = running.length ? backgroundShells(id) : new Set<string>();
+  const shells = running.filter((x) => launched.has(x.id));
   // Stopped or paused meanwhile (a stop aborts the agent, which is what made it idle): no continue.
   if (getRun(id)?.status !== "running") return;
-  setRun(id, { agent_status: "idle" });
+  const s = getSettings();
+
+  let nudge: Waiting | null = null;
+  if (subagents || shells.length) {
+    const was = waitingOf(run);
+    const w: Waiting = { since: was?.since ?? Date.now(), subagents, shells: shells.map((x) => short(x.command)) };
+    if (JSON.stringify(w) !== JSON.stringify(was)) setRun(id, { waiting: JSON.stringify(w) });
+    if (!was) timeline(id, "pixel", "wait", `Agent ended its turn with ${describeWaiting(w)} still running; waiting for them (opencode wakes the agent when they finish)`);
+    // Subagents are agents at work; only shell commands alone (a server, a fuzzer with no end) get a time limit.
+    const limit = s.backgroundWaitMin * 60_000;
+    if (subagents || !limit || Date.now() - w.since < limit) return;
+    nudge = w;
+  } else if (run.waiting) {
+    const was = waitingOf(run)!;
+    if (!was.ended) return void setRun(id, { waiting: JSON.stringify({ ...was, subagents: 0, shells: [], ended: Date.now() }) });
+    if (Date.now() - was.ended < WAKE_GRACE_MS) return;
+    setRun(id, { waiting: null });
+  }
+
+  setRun(id, { agent_status: "idle", waiting: null });
   if (pendingQuestions(id)) return;
 
   if (hasReport(id)) return finish(id);
 
-  const s = getSettings();
   if (!run.autopilot) {
     setRun(id, { status_detail: "Agent is idle without a report; autopilot is off" });
     timeline(id, "pixel", "idle", "Agent went idle without REPORT.md; autopilot is off, waiting for you");
     notifyRun("stopped", run, "Agent idle", "The agent stopped without writing REPORT.md. Autopilot is off.");
     return;
   }
-  if (run.continues >= s.maxAutoContinues) {
-    setStatus(id, "stopped", `Agent stopped without a report after ${run.continues} automatic continues`);
-    timeline(id, "pixel", "stopped", `Agent went idle without REPORT.md after ${run.continues} automatic continues; stopping`);
-    notifyRun("stopped", run, "Run stopped", `The agent stopped without writing REPORT.md after ${run.continues} automatic continues.`);
+
+  if (nudge) {
+    const minutes = Math.round((Date.now() - nudge.since) / 60_000);
+    const text = s.backgroundWaitMessage.replaceAll("{minutes}", String(minutes)).replaceAll("{commands}", nudge.shells.join("; "));
+    timeline(id, "pixel", "nudge", `Background commands still running after ${minutes} min (${nudge.shells.slice(0, 3).join("; ")}); reminding the agent to carry on (not counted)`);
+    await sendPrompt(getRun(id)!, text);
+    return;
+  }
+
+  // Real work since the last automatic continue: the agent isn't stuck, so the count starts over.
+  let continues = run.continues;
+  if (continues > 0 && s.continueResetCalls > 0 && run.continued_at) {
+    const calls = callsSince(id, run.continued_at);
+    if (calls >= s.continueResetCalls) {
+      timeline(id, "pixel", "reset", `Agent made ${calls} tool calls since the last automatic continue; the count starts over (was ${continues}/${s.maxAutoContinues})`);
+      continues = 0;
+    }
+  }
+  if (continues >= s.maxAutoContinues) {
+    setStatus(id, "stopped", `Agent stopped without a report after ${continues} automatic continues in a row`, { continues });
+    timeline(id, "pixel", "stopped", `Agent went idle without REPORT.md after ${continues} automatic continues with no progress in between; stopping`);
+    notifyRun("stopped", run, "Run stopped", `The agent stopped without writing REPORT.md after ${continues} automatic continues in a row.`);
     return;
   }
   // Keys changed while it was busy (a key was replaced or the run moved to another): restart opencode first.
@@ -54,8 +144,8 @@ export async function onIdle(id: string, source: "event" | "watchdog") {
     await restartOpencode(run);
     await clientFor(run).waitHealthy(180_000);
   }
-  const n = run.continues + 1;
-  setRun(id, { continues: n, status_detail: null });
+  const n = continues + 1;
+  setRun(id, { continues: n, continued_at: Date.now(), status_detail: null });
   timeline(id, "pixel", "continue", `Agent went idle without REPORT.md${source === "watchdog" ? " (noticed by the watchdog)" : ""}; sending "${s.continueMessage}" (${n}/${s.maxAutoContinues})`);
   await sendPrompt(getRun(id)!, s.continueMessage);
 }

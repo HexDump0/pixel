@@ -10,6 +10,16 @@ import type { FleetRun, FleetSnapshot } from "./types.ts";
 
 const TICK_WINDOW_MS = 15 * 60_000;
 
+const count = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
+
+/** What a main agent whose turn is over is waiting for: its subagents, background commands, or both. */
+export function waitingText(f: FleetRun) {
+  const w = f.waiting;
+  if (!w || (!w.subagents && !w.shells.length)) return { text: "waiting on subagents", full: undefined };
+  const parts = [w.subagents && count(w.subagents, "a subagent", "subagents"), w.shells.length && count(w.shells.length, "a background command", "background commands")].filter(Boolean);
+  return { text: `waiting on ${parts.join(" and ")}`, full: w.shells.length ? w.shells.join("\n") : undefined };
+}
+
 const reload = () => void queryClient.invalidateQueries({ queryKey: keys.fleet });
 const patchRun = (id: string, fn: (r: FleetRun) => FleetRun) =>
   queryClient.setQueryData<FleetSnapshot>(keys.fleet, (s) => (s ? { ...s, runs: s.runs.map((r) => (r.id === id ? fn(r) : r)) } : s));

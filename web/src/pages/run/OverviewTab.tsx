@@ -19,6 +19,7 @@ import {
   IconPlayerPlay,
   IconPointFilled,
   IconRefresh,
+  IconHourglass,
   IconX,
 } from "@tabler/icons-react";
 import { api } from "../../lib/api.ts";
@@ -162,7 +163,7 @@ function Now({ runId, fleet, rootSession }: { runId: string; fleet?: FleetRun; r
 
 // ---- story: the run's notable events ----
 
-const STORY_KINDS = new Set(["created", "finding", "question", "message", "continue", "recover", "restart", "key", "limit", "done", "failed", "stopped", "idle", "triage", "pause", "resume", "stop", "model", "abort", "retry"]);
+const STORY_KINDS = new Set(["created", "finding", "question", "message", "continue", "wait", "nudge", "recover", "restart", "key", "limit", "done", "failed", "stopped", "idle", "triage", "pause", "resume", "stop", "model", "abort", "retry"]);
 
 function storyIcon(e: TimelineEntry) {
   switch (e.kind) {
@@ -179,7 +180,10 @@ function storyIcon(e: TimelineEntry) {
     case "idle":
       return { Icon: IconAlertTriangle, k: "warn" };
     case "continue":
+    case "nudge":
       return { Icon: IconRefresh, k: "" };
+    case "wait":
+      return { Icon: IconHourglass, k: "" };
     case "failed":
     case "stopped":
     case "stop":

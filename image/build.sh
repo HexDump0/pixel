@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 ALIAS="${1:-pixel-image}"
 BASE_IMAGE="${BASE_IMAGE:-images:ubuntu/24.04/cloud}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-2.1.0}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-2.2.0}"
 BUILD="pixel-build-$(date +%s)"
 
 cleanup() { incus delete -f "$BUILD" >/dev/null 2>&1 || true; }

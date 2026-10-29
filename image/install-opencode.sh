@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install opencode's prebuilt binary from npm's registry into /usr/local/bin.
-# Usage: install-opencode.sh <version>   (e.g. 2.1.0)
+# Usage: install-opencode.sh <version>   (e.g. 2.2.0)
 # Straight from the tarball: `npm install -g @opencode/cli` needs its postinstall script, which newer npm skips.
 set -euo pipefail
 VERSION="${1:?usage: install-opencode.sh <version>}"

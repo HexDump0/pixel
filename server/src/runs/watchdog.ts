@@ -50,7 +50,8 @@ async function safetyNets(run: RunRow, w: Watcher, client: OpencodeClient, s: Se
   if (status) {
     const st = status[run.session_id!]?.type;
     if (st && st !== run.agent_status) setRun(run.id, { agent_status: st });
-    if (!st && run.agent_status !== "idle" && Date.now() - (run.last_activity ?? 0) > MISSED_IDLE_MS) await serial(w, () => onIdle(run.id, "watchdog"));
+    // A run waiting for background work is looked at every check: that work ending, or the wait running out, is noticed here too.
+    if (!st && run.agent_status !== "idle" && (run.waiting || Date.now() - (run.last_activity ?? 0) > MISSED_IDLE_MS)) await serial(w, () => onIdle(run.id, "watchdog"));
   }
   for (const p of await client.pendingPermissions().catch(() => [])) autoApprove(run.id, p);
 
